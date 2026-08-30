@@ -1,0 +1,48 @@
+package com.example.projectretr0installer;
+
+interface IRetr0UserService {
+
+    boolean ping() = 1;
+
+    boolean exists(String path) = 2;
+
+    boolean isDirectory(String path) = 3;
+
+    boolean createDirectory(String path) = 4;
+
+    boolean delete(String path) = 5;
+
+    boolean copyFile(String source, String destination) = 6;
+
+    boolean move(String source, String destination) = 7;
+
+    boolean copyDirectory(String source, String destination) = 15;
+
+    boolean importFile(in ParcelFileDescriptor pfd, String destination) = 16;
+
+    boolean exportFile(String source, in ParcelFileDescriptor pfd) = 17;
+
+    boolean installPackage(String apkPath) = 19;
+
+    long getFileSize(String path) = 8;
+
+    long getLastModified(String path) = 18;
+
+    String[] listFiles(String path) = 9;
+
+    byte[] readFile(String path) = 10;
+
+    boolean writeFile(String path, in byte[] data) = 11;
+
+    long[] getDirectoryStats(String path) = 12;
+
+    String testRR3Access() = 13;
+
+    String testRR3Write() = 14;
+
+    void forceStopPackage(String packageName) = 20;
+
+    boolean isPackageRunning(String packageName) = 21;
+
+    void destroy() = 16777114;
+}
