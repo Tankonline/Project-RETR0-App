@@ -1,0 +1,155 @@
+<resources>
+    <string name="app_name">Instalador de Proyecto RETR0</string>
+
+    <!-- App Modes & Screens -->
+    <string name="title_selection">PROYECTO RETR0</string>
+    <string name="subtitle_selection">Selecciona un juego para gestionar</string>
+    <string name="title_dashboard">REAL RACING 3</string>
+    <string name="subtitle_dashboard">Panel de Proyecto RETR0</string>
+    <string name="title_experimental">CENTRO EXPERIMENTAL</string>
+    <string name="subtitle_experimental">Niveles de iOS / tvOS / Mac</string>
+    <string name="title_community">CENTRO COMUNITARIO</string>
+    <string name="active_project">Proyecto Activo</string>
+
+    <!-- System Status -->
+    <string name="section_system_status">ESTADO DEL SISTEMA</string>
+    <string name="status_shizuku">Shizuku: %1$s</string>
+    <string name="status_space">Espacio Disponible: %1$s</string>
+    <string name="status_checking">Comprobando&#8230;</string>
+    <string name="status_shizuku_not_running">Shizuku no está en ejecución.</string>
+    <string name="status_shizuku_running_granted">Shizuku en ejecución (permiso concedido).</string>
+    <string name="status_shizuku_running_required">Shizuku en ejecución (permiso requerido).</string>
+    <string name="status_shizuku_connected">Servicio privilegiado RETR0 conectado.</string>
+    <string name="status_shizuku_disconnected">Servicio privilegiado RETR0 desconectado.</string>
+
+    <!-- Progress States -->
+    <string name="progress_complete">PROCESO COMPLETADO</string>
+    <string name="progress_failed">PROCESO FALLIDO</string>
+    <string name="progress_updating">INSTALANDO ACTUALIZACIÓN</string>
+    <string name="progress_active">TAREA ACTIVA</string>
+    <string name="progress_active_parts">TAREA ACTIVA (Parte %1$d de %2$d)</string>
+    <string name="progress_total">Progreso Total: %1$s</string>
+    <string name="progress_eta">ETA: %1$s</string>
+    <string name="progress_current_part">Parte Actual: %1$s</string>
+    <string name="how_to_fix">CÓMO SOLUCIONARLO: %1$s</string>
+
+    <!-- Tabs -->
+    <string name="tab_saves">PARTIDAS</string>
+    <string name="tab_music">MÚSICA</string>
+    <string name="tab_core">PRINCIPAL</string>
+    <string name="tab_extended">EXTENDIDO</string>
+    <string name="tab_library">BIBLIOTECA</string>
+
+    <!-- Section Headers -->
+    <string name="section_music_hub">CENTRO DE MÚSICA</string>
+    <string name="section_graphics_hub">CENTRO DE GRÁFICOS</string>
+    <string name="section_save_hub">CENTRO DE PARTIDAS</string>
+    <string name="section_maintenance">MANTENIMIENTO</string>
+    <string name="section_diagnostics">DIAGNÓSTICOS</string>
+    <string name="section_manual_import">IMPORTACIÓN MANUAL</string>
+    <string name="section_youtube_converter">CONVERTIDOR DE YOUTUBE</string>
+    <string name="section_discord">¿Te gusta el instalador?</string>
+
+    <!-- Section Subtitles -->
+    <string name="hint_music_hub">Gestiona tu colección y cambia las pistas del juego.</string>
+    <string name="hint_graphics_hub">Anula el nivel de tu dispositivo para desbloquear ajustes de calidad ocultos.</string>
+    <string name="hint_save_hub">Crea y cambia entre instantáneas de datos de personaje.</string>
+    <string name="hint_maintenance">Restaura los archivos originales del motor desde la carpeta APK del juego.</string>
+    <string name="hint_manual_import">Importa archivos externos directamente al juego.</string>
+    <string name="hint_youtube_converter">Convierte enlaces de YouTube a MP3 en tu biblioteca local.</string>
+    <string name="hint_discord">Únete a nuestra comunidad para ver más de Proyecto RETR0</string>
+
+    <!-- Buttons -->
+    <string name="btn_install">INSTALAR PROYECTO RETR0</string>
+    <string name="btn_safe_test">EJECUTAR PRUEBA DE SEGURIDAD</string>
+    <string name="btn_launch_game">INICIAR JUEGO</string>
+    <string name="btn_dismiss">DESCARTAR</string>
+    <string name="btn_open_community">ABRIR CENTRO COMUNITARIO</string>
+    <string name="btn_discord">UNIRSE AL DISCORD</string>
+    <string name="btn_youtube">SUSCRIBIRSE A RETROSPECT69</string>
+    <string name="btn_repair">REPARAR ERRORES / CIERRES</string>
+    <string name="btn_test_access">PROBAR ACCESO A DIRECTORIO</string>
+    <string name="btn_test_write">PROBAR ESCRITURA (LEGACY)</string>
+    <string name="btn_check_updates">BUSCAR ACTUALIZACIONES</string>
+    <string name="btn_show_id">MOSTRAR ID DE DISPOSITIVO</string>
+    <string name="btn_import_character">IMPORTAR CHARACTER.2.DAT</string>
+    <string name="btn_import_doc">IMPORTAR CARPETA .DOC</string>
+    <string name="btn_view_all_slots">VER TODOS LOS SLOTS DE MÚSICA</string>
+    <string name="btn_convert_to_library">CONVERTIR A BIBLIOTECA</string>
+    <string name="btn_import_mp3">IMPORTAR MP3 A BIBLIOTECA</string>
+    <string name="btn_restore_graphics">RESTAURAR GRÁFICOS ORIGINALES</string>
+    <string name="btn_experimental_graphics">OTRAS OPCIONES (EXPERIMENTAL)</string>
+    <string name="btn_backup">COPIA DE SEGURIDAD</string>
+    <string name="btn_update_snapshot">ACTUALIZAR INSTANTÁNEA</string>
+    <string name="btn_start_shizuku">INICIAR SHIZUKU</string>
+    <string name="btn_request_shizuku">SOLICITAR PERMISO SHIZUKU</string>
+    <string name="btn_connect_service">CONECTAR SERVICIO PRIVILEGIADO</string>
+    <string name="btn_swap">CAMBIAR</string>
+    <string name="btn_use">USAR</string>
+    <string name="btn_get">OBTENER</string>
+    <string name="btn_upload">SUBIR</string>
+    <string name="btn_apply">APLICAR</string>
+    <string name="btn_share">COMPARTIR</string>
+    <string name="btn_save">GUARDAR</string>
+    <string name="btn_rename">RENOMBRAR</string>
+    <string name="btn_cancel">@android:string/cancel</string>
+    <string name="btn_close">CERRAR</string>
+
+    <!-- Dialogs -->
+    <string name="dialog_youtube_title">YouTube a Biblioteca</string>
+    <string name="dialog_youtube_desc">Descarga y convierte este enlace a un MP3 permanente en tu biblioteca local.</string>
+    <string name="dialog_import_title">Importar a Biblioteca</string>
+    <string name="dialog_share_title">Compartir con la Comunidad</string>
+    <string name="dialog_share_desc">Verifica las estadísticas de este archivo:</string>
+    <string name="dialog_replace_title">Reemplazar Banda Sonora</string>
+    <string name="dialog_replace_desc">Usar \'%1$s\' para reemplazar:</string>
+    <string name="dialog_rename_title">Renombrar Instantánea</string>
+    <string name="label_rename">Nuevo Nombre</string>
+    <string name="dialog_backup_title">Crear Nueva Instantánea</string>
+    <string name="dialog_backup_desc">Esto guardará tu progreso actual de personaje.</string>
+    <string name="dialog_update_snapshot_title">Selecciona Instantánea a Actualizar</string>
+    <string name="dialog_update_snapshot_desc">Esto SOBREESCRIBIRÁ la instantánea seleccionada con tu progreso actual.</string>
+    <string name="dialog_apply_share_title">Aplicar y Compartir Música</string>
+    <string name="dialog_apply_share_desc">Cambia esta pista y opcionalmente compártela con la comunidad.</string>
+
+    <!-- UI Labels -->
+    <string name="label_auto_snapshot">Instantánea Auto</string>
+    <string name="label_last_run">Última ejecución: %1$s</string>
+    <string name="label_snapshot">Instantánea</string>
+    <string name="label_search_placeholder">Busca por nombre, autor o ID...</string>
+    <string name="label_no_saves">No se encontraron partidas.</string>
+    <string name="label_no_saves_match">Sin partidas que coincidan con \'%1$s\'</string>
+    <string name="label_no_music">No se encontró música.</string>
+    <string name="label_no_music_match">Sin música que coincida con \'%1$s\'</string>
+    <string name="label_library_empty">Tu biblioteca de música está vacía.</string>
+    <string name="label_no_snapshots">No hay instantáneas. ¡Haz una copia de tu progreso!</string>
+    <string name="label_recommended">Recomendado: %1$s</string>
+    <string name="label_target_slot">Slot de destino (Recomendado):</string>
+    <string name="label_music_name">Nombre de la Música</string>
+    <string name="label_uploader_name">Nombre del Autor</string>
+    <string name="label_your_name">Tu Nombre</string>
+    <string name="label_your_name_optional">Tu Nombre (Opcional)</string>
+    <string name="label_level">Nivel</string>
+    <string name="label_gold">Oro</string>
+    <string name="label_rs">Moneda R$</string>
+    <string name="label_ms">Moneda M$</string>
+    <string name="label_youtube_placeholder">Pega el enlace de YouTube aquí...</string>
+
+    <!-- Graphics Tiers -->
+    <string name="tier_low">Bajo</string>
+    <string name="tier_medium">Medio</string>
+    <string name="tier_medium2">Medio 2</string>
+    <string name="tier_high">Alto</string>
+    <string name="tier_xtra_high">Extra Alto</string>
+    <string name="tier_ultra_wide">Ultra Panorámico</string>
+    <string name="tier_simrig">SimRig</string>
+
+    <!-- Other -->
+    <string name="experimental_warning">ADVERTENCIA: Estos ajustes fueron diseñados para otras plataformas. Pueden causar errores visuales o caídas de rendimiento. Úsalos bajo tu responsabilidad.</string>
+    <string name="install_running_bg">La instalación se está ejecutando en segundo plano.</string>
+
+    <!-- Sorting -->
+    <string name="sort_newest">Más recientes</string>
+    <string name="sort_popular">Más populares</string>
+    <string name="sort_likes">Mejor valorados</string>
+</resources>

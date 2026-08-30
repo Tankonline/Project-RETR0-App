@@ -1,0 +1,155 @@
+<resources>
+    <string name="app_name">Project RETR0 installer</string>
+
+    <!-- App Modes & Screens -->
+    <string name="title_selection">PROJECT RETR0</string>
+    <string name="subtitle_selection">Select a game to manage</string>
+    <string name="title_dashboard">REAL RACING 3</string>
+    <string name="subtitle_dashboard">Project RETR0 Dashboard</string>
+    <string name="title_experimental">EXPERIMENTAL HUB</string>
+    <string name="subtitle_experimental">iOS / tvOS / Mac Tiers</string>
+    <string name="title_community">COMMUNITY HUB</string>
+    <string name="active_project">Active Project</string>
+
+    <!-- System Status -->
+    <string name="section_system_status">SYSTEM STATUS</string>
+    <string name="status_shizuku">Shizuku: %1$s</string>
+    <string name="status_space">Available Space: %1$s</string>
+    <string name="status_checking">Checking&#8230;</string>
+    <string name="status_shizuku_not_running">Shizuku is not running.</string>
+    <string name="status_shizuku_running_granted">Shizuku is running (permission granted).</string>
+    <string name="status_shizuku_running_required">Shizuku is running (permission required).</string>
+    <string name="status_shizuku_connected">RETR0 privileged service connected.</string>
+    <string name="status_shizuku_disconnected">RETR0 privileged service disconnected.</string>
+
+    <!-- Progress States -->
+    <string name="progress_complete">PROCESS COMPLETE</string>
+    <string name="progress_failed">PROCESS FAILED</string>
+    <string name="progress_updating">INSTALLING APP UPDATE</string>
+    <string name="progress_active">ACTIVE TASK</string>
+    <string name="progress_active_parts">ACTIVE TASK (Part %1$d of %2$d)</string>
+    <string name="progress_total">Total Progress: %1$s</string>
+    <string name="progress_eta">ETA: %1$s</string>
+    <string name="progress_current_part">Current Part: %1$s</string>
+    <string name="how_to_fix">HOW TO FIX: %1$s</string>
+
+    <!-- Tabs -->
+    <string name="tab_saves">SAVES</string>
+    <string name="tab_music">MUSIC</string>
+    <string name="tab_core">CORE</string>
+    <string name="tab_extended">EXTENDED</string>
+    <string name="tab_library">LIBRARY</string>
+
+    <!-- Section Headers -->
+    <string name="section_music_hub">MUSIC HUB</string>
+    <string name="section_graphics_hub">GRAPHICS HUB</string>
+    <string name="section_save_hub">SAVE HUB</string>
+    <string name="section_maintenance">MAINTENANCE</string>
+    <string name="section_diagnostics">DIAGNOSTICS</string>
+    <string name="section_manual_import">MANUAL IMPORT</string>
+    <string name="section_youtube_converter">YOUTUBE CONVERTER</string>
+    <string name="section_discord">Enjoying the installer?</string>
+
+    <!-- Section Subtitles -->
+    <string name="hint_music_hub">Manage your collection and swap game soundtracks.</string>
+    <string name="hint_graphics_hub">Override your device tier to unlock hidden quality settings.</string>
+    <string name="hint_save_hub">Create and switch between character data snapshots.</string>
+    <string name="hint_maintenance">Restores original engine assets from the game\'s APK folder.</string>
+    <string name="hint_manual_import">Import external files directly into the game.</string>
+    <string name="hint_youtube_converter">Convert YouTube links to MP3s in your Local Library.</string>
+    <string name="hint_discord">Join our community for more from Project RETR0</string>
+
+    <!-- Buttons -->
+    <string name="btn_install">INSTALL PROJECT RETR0</string>
+    <string name="btn_safe_test">RUN SAFE PIPELINE TEST</string>
+    <string name="btn_launch_game">LAUNCH GAME</string>
+    <string name="btn_dismiss">DISMISS</string>
+    <string name="btn_open_community">OPEN COMMUNITY HUB</string>
+    <string name="btn_discord">JOIN THE DISCORD</string>
+    <string name="btn_youtube">SUBSCRIBE TO RETROSPECT69</string>
+    <string name="btn_repair">RR3 CRASH / ERROR FIX</string>
+    <string name="btn_test_access">TEST RR3 DIRECTORY ACCESS</string>
+    <string name="btn_test_write">TEST RR3 WRITE ACCESS (LEGACY)</string>
+    <string name="btn_check_updates">CHECK FOR APP UPDATES</string>
+    <string name="btn_show_id">SHOW MY DEVICE ID</string>
+    <string name="btn_import_character">IMPORT CHARACTER.2.DAT</string>
+    <string name="btn_import_doc">IMPORT .DOC FOLDER</string>
+    <string name="btn_view_all_slots">VIEW ALL GAME TRACK SLOTS</string>
+    <string name="btn_convert_to_library">CONVERT TO LIBRARY</string>
+    <string name="btn_import_mp3">IMPORT MP3 TO LIBRARY</string>
+    <string name="btn_restore_graphics">RESTORE ORIGINAL GRAPHICS</string>
+    <string name="btn_experimental_graphics">OTHER GRAPHICS OPTIONS (EXPERIMENTAL)</string>
+    <string name="btn_backup">BACKUP CHARACTER DATA</string>
+    <string name="btn_update_snapshot">UPDATE EXISTING SNAPSHOT</string>
+    <string name="btn_start_shizuku">START SHIZUKU</string>
+    <string name="btn_request_shizuku">REQUEST SHIZUKU PERMISSION</string>
+    <string name="btn_connect_service">CONNECT PRIVILEGED SERVICE</string>
+    <string name="btn_swap">SWAP</string>
+    <string name="btn_use">USE</string>
+    <string name="btn_get">GET</string>
+    <string name="btn_upload">UPLOAD</string>
+    <string name="btn_apply">APPLY</string>
+    <string name="btn_share">SHARE</string>
+    <string name="btn_save">SAVE</string>
+    <string name="btn_rename">RENAME</string>
+    <string name="btn_cancel">@android:string/cancel</string>
+    <string name="btn_close">CLOSE</string>
+
+    <!-- Dialogs -->
+    <string name="dialog_youtube_title">YouTube to Library</string>
+    <string name="dialog_youtube_desc">Download and convert this link to a permanent MP3 in your Local Library.</string>
+    <string name="dialog_import_title">Import to Library</string>
+    <string name="dialog_share_title">Share with Community</string>
+    <string name="dialog_share_desc">Verify the stats for this save file:</string>
+    <string name="dialog_replace_title">Replace Soundtrack</string>
+    <string name="dialog_replace_desc">Use \'%1$s\' to replace:</string>
+    <string name="dialog_rename_title">Rename Snapshot</string>
+    <string name="label_rename">New Name</string>
+    <string name="dialog_backup_title">Create New Snapshot</string>
+    <string name="dialog_backup_desc">This will save your current character progress.</string>
+    <string name="dialog_update_snapshot_title">Select Snapshot to Update</string>
+    <string name="dialog_update_snapshot_desc">This will OVERWRITE the selected snapshot with your current game progress.</string>
+    <string name="dialog_apply_share_title">Apply &amp; Share Music</string>
+    <string name="dialog_apply_share_desc">Swap this track and optionally share it with the community.</string>
+
+    <!-- UI Labels -->
+    <string name="label_auto_snapshot">Auto Snapshot</string>
+    <string name="label_last_run">Last run: %1$s</string>
+    <string name="label_snapshot">Snapshot</string>
+    <string name="label_search_placeholder">Search by name, author or file ID...</string>
+    <string name="label_no_saves">No saves found.</string>
+    <string name="label_no_saves_match">No saves match \'%1$s\'</string>
+    <string name="label_no_music">No music found.</string>
+    <string name="label_no_music_match">No music matches \'%1$s\'</string>
+    <string name="label_library_empty">Your music library is empty.</string>
+    <string name="label_no_snapshots">No snapshots found. Backup your current progress!</string>
+    <string name="label_recommended">Recommended: %1$s</string>
+    <string name="label_target_slot">Target slot (Recommended):</string>
+    <string name="label_music_name">Music Name</string>
+    <string name="label_uploader_name">Uploader Name</string>
+    <string name="label_your_name">Your Name</string>
+    <string name="label_your_name_optional">Your Name (Optional)</string>
+    <string name="label_level">Level</string>
+    <string name="label_gold">Gold</string>
+    <string name="label_rs">R$ Currency</string>
+    <string name="label_ms">M$ Currency</string>
+    <string name="label_youtube_placeholder">Paste YouTube URL here...</string>
+
+    <!-- Graphics Tiers -->
+    <string name="tier_low">Low</string>
+    <string name="tier_medium">Medium</string>
+    <string name="tier_medium2">Medium 2</string>
+    <string name="tier_high">High</string>
+    <string name="tier_xtra_high">Xtra High</string>
+    <string name="tier_ultra_wide">Ultra Wide</string>
+    <string name="tier_simrig">SimRig</string>
+
+    <!-- Other -->
+    <string name="experimental_warning">WARNING: These presets were designed for non-Android platforms. They may cause visual glitches, crashes, or severe performance drops. Use at your own risk.</string>
+    <string name="install_running_bg">Installation is running in the background.</string>
+
+    <!-- Sorting -->
+    <string name="sort_newest">Newest</string>
+    <string name="sort_popular">Most Popular</string>
+    <string name="sort_likes">Top Rated</string>
+</resources>
