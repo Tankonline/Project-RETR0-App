@@ -16,6 +16,7 @@ import java.util.zip.ZipInputStream
  * Handles extracting and installing files from ZIP archives.
  * Uses a Zero-Disk streaming pipeline to maximize speed and minimize storage usage.
  */
+@Suppress("unused")
 class ArchiveExtractor {
 
     private companion object {
@@ -47,6 +48,13 @@ class ArchiveExtractor {
                 }
 
                 val finalDestPath = resolveFinalPath(entryName, privilegedDest)
+
+                if (!isPathWithinDestination(finalDestPath, privilegedDest)) {
+                    Log.w(TAG, "Skipping unsafe ZIP entry: $entryName")
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                    continue
+                }
 
                 if (!entry.isDirectory) {
                     val now = System.currentTimeMillis()
@@ -116,9 +124,15 @@ class ArchiveExtractor {
         val packageNames = listOf("com.ea.games.r3_row", "com.ea.games.r3_na")
         for (pkg in packageNames) {
             if (entryName.startsWith("$pkg/")) {
-                return File(privilegedDest, entryName.substringAfter("$pkg/")).absolutePath
+                return File(privilegedDest, entryName.substringAfter("$pkg/")).canonicalPath
             }
         }
-        return File(privilegedDest, entryName).absolutePath
+        return File(privilegedDest, entryName).canonicalPath
+    }
+
+    private fun isPathWithinDestination(path: String, destination: String): Boolean {
+        val root = File(destination).canonicalFile.toPath()
+        val candidate = File(path).canonicalFile.toPath()
+        return candidate == root || candidate.startsWith(root)
     }
 }

@@ -5,22 +5,24 @@ import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.projectretr0installer.IRetr0UserService
+import com.example.projectretr0installer.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 /**
  * Orchestrates the Project RETR0 installation and maintenance process.
  */
 class Retr0Installer(
     private val context: Context,
-    private val service: IRetr0UserService,
-    private val androidId: String? = null,
+    private val service: IRetr0UserService? = null,
 ) {
 
     companion object {
@@ -37,9 +39,16 @@ class Retr0Installer(
         
         // COMMUNITY API URL
         private const val COMMUNITY_API_URL = "https://save-files.armaandeep08-ap.workers.dev"
-        private val COMMUNITY_API_KEY = com.example.projectretr0installer.BuildConfig.COMMUNITY_API_KEY
+        private const val COMMUNITY_API_KEY = com.example.projectretr0installer.BuildConfig.COMMUNITY_API_KEY
+
+        // Workers.dev proxy for globally cached release downloads.
+        private const val BOOSTER_URL = "https://save-files.armaandeep08-ap.workers.dev"
 
         private var isDownloaderInit = false
+        
+        // Static cache to ensure pre-fetched manifest is available to all instances
+        @Volatile
+        private var globalCachedManifest: InstallManifest? = null
 
         /**
          * Initializes the YouTubeDL and FFmpeg engines locally on the device.
@@ -70,182 +79,315 @@ class Retr0Installer(
     }
 
     private val downloader = FileDownloader()
-    private val extractor = ArchiveExtractor()
     private val verifier = HashVerifier()
-    private val manifestManager = ManifestManager(MANIFEST_URL)
-
+    private val manifestManager = ManifestManager(COMMUNITY_API_URL)
+    private val sonicInstaller by lazy { SonicInstaller(context, service!!) }
+    private val downloadDb by lazy { DownloadDatabase.getDatabase(context) }
+    
     private val _progress = MutableStateFlow(InstallProgress())
     val progress: StateFlow<InstallProgress> = _progress.asStateFlow()
+
+    /**
+     * Pre-fetches the manifest in the background to ensure 'Checking for updates' is instant.
+     */
+    suspend fun preFetchManifest() {
+        try {
+            globalCachedManifest = manifestManager.fetchManifest()
+            Log.i(TAG, "Manifest pre-fetched successfully (Version: ${globalCachedManifest?.version})")
+        } catch (e: Exception) {
+            Log.e(TAG, "Manifest pre-fetch failed", e)
+        }
+    }
     
     private var activeRr3Path: String? = null
 
     private fun getRr3Path(): String {
         activeRr3Path?.let { return it }
-        val foundPath = if (service.exists(RR3_ROW)) RR3_ROW else if (service.exists(RR3_NA)) RR3_NA else RR3_ROW
+        val s = service
+        val foundPath = if (s?.exists(RR3_ROW) == true) RR3_ROW else if (s?.exists(RR3_NA) == true) RR3_NA else RR3_ROW
         activeRr3Path = foundPath
         return foundPath
     }
 
+    private suspend fun installStreamingZip(
+        file: InstallFile,
+        fileNum: String,
+        rr3Path: String,
+        index: Int,
+        totalFiles: Int,
+        downloadedBytes: Long,
+        totalCompressed: Long,
+    ): Int {
+        val candidateUrls = listOf(file.url.replace(MANIFEST_URL, BOOSTER_URL), file.url).distinct()
+        var lastError: Throwable? = null
+        for ((attempt, candidateUrl) in candidateUrls.withIndex()) {
+            try {
+                val count = sonicInstaller.streamInstall(candidateUrl, rr3Path) { entryName ->
+                    updateProgress(
+                        state = InstallState.EXTRACTING,
+                        step = "$fileNum: Piped Extraction (${if (attempt == 0) "Booster" else "Fallback"})...",
+                        currentFile = entryName,
+                        overallProgress = (downloadedBytes.toFloat() + (file.size / 2f)) / totalCompressed,
+                        completedFiles = index,
+                        totalFiles = totalFiles,
+                        eta = "Piping...",
+                    )
+                }
+                if (count > 0) return count
+            } catch (error: Throwable) {
+                lastError = error
+                Log.w(TAG, "Sonic URL attempt ${attempt + 1} failed for ${file.name}: ${error.message}")
+            }
+        }
+        throw Exception("Archive extraction failed${lastError?.message?.let { ": $it" } ?: ""}", lastError)
+    }
+
     suspend fun installMod(): Boolean = withContext(Dispatchers.IO) {
         try {
+            val s = service ?: run { fail("Service not connected."); return@withContext false }
             val rr3Path = getRr3Path()
             updateProgress(InstallState.FETCHING_MANIFEST, "Connecting to Cloudflare...")
-            val manifest = manifestManager.fetchManifest() ?: run {
+
+            val manifest = globalCachedManifest ?: manifestManager.fetchManifest() ?: run {
                 fail("Connection failed. Manifest not found.")
                 return@withContext false
             }
+            val requiredFiles = manifest.files.filter { it.required && !it.type.equals("apk", ignoreCase = true) }
+            if (requiredFiles.isEmpty()) {
+                fail("Manifest contains no required install files.")
+                return@withContext false
+            }
+            requiredFiles.filter { it.type.equals("split_zip", ignoreCase = true) }
+                .forEach(SplitZipSupport::validateChunkedArchive)
 
-            // 1. Storage Check
-            val totalCompressed = manifest.files.sumOf { it.size }
-            val totalUncompressed = manifest.files.sumOf { it.uncompressedSize }
-            val requiredBytes = totalCompressed + totalUncompressed + (512 * 1024 * 1024L) // + 512MB Buffer
-
+            val totalCompressed = requiredFiles.sumOf { it.size }.coerceAtLeast(1L)
+            val totalUncompressed = requiredFiles.sumOf { it.uncompressedSize }
+            val largestCompressedArchive = requiredFiles
+                .filter { it.type.equals("zip", true) || it.type.equals("split_zip", true) }
+                .maxOfOrNull { it.size } ?: 0L
+            val requiredBytes = totalUncompressed + largestCompressedArchive + (512 * 1024 * 1024L)
             var downloadedBytesAccumulated = 0L
-            
+
             updateProgress(InstallState.PREPARING, "Checking storage...")
             val available = StorageUtils.getAvailableSpace(context.externalCacheDir ?: context.cacheDir)
             if (available in (1 until requiredBytes)) {
-                val neededStr = StorageUtils.formatSize(requiredBytes)
-                fail("Insufficient space. You need $neededStr free.")
+                fail("Insufficient space. You need ${StorageUtils.formatSize(requiredBytes)} free.")
                 return@withContext false
             }
+            if (!s.ping()) { fail("Shizuku service not connected."); return@withContext false }
 
-            if (!service.ping()) { fail("Shizuku service not connected."); return@withContext false }
-
-            updateProgress(InstallState.PREPARING, "Analyzing existing game data...")
-            val statsBefore = service.getDirectoryStats("$rr3Path/files")
-            Log.i(TAG, "Cleanup - Before: ${statsBefore[1]} files")
+            val tempDir = File(context.externalCacheDir ?: context.cacheDir, "retr0_install").apply { mkdirs() }
+            tempDir.listFiles()?.filter { it.name.endsWith(".merged") }?.forEach(File::delete)
 
             updateProgress(InstallState.PREPARING, "Wiping existing data...")
+            val statsBefore = s.getDirectoryStats("$rr3Path/files")
+            Log.i(TAG, "Cleanup - Before: ${statsBefore[1]} files")
             try {
-                service.delete("$rr3Path/files")
-                service.delete("$rr3Path/cache")
+                s.delete("$rr3Path/files")
+                s.delete("$rr3Path/cache")
             } catch (_: Exception) {}
-            
-            // CRITICAL: Re-create the base directories after wiping them
-            service.createDirectory("$rr3Path/files")
-            service.createDirectory("$rr3Path/cache")
-            
-            updateProgress(InstallState.PREPARING, "Cleaning temporary files...")
-            val tempDir = File(context.externalCacheDir ?: context.cacheDir, "retr0_install")
-            if (tempDir.exists()) tempDir.deleteRecursively()
-            tempDir.mkdirs()
+            s.createDirectory("$rr3Path/files")
+            s.createDirectory("$rr3Path/cache")
 
             Log.i(TAG, "Starting install sequence targeting: $rr3Path")
-            updateProgress(InstallState.PREPARING, "Targeting: ${rr3Path.substringAfterLast("/")}")
-
-            manifest.files.asSequence().filter { it.required }.forEachIndexed { index, file ->
-                val fileNum = "Part ${index + 1} of ${manifest.files.size}"
+            requiredFiles.forEachIndexed { index, file ->
+                val fileNum = "Part ${index + 1} of ${requiredFiles.size}"
                 val downloadFile = File(tempDir, file.name)
 
-                // IMMEDIATE FEEDBACK: Show connecting status
-                updateProgress(
-                    state = InstallState.DOWNLOADING,
-                    step = "$fileNum: Connecting...",
-                    currentFile = file.name,
-                    overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
-                    completedFiles = index,
-                    totalFiles = manifest.files.size,
-                    eta = "..."
-                )
-
-                if (!downloader.download(file.url, downloadFile, file.size) { currentBytes, totalBytes, speed ->
-                    val overallDownloaded = downloadedBytesAccumulated + currentBytes
-                    val overallProgress = overallDownloaded.toFloat() / totalCompressed
-                    
-                    val remainingBytes = totalCompressed - overallDownloaded
-                    val etaSeconds = if (speed > 0) (remainingBytes / speed).toLong() else -1L
-                    val etaStr = if (etaSeconds >= 0) {
-                        val mins = etaSeconds / 60
-                        val secs = etaSeconds % 60
-                        String.format(java.util.Locale.ENGLISH, "%02d:%02d", mins, secs)
-                    } else "Calculating..."
-
-                    updateProgress(
-                        state = InstallState.DOWNLOADING, 
-                        step = "$fileNum: Downloading...", 
-                        currentFile = file.name, 
-                        fileProgress = currentBytes.toFloat() / totalBytes,
-                        overallProgress = overallProgress,
-                        completedFiles = index,
-                        totalFiles = manifest.files.size,
-                        eta = etaStr,
-                    )
-                }) {
-                    val errorCode = downloader.lastError
-                    val fixHint = if (errorCode.contains("404")) {
-                        "FIX: The mod files may have been removed from the server."
-                    } else if (errorCode.contains("timeout")) {
-                        "FIX: Server timed out. The mod part is large; we have increased wait time to 60s. Try again."
-                    } else if (errorCode.contains("reset")) {
-                        "FIX: Connection reset. Your ISP or the server dropped the link."
-                    } else {
-                        "FIX: Ensure you have internet and the server is online."
-                    }
-                    fail("Download failed: ${file.name} (Error: $errorCode). $fixHint")
-                    return@withContext false
-                }
-
-                // Update accumulated counter after successful download
-                downloadedBytesAccumulated += file.size
-                
-                if (file.sha256 != "SKIP_VERIFICATION") {
-                    updateProgress(
-                        state = InstallState.VERIFYING, 
-                        step = "$fileNum: Verifying...", 
-                        currentFile = file.name, 
-                        fileProgress = 1.0f, 
-                        overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
-                        completedFiles = index, 
-                        totalFiles = manifest.files.size, 
-                        eta = "Checking...",
-                    )
-                    if (!verifier.verifySha256(downloadFile, file.sha256)) {
-                        fail("Corrupted file detected: ${file.name}")
-                        return@withContext false
-                    }
-                }
-
                 if (file.type == "zip") {
+                    updateProgress(
+                        state = InstallState.DOWNLOADING,
+                        step = "$fileNum: ${if (file.parts.isEmpty()) "Sonic Piped Installation" else "Downloading split ZIP"}...",
+                        currentFile = file.name,
+                        overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
+                        completedFiles = index,
+                        totalFiles = requiredFiles.size,
+                        eta = "Streaming..."
+                    )
+
                     try {
-                        val count = extractor.extractAndInstall(
-                            zipFile = downloadFile,
-                            privilegedDest = rr3Path,
-                            service = service,
-                        ) { entryName ->
-                            updateProgress(
-                                state = InstallState.EXTRACTING, 
-                                step = "$fileNum: Extracting...", 
-                                currentFile = entryName, 
-                                fileProgress = 0.5f, 
-                                overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
-                                completedFiles = index,
-                                totalFiles = manifest.files.size,
-                            )
+                        val count = if (file.parts.isEmpty()) {
+                            installStreamingZip(file, fileNum, rr3Path, index, requiredFiles.size, downloadedBytesAccumulated, totalCompressed)
+                        } else {
+                            val parts = SplitZipSupport.validate(file)
+                            val localParts = mutableListOf<File>()
+                            var splitBytes = 0L
+                            try {
+                                for (part in parts) {
+                                    val localPart = File(tempDir, part.name)
+                                    val candidateUrl = part.url.replace(MANIFEST_URL, BOOSTER_URL)
+                                    if (!downloader.download(candidateUrl, localPart, part.size) { current, _, speed ->
+                                            val overall = downloadedBytesAccumulated + splitBytes + current
+                                            val remaining = (totalCompressed - overall).coerceAtLeast(0)
+                                            updateProgress(
+                                                state = InstallState.DOWNLOADING,
+                                                step = "$fileNum: Downloading ${part.name}...",
+                                                currentFile = part.name,
+                                                fileProgress = current.toFloat() / part.size,
+                                                overallProgress = overall.toFloat() / totalCompressed,
+                                                completedFiles = index,
+                                                totalFiles = requiredFiles.size,
+                                                eta = if (speed > 0) "${(remaining / speed).toLong()}s" else "Calculating...",
+                                            )
+                                        }) throw Exception("Download failed for ${part.name}: ${downloader.lastError}")
+                                    if (!verifier.verifySha256(localPart, part.sha256)) throw Exception("Corrupted split ZIP part: ${part.name}")
+                                    localParts += localPart
+                                    splitBytes += part.size
+                                }
+                                updateProgress(InstallState.EXTRACTING, "$fileNum: Extracting split ZIP...", file.name)
+                                sonicInstaller.installSplitArchive(localParts, rr3Path)
+                            } finally {
+                                localParts.forEach { it.delete() }
+                            }
                         }
-                        if (count == 0) throw Exception("Zero files extracted")
-                    } catch (e: android.os.RemoteException) {
-                        Log.e(TAG, "Shizuku died during extraction", e)
-                        fail("Extraction failed. Shizuku service disconnected. FIX: Ensure Shizuku is running and the RETR0 service is connected.")
-                        return@withContext false
+                        if (count <= 0) throw Exception("Archive extraction failed")
+                        downloadedBytesAccumulated += file.size
                     } catch (e: Exception) {
-                        Log.e(TAG, "Extraction failure: ${e.message}")
-                        val fixHint = if (e.message?.contains("No space") == true) "FIX: You have run out of storage space on your device." else "FIX: Ensure Shizuku is running and you have free space."
-                        fail("Extraction failed for ${file.name}. $fixHint (Error: ${e.message})")
-                        return@withContext false 
+                        Log.e(TAG, "Sonic install failed", e)
+                        fail("Sonic Install failed for ${file.name}: ${e.message}")
+                        return@withContext false
                     }
                 } else {
-                    val relativePath = file.destination.substringAfter("com.ea.games.r3_row/")
-                        .substringAfter("com.ea.games.r3_na/")
-                    val finalDest = "$rr3Path/$relativePath"
-                    
-                    if (!service.copyFile(downloadFile.absolutePath, finalDest)) {
-                        fail("Failed to copy ${file.name}"); return@withContext false
+                    // LEGACY/SINGLE FILE HANDLER
+                    if (file.chunks.isNotEmpty()) {
+                        // --- PARALLEL CHUNK DOWNLOADER ---
+                        updateProgress(
+                            state = InstallState.DOWNLOADING,
+                            step = "$fileNum: Fast Downloading Chunks...",
+                            currentFile = file.name,
+                            overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
+                            completedFiles = index,
+                            totalFiles = requiredFiles.size,
+                            eta = "Streaming...",
+                        )
+
+                        // Download chunks from the BOOSTER proxy
+                        val chunkBaseUrl = "$BOOSTER_URL/"
+                        if (!downloader.downloadChunks(
+                                baseUrl = chunkBaseUrl, 
+                                chunkNames = file.chunks, 
+                                destDir = tempDir, 
+                                totalSize = file.size,
+                                modVersion = manifest.version,
+                                archiveId = file.id,
+                                chunkDao = downloadDb.chunkDao()
+                            ) { bytes, _, speed ->
+                            val overall = downloadedBytesAccumulated + bytes
+                            val remaining = totalCompressed - overall
+                            val etaStr = if (speed > 0) String.format(Locale.ENGLISH, "%02d:%02d", (remaining / speed).toLong() / 60, (remaining / speed).toLong() % 60) else "Calculating..."
+                            
+                            updateProgress(
+                            state = InstallState.DOWNLOADING,
+                            step = "$fileNum: Fast Downloading Chunks...",
+                            currentFile = file.name,
+                            fileProgress = bytes.toFloat() / file.size,
+                            overallProgress = overall.toFloat() / totalCompressed,
+                            completedFiles = index,
+                            totalFiles = requiredFiles.size,
+                            eta = etaStr,
+                        )
+                        }) {
+                            fail("Fast Download failed for ${file.name}: ${downloader.lastError}")
+                            return@withContext false
+                        }
+
+                        updateProgress(InstallState.PREPARING, "$fileNum: Stitching chunks...", file.name, 1.0f)
+                        val mergedFile = File(tempDir, "${file.name}.merged")
+                        try {
+                            if (mergedFile.exists()) mergedFile.delete()
+                            FileOutputStream(mergedFile).use { output ->
+                                file.chunks.forEach { chunkName ->
+                                    val chunkFileName = FileDownloader.localChunkFileName(chunkName)
+                                    val chunkFile = File(tempDir, chunkFileName)
+                                    chunkFile.inputStream().use { it.copyTo(output) }
+                                    chunkFile.delete()
+                                }
+                            }
+                            if (downloadFile.exists()) downloadFile.delete()
+                            mergedFile.renameTo(downloadFile)
+                        } catch (e: Exception) {
+                            fail("Failed to stitch file parts: ${e.message}")
+                            return@withContext false
+                        }
+                    } else {
+                        // --- SINGLE FILE DOWNLOADER ---
+                        updateProgress(
+                            state = InstallState.DOWNLOADING,
+                            step = "$fileNum: Connecting...",
+                            currentFile = file.name,
+                            overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
+                            completedFiles = index,
+                            totalFiles = requiredFiles.size,
+                        )
+
+                        if (!downloader.download(file.url.replace(MANIFEST_URL, BOOSTER_URL), downloadFile, file.size) { currentBytes, totalBytes, speed ->
+                            val overallDownloaded = downloadedBytesAccumulated + currentBytes
+                            val overallProgress = overallDownloaded.toFloat() / totalCompressed
+                            val remainingBytes = totalCompressed - overallDownloaded
+                            val etaSeconds = if (speed > 0) (remainingBytes / speed).toLong() else -1L
+                            val etaStr = if (etaSeconds >= 0) String.format(Locale.ENGLISH, "%02d:%02d", etaSeconds / 60, etaSeconds % 60) else "Calculating..."
+
+                            updateProgress(
+                                state = InstallState.DOWNLOADING, 
+                                step = "$fileNum: Downloading...", 
+                                currentFile = file.name, 
+                                fileProgress = currentBytes.toFloat() / totalBytes,
+                                overallProgress = overallProgress,
+                                completedFiles = index,
+                                totalFiles = requiredFiles.size,
+                                eta = etaStr,
+                            )
+                        }) {
+                            fail("Download failed: ${file.name} (${downloader.lastError})")
+                            return@withContext false
+                        }
                     }
+
+                    downloadedBytesAccumulated += file.size
+                    
+                    // Verify hash for single files/merged files
+                    if (file.sha256 != "SKIP_VERIFICATION") {
+                        if (!verifier.verifySha256(downloadFile, file.sha256)) {
+                            fail("Corrupted file: ${file.name}")
+                            return@withContext false
+                        }
+                    }
+
+                    if (file.type == "split_zip") {
+                        updateProgress(InstallState.EXTRACTING, "$fileNum: Extracting game data...", file.name)
+                        Log.i(TAG, "Extracting stitched archive ${downloadFile.absolutePath} to $rr3Path")
+                        val extractedCount = sonicInstaller.installArchive(downloadFile, rr3Path)
+                        if (extractedCount <= 0) {
+                            fail("Archive extraction produced no files: ${file.name}")
+                            return@withContext false
+                        }
+                        val statsAfterExtraction = s.getDirectoryStats(rr3Path)
+                        Log.i(TAG, "Extraction complete for ${file.name}: $extractedCount entries; target now has ${statsAfterExtraction[1]} files")
+                        if (statsAfterExtraction[1] <= 0L) {
+                            fail("Extraction verification failed for ${file.name}: target is empty")
+                            return@withContext false
+                        }
+                        downloadDb.chunkDao().clearChunksForArchive(manifest.version, file.id)
+                    } else {
+                        val relativePath = file.destination.substringAfter("com.ea.games.r3_row/")
+                            .substringAfter("com.ea.games.r3_na/")
+                        val finalDest = "$rr3Path/$relativePath"
+
+                        if (file.name.endsWith(".patch")) {
+                            updateProgress(InstallState.INSTALLING, "$fileNum: Applying Binary Patch...", file.name)
+                            val targetFile = finalDest.removeSuffix(".patch")
+                            if (!s.applyPatch(targetFile, downloadFile.absolutePath)) {
+                                fail("Failed to apply patch: ${file.name}")
+                                return@withContext false
+                            }
+                        } else if (!s.copyFile(downloadFile.absolutePath, finalDest)) {
+                            fail("Failed to copy ${file.name}")
+                            return@withContext false
+                        }
+                    }
+                    downloadFile.delete()
                 }
 
-                // DELETE ZIP IMMEDIATELY TO FREE UP SPACE
-                downloadFile.delete()
                 updateProgress(
                     state = InstallState.INSTALLING, 
                     step = "$fileNum: Completed", 
@@ -253,7 +395,7 @@ class Retr0Installer(
                     fileProgress = 1.0f, 
                     overallProgress = (downloadedBytesAccumulated.toFloat() / totalCompressed),
                     completedFiles = index + 1, 
-                    totalFiles = manifest.files.size,
+                    totalFiles = requiredFiles.size,
                 )
             }
 
@@ -268,12 +410,13 @@ class Retr0Installer(
     }
 
     fun runSafeTest(): Boolean {
+        val s = service ?: run { fail("Not connected."); return false }
         return try {
             val rr3Path = getRr3Path()
-            if (!service.ping()) { fail("Not connected."); return false }
+            if (!s.ping()) { fail("Not connected."); return false }
             val testPath = "$rr3Path/files/retr0_test.tmp"
-            if (service.writeFile(testPath, "TEST".toByteArray())) {
-                service.delete(testPath)
+            if (s.writeFile(testPath, "TEST".toByteArray(Charsets.UTF_8))) {
+                s.delete(testPath)
                 updateProgress(InstallState.SUCCESS, "FILESYSTEM TEST PASSED", "", 1.0f)
                 true
             } else {
@@ -285,17 +428,18 @@ class Retr0Installer(
     }
 
     fun runAssetRepair(): Boolean {
+        val s = service ?: run { fail("Not connected."); return false }
         return try {
             val rr3Path = getRr3Path()
-            if (!service.ping()) { fail("Not connected."); return false }
+            if (!s.ping()) { fail("Not connected."); return false }
             val depotPath = "$rr3Path/files/.depot"
             val resPath = "$rr3Path/files/apk/res"
             updateProgress(InstallState.PREPARING, "Cleaning assets...")
-            service.delete("$depotPath/eds")
-            service.delete("$depotPath/feats")
+            s.delete("$depotPath/eds")
+            s.delete("$depotPath/feats")
             updateProgress(InstallState.INSTALLING, "Restoring assets...")
-            if (service.exists("$resPath/eds")) service.copyDirectory("$resPath/eds", "$depotPath/eds")
-            if (service.exists("$resPath/feats")) service.copyDirectory("$resPath/feats", "$depotPath/feats")
+            if (s.exists("$resPath/eds")) s.copyDirectory("$resPath/eds", "$depotPath/eds")
+            if (s.exists("$resPath/feats")) s.copyDirectory("$resPath/feats", "$depotPath/feats")
             updateProgress(InstallState.SUCCESS, "ASSET REPAIR COMPLETE")
             true
         } catch (e: Exception) {
@@ -304,16 +448,17 @@ class Retr0Installer(
     }
 
     suspend fun importCharacterData(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             val rr3Path = getRr3Path()
-            if (!service.ping()) { fail("Not connected."); return@withContext false }
+            if (!s.ping()) { fail("Not connected."); return@withContext false }
             val destPath = "$rr3Path/files/doc/character.2.dat"
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: run {
                 fail("Could not open file."); return@withContext false
             }
             updateProgress(InstallState.INSTALLING, "Importing character.2.dat...")
-            service.delete(destPath)
-            if (service.importFile(pfd, destPath)) {
+            s.delete(destPath)
+            if (s.importFile(pfd, destPath)) {
                 updateProgress(InstallState.SUCCESS, "CHARACTER DATA IMPORTED")
                 return@withContext true
             }
@@ -324,9 +469,10 @@ class Retr0Installer(
     }
 
     suspend fun importSaveDirectory(treeUri: Uri): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             val rr3Path = getRr3Path()
-            if (!service.ping()) { fail("Not connected."); return@withContext false }
+            if (!s.ping()) { fail("Not connected."); return@withContext false }
             val destPath = "$rr3Path/files/doc"
             val tempDir = File(context.externalCacheDir ?: context.cacheDir, "save_import").apply { deleteRecursively(); mkdirs() }
             val directory = DocumentFile.fromTreeUri(context, treeUri) ?: run {
@@ -337,8 +483,8 @@ class Retr0Installer(
             pullRecursiveFromDocumentFile(directory, tempDir)
 
             updateProgress(InstallState.INSTALLING, "Replacing .doc folder...")
-            service.delete(destPath)
-            service.createDirectory(destPath)
+            s.delete(destPath)
+            s.createDirectory(destPath)
             copyRecursiveToPrivileged(tempDir, destPath)
             tempDir.deleteRecursively()
             updateProgress(InstallState.SUCCESS, "SAVE FOLDER IMPORTED")
@@ -349,10 +495,11 @@ class Retr0Installer(
     }
 
     suspend fun getSaveProfiles(): List<SaveProfile> = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext emptyList()
         try {
-            if (!service.ping()) return@withContext emptyList()
-            service.createDirectory(SAVE_HUB_PATH)
-            val files = service.listFiles(SAVE_HUB_PATH) ?: return@withContext emptyList()
+            if (!s.ping()) return@withContext emptyList()
+            s.createDirectory(SAVE_HUB_PATH)
+            val files = s.listFiles(SAVE_HUB_PATH) ?: return@withContext emptyList()
             
             Log.i(TAG, "Listing Hub: Found ${files.size} entries in $SAVE_HUB_PATH")
             
@@ -365,7 +512,7 @@ class Retr0Installer(
                     name = profileName,
                     timestamp = file.lastModified(),
                     fileCount = 1,
-                    totalSize = service.getFileSize(path),
+                    totalSize = s.getFileSize(path),
                     path = file,
                 )
             }.sortedByDescending { it.timestamp }.toList()
@@ -376,26 +523,27 @@ class Retr0Installer(
      * Backs up only the character.2.dat file to the persistent hub.
      */
     suspend fun createSnapshot(profileName: String): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         Log.i(TAG, "Creating snapshot (character only): $profileName")
         try {
             val rr3Path = getRr3Path()
-            if (!service.ping()) { fail("Shizuku disconnected."); return@withContext false }
+            if (!s.ping()) { fail("Shizuku disconnected."); return@withContext false }
             
             val sourceFile = "$rr3Path/files/doc/character.2.dat"
             val destFile = "$SAVE_HUB_PATH/$profileName.dat"
             
             updateProgress(InstallState.PREPARING, "Checking game save...")
-            if (!service.exists(sourceFile)) {
+            if (!s.exists(sourceFile)) {
                 fail("Source character.2.dat not found in game folder.")
                 return@withContext false
             }
 
-            service.createDirectory(SAVE_HUB_PATH)
+            s.createDirectory(SAVE_HUB_PATH)
 
             updateProgress(InstallState.INSTALLING, "Copying to Hub...")
             
             // DIRECT COPY: The service can see both paths!
-            if (service.copyFile(sourceFile, destFile)) {
+            if (s.copyFile(sourceFile, destFile)) {
                 updateProgress(InstallState.SUCCESS, "SNAPSHOT CREATED", "Saved to Documents")
                 return@withContext true
             }
@@ -408,12 +556,13 @@ class Retr0Installer(
     }
 
     suspend fun applyProfile(profile: SaveProfile): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             val rr3Path = getRr3Path()
-            if (!service.ping()) { fail("Not connected."); return@withContext false }
+            if (!s.ping()) { fail("Not connected."); return@withContext false }
             val destFile = "$rr3Path/files/doc/character.2.dat"
             updateProgress(InstallState.INSTALLING, "Switching save file...")
-            if (service.copyFile(profile.path.absolutePath, destFile)) {
+            if (s.copyFile(profile.path.absolutePath, destFile)) {
                 updateProgress(InstallState.SUCCESS, "PROFILE APPLIED")
                 return@withContext true
             }
@@ -424,11 +573,11 @@ class Retr0Installer(
     }
 
     suspend fun deleteProfile(profile: SaveProfile) = withContext(Dispatchers.IO) {
-        service.delete(profile.path.absolutePath)
+        service?.delete(profile.path.absolutePath)
     }
 
     suspend fun renameProfile(profile: SaveProfile, newName: String): Boolean = withContext(Dispatchers.IO) {
-        service.move(profile.path.absolutePath, "${profile.path.parent}/$newName.dat")
+        service?.move(profile.path.absolutePath, "${profile.path.parent}/$newName.dat") ?: false
     }
 
     /**
@@ -489,7 +638,7 @@ class Retr0Installer(
                             playerRs = obj.optLong("player_rs", 0),
                             playerMs = obj.optLong("player_ms", 0),
                             likes = obj.optInt("likes", 0),
-                            downloads = obj.optInt("downloads", 0)
+                            downloads = obj.optInt("downloads", 0),
                         ),
                     )
                 }
@@ -532,7 +681,7 @@ class Retr0Installer(
                             createdAt = obj.optString("created_at", ""),
                             targetTrack = obj.optString("target_track", "Garage_Music.mp3"),
                             likes = obj.optInt("likes", 0),
-                            downloads = obj.optInt("downloads", 0)
+                            downloads = obj.optInt("downloads", 0),
                         ),
                     )
                 }
@@ -563,6 +712,98 @@ class Retr0Installer(
     }
 
     /**
+     * Uses Cloudflare AI to analyze an error and provide a fix.
+     */
+    suspend fun troubleshootError(errorMessage: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$COMMUNITY_API_URL/troubleshoot")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
+
+            val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
+            val jsonReq = org.json.JSONObject().apply {
+                put("error", errorMessage)
+                put("device", deviceModel)
+                put("type", "troubleshoot")
+            }
+
+            connection.outputStream.use { it.write(jsonReq.toString().toByteArray(Charsets.UTF_8)) }
+            
+            val respCode = connection.responseCode
+            Log.d(TAG, "Troubleshoot response code: $respCode")
+
+            if (respCode == 200) {
+                val resp = connection.inputStream.bufferedReader().use { it.readText() }
+                Log.d(TAG, "Troubleshoot response: $resp")
+                val jsonResp = org.json.JSONObject(resp)
+                return@withContext jsonResp.optString("response", "No response from AI")
+            } else {
+                val err = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
+                Log.e(TAG, "Troubleshoot error ($respCode): $err")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "AI Troubleshoot failed", e)
+        }
+        null
+    }
+
+    /**
+     * Sends a conversation history to the Cloudflare AI Modding Assistant.
+     */
+    suspend fun chatWithAi(history: List<ChatMessage>): String? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$COMMUNITY_API_URL/troubleshoot")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.connectTimeout = 20000
+            connection.readTimeout = 20000
+            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
+
+            val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
+            
+            // The Worker expects "error", "device", and "type"
+            // It does not support conversation history yet, so we send the latest user message.
+            val lastUserMsg = history.lastOrNull { it.isUser }?.content ?: ""
+
+            val jsonReq = org.json.JSONObject().apply {
+                put("error", lastUserMsg) 
+                put("device", deviceModel)
+                put("type", "general") 
+            }
+
+            Log.d(TAG, "Sending AI Chat request to: $url")
+            connection.outputStream.use { it.write(jsonReq.toString().toByteArray(Charsets.UTF_8)) }
+            
+            val respCode = connection.responseCode
+            Log.d(TAG, "AI Chat response code: $respCode")
+
+            if (respCode == 200) {
+                val resp = connection.inputStream.bufferedReader().use { it.readText() }
+                Log.d(TAG, "AI Chat response: $resp")
+                val jsonResp = org.json.JSONObject(resp)
+                return@withContext jsonResp.optString("response", "AI is silent.")
+            } else {
+                val errBody = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
+                Log.e(TAG, "AI Chat error ($respCode): $errBody")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "AI Chat exception: ${e.message}", e)
+        }
+        null
+    }
+
+    /**
      * Uploads a local save profile to the community hub.
      */
     suspend fun uploadToCommunity(
@@ -573,6 +814,7 @@ class Retr0Installer(
         manualRS: Long = -1,
         manualMS: Long = -1,
     ): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             updateProgress(InstallState.PREPARING, "Scanning and Uploading...")
             
@@ -582,7 +824,7 @@ class Retr0Installer(
             
             // USE PFD EXPORT: ensures the app process OWNS the temp file
             val pfd = android.os.ParcelFileDescriptor.open(tempFile, android.os.ParcelFileDescriptor.MODE_READ_WRITE or android.os.ParcelFileDescriptor.MODE_CREATE)
-            val exportSuccess = pfd.use { service.exportFile(profile.path.absolutePath, it) }
+            val exportSuccess = pfd.use { s.exportFile(profile.path.absolutePath, it) }
             
             if (!exportSuccess) {
                 fail("Could not read backup file.")
@@ -590,7 +832,7 @@ class Retr0Installer(
             }
 
             // 2. Determine Stats (Manual entries take priority)
-            val stats = SaveScanner.scan(tempFile, androidId)
+            val stats = SaveScanner.scan(tempFile)
             val finalLevel = if (manualLevel >= 0) manualLevel else stats.level
             val finalGold = if (manualGold >= 0) manualGold else stats.gold
             val finalRS = if (manualRS >= 0) manualRS else stats.rs
@@ -661,13 +903,14 @@ class Retr0Installer(
      * Downloads a community save and adds it to the local hub.
      */
     suspend fun downloadCommunitySave(save: CommunitySave): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             updateProgress(InstallState.DOWNLOADING, "Downloading ${save.customName}...")
             val destFile = File(SAVE_HUB_PATH, "${save.customName}.dat")
-            service.createDirectory(SAVE_HUB_PATH)
+            s.createDirectory(SAVE_HUB_PATH)
 
             val encodedId = java.net.URLEncoder.encode(save.id, "UTF-8")
-            val url = URL("$COMMUNITY_API_URL/download?id=$encodedId")
+            val url = URL("$BOOSTER_URL/download?id=$encodedId")
             val connection = url.openConnection() as HttpURLConnection
             connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
             
@@ -679,7 +922,7 @@ class Retr0Installer(
                     }
                 }
                 
-                if (service.copyFile(tempFile.absolutePath, destFile.absolutePath)) {
+                if (s.copyFile(tempFile.absolutePath, destFile.absolutePath)) {
                     tempFile.delete()
                     updateProgress(InstallState.SUCCESS, "DOWNLOAD COMPLETE", "Saved to your Hub.")
                     true
@@ -708,7 +951,7 @@ class Retr0Installer(
         trackFileName: String,
         uploaderName: String,
         customName: String,
-        metadata: MusicMetadata? = null
+        metadata: MusicMetadata? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         // 1. Apply Locally (saving metadata)
         val applied = applyMusicMod(uri, trackFileName, metadata)
@@ -727,6 +970,7 @@ class Retr0Installer(
         customName: String,
         targetTrack: String,
     ): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             updateProgress(InstallState.PREPARING, "Uploading to Hub...")
 
@@ -759,7 +1003,7 @@ class Retr0Installer(
                     // Fallback: Pull from privileged storage to local cache if standard read fails
                     val tempFile = File(context.cacheDir, "music_upload_tmp.mp3")
                     val pfd = android.os.ParcelFileDescriptor.open(tempFile, android.os.ParcelFileDescriptor.MODE_READ_WRITE or android.os.ParcelFileDescriptor.MODE_CREATE)
-                    val pulled = pfd.use { service.exportFile(uri.path ?: "", it) }
+                    val pulled = pfd.use { s.exportFile(uri.path ?: "", it) }
                     if (pulled) tempFile.inputStream() else throw e
                 } else throw e
             } ?: throw java.io.FileNotFoundException("Could not open stream for URI: $uri")
@@ -808,16 +1052,17 @@ class Retr0Installer(
      * Downloads a community music file and applies it to the game or saves to library.
      */
     suspend fun downloadCommunityMusic(music: CommunityMusic, toLibrary: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             val rr3Path = getRr3Path()
             updateProgress(InstallState.DOWNLOADING, "Downloading ${music.customName}...")
             
             // Ensure necessary directories exist
-            if (toLibrary) service.createDirectory(MUSIC_LIBRARY_PATH)
+            if (toLibrary) s.createDirectory(MUSIC_LIBRARY_PATH)
             else backupOriginalMusic()
 
             val encodedId = java.net.URLEncoder.encode(music.id, "UTF-8")
-            val url = URL("$COMMUNITY_API_URL/music/download?id=$encodedId")
+            val url = URL("$BOOSTER_URL/music/download?id=$encodedId")
             val connection = url.openConnection() as HttpURLConnection
             connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
             
@@ -837,7 +1082,7 @@ class Retr0Installer(
                     "$rr3Path/files/.depot/audio/music/${music.targetTrack}"
                 }
 
-                if (service.copyFile(tempFile.absolutePath, destPath)) {
+                if (s.copyFile(tempFile.absolutePath, destPath)) {
                     tempFile.delete()
                     if (toLibrary) {
                         updateProgress(InstallState.SUCCESS, "SAVED TO LIBRARY", music.customName)
@@ -875,7 +1120,7 @@ class Retr0Installer(
             return@withContext YouTubeInfo(
                 title = info.title ?: "YouTube Audio",
                 thumbnailUrl = info.thumbnail,
-                url = youtubeUrl
+                url = youtubeUrl,
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch YouTube info", e)
@@ -919,13 +1164,13 @@ class Retr0Installer(
                     step = "Local Conversion: $progress%",
                     fileProgress = progress / 100f,
                     overallProgress = progress / 100f,
-                    eta = if (eta > 0) "${eta}s" else "Converting..."
+                    eta = if (eta > 0) "${eta}s" else "Converting...",
                 )
                 Log.v(TAG, "yt-dlp: $line")
             }
             
             val downloadedFile = tempDir.listFiles()?.find { it.extension == "mp3" }
-            if (downloadedFile != null && downloadedFile.exists()) {
+            if ((downloadedFile != null) && downloadedFile.exists()) {
                 // Move to a stable location
                 val finalFile = File(context.externalCacheDir ?: context.cacheDir, "youtube_download.mp3")
                 if (finalFile.exists()) finalFile.delete()
@@ -945,14 +1190,15 @@ class Retr0Installer(
     }
 
     private fun copyRecursiveToPrivileged(localDir: File, privilegedDest: String): Int {
+        val s = service ?: return 0
         var count = 0
         localDir.listFiles()?.forEach { file ->
             val destPath = "$privilegedDest/${file.name}"
             if (file.isDirectory) {
-                service.createDirectory(destPath)
+                s.createDirectory(destPath)
                 count += copyRecursiveToPrivileged(file, destPath)
             } else {
-                if (service.copyFile(file.absolutePath, destPath)) count++
+                if (s.copyFile(file.absolutePath, destPath)) count++
             }
         }
         return count
@@ -1017,6 +1263,7 @@ class Retr0Installer(
      * Backs up original game music to persistent storage if not already done.
      */
     suspend fun backupOriginalMusic(): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
         try {
             val rr3Path = getRr3Path()
             val musicDir = "$rr3Path/files/.depot/audio/music"
@@ -1037,10 +1284,10 @@ class Retr0Installer(
                 "Formula_E_EJ_Clear_Blue_Sky.mp3",
                 "Ryan_Kurt_Time_RICCI_Remix.mp3",
                 "Ryan_Kurt_Taplein_SIPPY_Remix.mp3",
-                "Ryan_Kurt_Further_Corrupt_Remix.mp3"
+                "Ryan_Kurt_Further_Corrupt_Remix.mp3",
             )
 
-            service.createDirectory(MUSIC_HUB_PATH)
+            s.createDirectory(MUSIC_HUB_PATH)
             var backedUpCount = 0
 
             tracks.forEach { fileName ->
@@ -1048,9 +1295,9 @@ class Retr0Installer(
                 val dest = "$MUSIC_HUB_PATH/$fileName"
                 
                 // Only backup if the backup doesn't already exist (to avoid backing up a modded file)
-                if (service.exists(source) && !service.exists(dest)) {
+                if (s.exists(source) && !s.exists(dest)) {
                     Log.i(TAG, "Backing up original music: $fileName")
-                    if (service.copyFile(source, dest)) backedUpCount++
+                    if (s.copyFile(source, dest)) backedUpCount++
                 }
             }
             return@withContext true
@@ -1061,10 +1308,84 @@ class Retr0Installer(
     }
 
     /**
+     * Scans the game's audio directory recursively, excluding the 'music' folder.
+     * Detects all common audio/video container formats used by the game engine.
+     */
+    suspend fun getAllMusicSlots(): List<String> = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext emptyList()
+        try {
+            val rr3Path = getRr3Path()
+            val audioDir = "$rr3Path/files/.depot/audio"
+            
+            val slots = mutableListOf<String>()
+            val extensions = listOf(".mp3", ".mp4", ".wav", ".ogg", ".aac", ".m4a", ".flac", ".3gp")
+            
+            fun scanRecursive(currentPath: String, relativePrefix: String) {
+                s.listFiles(currentPath)?.forEach { name ->
+                    val fullPath = "$currentPath/$name"
+                    val relativePath = if (relativePrefix.isEmpty()) name else "$relativePrefix/$name"
+                    
+                    if (s.isDirectory(fullPath)) {
+                        scanRecursive(fullPath, relativePath)
+                    } else {
+                        val lower = name.lowercase()
+                        if (extensions.any { lower.endsWith(it) }) {
+                            slots.add(relativePath)
+                        }
+                    }
+                }
+            }
+
+            // Scan the entire audio folder
+            s.listFiles(audioDir)?.forEach { name ->
+                if (name != "music") { // Explicitly exclude the 'music' folder
+                    val fullPath = "$audioDir/$name"
+                    if (s.isDirectory(fullPath)) {
+                        scanRecursive(fullPath, name)
+                    } else {
+                        val lower = name.lowercase()
+                        if (extensions.any { lower.endsWith(it) }) slots.add(name)
+                    }
+                }
+            }
+            
+            slots.sorted().toList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to list audio slots", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Scans the factory original res folder for all available graphics profiles.
+     */
+    suspend fun getAvailablePresets(): List<String> = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext emptyList()
+        try {
+            val rr3Path = getRr3Path()
+            val resEds = "$rr3Path/files/apk/res/eds"
+            val resFeats = "$rr3Path/files/apk/res/feats"
+            
+            val presets = mutableSetOf<String>()
+            
+            s.listFiles(resEds)?.forEach { 
+                if (it.endsWith(".plist")) presets.add(it.removeSuffix(".plist"))
+            }
+            
+            s.listFiles(resFeats)?.forEach { 
+                if (it.endsWith(".feats")) presets.add(it.removeSuffix(".feats"))
+            }
+            
+            presets.asSequence().sorted().toList()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    /**
      * Overwrites all standard quality tiers with the selected preset.
      * Source: apk/res (Factory Original)
      */
     suspend fun applyGraphicsPreset(presetName: String): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             updateProgress(InstallState.PREPARING, "Preparing graphics swap...")
             
@@ -1078,8 +1399,8 @@ class Retr0Installer(
             val sourcePlist = "$resEds/$presetName.plist"
             val sourceFeats = "$resFeats/$presetName.feats"
 
-            val hasPlist = service.exists(sourcePlist)
-            val hasFeats = service.exists(sourceFeats)
+            val hasPlist = s.exists(sourcePlist)
+            val hasFeats = s.exists(sourceFeats)
 
             if (!hasPlist && !hasFeats) {
                 fail("Preset source not found: $presetName (.plist or .feats)")
@@ -1098,7 +1419,7 @@ class Retr0Installer(
                 // Apply Plist (if exists)
                 if (hasPlist) {
                     val destPlist = "$depotEds/$tier.plist"
-                    if (service.copyFile(sourcePlist, destPlist)) {
+                    if (s.copyFile(sourcePlist, destPlist)) {
                         successCount++
                     }
                 }
@@ -1106,7 +1427,7 @@ class Retr0Installer(
                 // Apply Feats (if exists)
                 if (hasFeats) {
                     val destFeats = "$depotFeats/$tier.feats"
-                    if (service.copyFile(sourceFeats, destFeats)) {
+                    if (s.copyFile(sourceFeats, destFeats)) {
                         if (!hasPlist) successCount++ // Count as success if feats-only
                     }
                 }
@@ -1129,12 +1450,13 @@ class Retr0Installer(
      * Restores the original graphics configuration from the factory apk/res folder.
      */
     suspend fun restoreOriginalGraphics(): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             val rr3Path = getRr3Path()
             val resPath = "$rr3Path/files/apk/res"
             val depotPath = "$rr3Path/files/.depot"
 
-            if (!service.exists(resPath)) {
+            if (!s.exists(resPath)) {
                 fail("Original graphics source (apk/res) not found.")
                 return@withContext false
             }
@@ -1142,17 +1464,17 @@ class Retr0Installer(
             updateProgress(InstallState.INSTALLING, "Restoring original graphics...")
             
             // Restore EDS
-            if (service.exists("$resPath/eds")) {
-                service.delete("$depotPath/eds")
-                service.createDirectory("$depotPath/eds")
-                service.copyDirectory("$resPath/eds", "$depotPath/eds")
+            if (s.exists("$resPath/eds")) {
+                s.delete("$depotPath/eds")
+                s.createDirectory("$depotPath/eds")
+                s.copyDirectory("$resPath/eds", "$depotPath/eds")
             }
 
             // Restore FEATS
-            if (service.exists("$resPath/feats")) {
-                service.delete("$depotPath/feats")
-                service.createDirectory("$depotPath/feats")
-                service.copyDirectory("$resPath/feats", "$depotPath/feats")
+            if (s.exists("$resPath/feats")) {
+                s.delete("$depotPath/feats")
+                s.createDirectory("$depotPath/feats")
+                s.copyDirectory("$resPath/feats", "$depotPath/feats")
             }
 
             updateProgress(InstallState.SUCCESS, "ORIGINAL GRAPHICS RESTORED")
@@ -1166,36 +1488,67 @@ class Retr0Installer(
     /**
      * Replaces a game music track with a user-provided file.
      */
+    /**
+     * Internal: Ensures a permanent backup of the original game file exists 
+     * before we apply any modifications.
+     */
+    private fun ensureBackup(relativePath: String): Boolean {
+        val s = service ?: return false
+        val rr3Path = getRr3Path()
+        
+        // Normalize the relative path to be used for the backup
+        val normalizedPath = if (relativePath.contains("/")) relativePath else "music/$relativePath"
+        val backupPath = "$MUSIC_HUB_PATH/$normalizedPath"
+        val gamePath = "$rr3Path/files/.depot/audio/$normalizedPath"
+        
+        if (s.exists(backupPath)) return true // Already backed up
+        
+        if (!s.exists(gamePath)) {
+            Log.e(TAG, "Original file not found to backup: $gamePath")
+            return false
+        }
+        
+        s.createDirectory(File(backupPath).parent ?: MUSIC_HUB_PATH)
+        Log.i(TAG, "Creating original backup: $normalizedPath")
+        return s.copyFile(gamePath, backupPath)
+    }
+
+    /**
+     * Replaces a game music track with a user-provided file.
+     */
     suspend fun applyMusicMod(
         uri: Uri, 
         trackFileName: String, 
-        metadata: MusicMetadata? = null
+        metadata: MusicMetadata? = null,
     ): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
         try {
             val rr3Path = getRr3Path()
-            val destPath = "$rr3Path/files/.depot/audio/music/$trackFileName"
+            // Support both direct filenames (legacy) and relative paths (sfx/file.mp3)
+            val relativePath = if (trackFileName.contains("/")) trackFileName else "music/$trackFileName"
+            val destPath = "$rr3Path/files/.depot/audio/$relativePath"
             
-            // 1. Ensure backup exists before we overwrite
-            backupOriginalMusic()
+            // 1. Ensure permanent backup exists before we overwrite
+            ensureBackup(relativePath)
 
             // 2. Import the new music
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext false
-            updateProgress(InstallState.INSTALLING, "Applying Music Mod: $trackFileName")
+            updateProgress(InstallState.INSTALLING, "Applying Audio Mod: ${trackFileName.substringAfterLast("/")}")
             
-            if (service.importFile(pfd, destPath)) {
+            if (s.importFile(pfd, destPath)) {
                 // Save Artwork for the core slot too if provided
                 if (metadata?.artworkUrl != null) {
                     try {
-                        val baseName = trackFileName.removeSuffix(".mp3")
+                        val baseName = trackFileName.substringAfterLast("/").removeSuffix(".mp3")
                         val artFile = File(context.cacheDir, "art_buffer_core.jpg")
                         URL(metadata.artworkUrl).openStream().use { input ->
                             artFile.outputStream().use { output -> input.copyTo(output) }
                         }
-                        service.copyFile(artFile.absolutePath, "$MUSIC_LIBRARY_PATH/$baseName.jpg")
+                        s.copyFile(artFile.absolutePath, "$MUSIC_LIBRARY_PATH/$baseName.jpg")
                     } catch (_: Exception) {}
                 }
 
-                updateProgress(InstallState.SUCCESS, "MUSIC MOD APPLIED")
+                updateProgress(InstallState.SUCCESS, "AUDIO MOD APPLIED")
                 return@withContext true
             }
             false
@@ -1206,22 +1559,92 @@ class Retr0Installer(
     }
 
     /**
+     * Restores an audio file to its factory original state from the Hub.
+     */
+    suspend fun revertAudioMod(relativePath: String): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
+        try {
+            val rr3Path = getRr3Path()
+            
+            // Normalize path for lookup
+            val normalizedPath = if (relativePath.contains("/")) relativePath else "music/$relativePath"
+            
+            // Foolproof path checking: Try relative path first, then check if it's a flat filename
+            val backupPath = if (s.exists("$MUSIC_HUB_PATH/$normalizedPath")) {
+                "$MUSIC_HUB_PATH/$normalizedPath"
+            } else if (s.exists("$MUSIC_HUB_PATH/${relativePath.substringAfterLast("/")}")) {
+                "$MUSIC_HUB_PATH/${relativePath.substringAfterLast("/")}"
+            } else {
+                null
+            }
+            
+            if (backupPath == null) {
+                fail("No original backup found for: $relativePath")
+                return@withContext false
+            }
+            
+            val gamePath = "$rr3Path/files/.depot/audio/$normalizedPath"
+
+            updateProgress(InstallState.INSTALLING, "Reverting to original: ${relativePath.substringAfterLast("/")}")
+            if (s.copyFile(backupPath, gamePath)) {
+                updateProgress(InstallState.SUCCESS, "AUDIO REVERTED")
+                return@withContext true
+            }
+            false
+        } catch (e: Exception) {
+            fail("Revert Error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Returns a list of all relative paths that currently have an original backup.
+     */
+    suspend fun getBackedUpSlots(): Set<String> = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext emptySet()
+        val slots = mutableSetOf<String>()
+        try {
+            fun scanBackupRecursive(currentPath: String, relativePrefix: String) {
+                s.listFiles(currentPath)?.forEach { name ->
+                    val fullPath = "$currentPath/$name"
+                    val relativePath = if (relativePrefix.isEmpty()) name else "$relativePrefix/$name"
+                    if (s.isDirectory(fullPath)) {
+                        scanBackupRecursive(fullPath, relativePath)
+                    } else {
+                        slots.add(relativePath)
+                    }
+                }
+            }
+            scanBackupRecursive(MUSIC_HUB_PATH, "")
+        } catch (_: Exception) {}
+        slots
+    }
+
+    /**
      * Restores a specific original music track from the Hub.
      */
     suspend fun restoreMusic(trackFileName: String): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
         try {
             val rr3Path = getRr3Path()
-            val source = "$MUSIC_HUB_PATH/$trackFileName"
-            val dest = "$rr3Path/files/.depot/audio/music/$trackFileName"
+            // Support both direct filenames (legacy) and relative paths (sfx/file.mp3)
+            val relativePath = if (trackFileName.contains("/")) trackFileName else "music/$trackFileName"
+            
+            // Original music backups are flattened in the hub for now, but we check audio/ first
+            val source = "$MUSIC_HUB_PATH/${trackFileName.substringAfterLast("/")}"
+            val dest = "$rr3Path/files/.depot/audio/$relativePath"
 
-            if (!service.exists(source)) {
+            if (!s.exists(source)) {
+                // Try full relative path too for new dynamic backups
+                if (revertAudioMod(relativePath)) return@withContext true
+                
                 fail("Original backup for $trackFileName not found.")
                 return@withContext false
             }
 
-            updateProgress(InstallState.INSTALLING, "Restoring original: $trackFileName")
-            if (service.copyFile(source, dest)) {
-                updateProgress(InstallState.SUCCESS, "MUSIC RESTORED")
+            updateProgress(InstallState.INSTALLING, "Restoring original: ${trackFileName.substringAfterLast("/")}")
+            if (s.copyFile(source, dest)) {
+                updateProgress(InstallState.SUCCESS, "AUDIO RESTORED")
                 return@withContext true
             }
             false
@@ -1235,9 +1658,10 @@ class Retr0Installer(
      * Scans the local persistent music library and returns available tracks.
      */
     suspend fun getLibraryMusic(): List<LibraryMusic> = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext emptyList()
         try {
-            service.createDirectory(MUSIC_LIBRARY_PATH)
-            val libraryFiles = service.listFiles(MUSIC_LIBRARY_PATH) ?: emptyArray()
+            s.createDirectory(MUSIC_LIBRARY_PATH)
+            val libraryFiles = s.listFiles(MUSIC_LIBRARY_PATH) ?: emptyArray()
             
             val mp3Files = libraryFiles.filter { it.endsWith(".mp3", ignoreCase = true) }
 
@@ -1249,7 +1673,7 @@ class Retr0Installer(
                         val baseName = fileName.removeSuffix(".mp3")
                         val artworkPath = "$MUSIC_LIBRARY_PATH/$baseName.jpg"
                         
-                        var artworkUrl: String? = if (service.exists(artworkPath)) "file://$artworkPath" else null
+                        var artworkUrl: String? = if (s.exists(artworkPath)) "file://$artworkPath" else null
                         
                         // Always try to fetch professional metadata for the names
                         val meta = try {
@@ -1266,7 +1690,7 @@ class Retr0Installer(
 
                         LibraryMusic(
                             fileName = fileName,
-                            fileSize = service.getFileSize(absolutePath),
+                            fileSize = s.getFileSize(absolutePath),
                             absolutePath = absolutePath,
                             trackName = trackName,
                             artistName = artistName,
@@ -1288,11 +1712,12 @@ class Retr0Installer(
         uri: Uri, 
         customName: String, 
         thumbUrl: String? = null,
-        metadata: MusicMetadata? = null
+        metadata: MusicMetadata? = null,
     ): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
         try {
             updateProgress(InstallState.PREPARING, "Saving to Library...")
-            service.createDirectory(MUSIC_LIBRARY_PATH)
+            s.createDirectory(MUSIC_LIBRARY_PATH)
             
             val sanitizedName = customName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
             val baseFileName = sanitizedName.removeSuffix(".mp3")
@@ -1300,7 +1725,7 @@ class Retr0Installer(
             val destPath = "$MUSIC_LIBRARY_PATH/$fileName"
 
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext false
-            if (service.importFile(pfd, destPath)) {
+            if (s.importFile(pfd, destPath)) {
                 // Determine the best Artwork source
                 val finalArtUrl = metadata?.artworkUrl ?: thumbUrl
                 
@@ -1311,7 +1736,7 @@ class Retr0Installer(
                         artUrl.openStream().use { input ->
                             artFile.outputStream().use { output -> input.copyTo(output) }
                         }
-                        service.copyFile(artFile.absolutePath, "$MUSIC_LIBRARY_PATH/$baseFileName.jpg")
+                        s.copyFile(artFile.absolutePath, "$MUSIC_LIBRARY_PATH/$baseFileName.jpg")
                         artFile.delete()
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to save artwork for $baseFileName", e)
@@ -1332,9 +1757,10 @@ class Retr0Installer(
      * Deletes a track from the local music library.
      */
     suspend fun deleteLibraryMusic(fileName: String): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
         try {
             val path = "$MUSIC_LIBRARY_PATH/$fileName"
-            if (service.delete(path)) {
+            if (s.delete(path)) {
                 Log.i(TAG, "Deleted from library: $fileName")
                 true
             } else {
@@ -1350,22 +1776,26 @@ class Retr0Installer(
      * Applies a track from the library to a game soundtrack slot.
      */
     suspend fun applyFromLibrary(libraryFileName: String, targetTrackFileName: String): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext false
         try {
             val rr3Path = getRr3Path()
             val source = "$MUSIC_LIBRARY_PATH/$libraryFileName"
-            val dest = "$rr3Path/files/.depot/audio/music/$targetTrackFileName"
+            
+            // Support both direct filenames (legacy) and relative paths (sfx/file.mp3)
+            val relativePath = if (targetTrackFileName.contains("/")) targetTrackFileName else "music/$targetTrackFileName"
+            val dest = "$rr3Path/files/.depot/audio/$relativePath"
 
-            if (!service.exists(source)) {
+            if (!s.exists(source)) {
                 fail("Library file not found.")
                 return@withContext false
             }
 
-            // 1. Ensure backup exists
-            backupOriginalMusic()
+            // 1. Ensure permanent backup exists before we overwrite
+            ensureBackup(relativePath)
 
-            updateProgress(InstallState.INSTALLING, "Applying: $libraryFileName -> $targetTrackFileName")
-            if (service.copyFile(source, dest)) {
-                updateProgress(InstallState.SUCCESS, "MUSIC APPLIED FROM LIBRARY")
+            updateProgress(InstallState.INSTALLING, "Applying: $libraryFileName -> ${targetTrackFileName.substringAfterLast("/")}")
+            if (s.copyFile(source, dest)) {
+                updateProgress(InstallState.SUCCESS, "AUDIO APPLIED FROM LIBRARY")
                 return@withContext true
             }
             false
@@ -1379,45 +1809,55 @@ class Retr0Installer(
      * Checks for app updates and installs them.
      */
     suspend fun autoUpdate(isManual: Boolean = false): Boolean {
+        val s = service ?: return false
         try {
             if (isManual) updateProgress(InstallState.FETCHING_MANIFEST, "Checking for app updates...")
             val manifest = manifestManager.fetchManifest() ?: return false
             
             val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName
             
+            // Simple version comparison: trigger update if manifest version differs from local
             if (manifest.version != currentVersion) {
                 Log.i(TAG, "Update found! Current: $currentVersion, New: ${manifest.version}")
                 
-                val apkFile = manifest.files.find { it.type == "apk" } ?: return false
+                val apkFile = manifest.files.find { it.type == "apk" } ?: run {
+                    Log.e(TAG, "No APK file found in manifest for update")
+                    return false
+                }
 
-                if (isManual) updateProgress(InstallState.DOWNLOADING, "Downloading Update ${manifest.version}...", apkFile.name)
+                updateProgress(InstallState.DOWNLOADING, "New update found: V${manifest.version}", apkFile.name)
                 
                 val tempApk = File(context.externalCacheDir, "update.apk")
                 if (tempApk.exists()) tempApk.delete()
 
-                if (downloader.download(apkFile.url, tempApk, apkFile.size) { current, total, _ ->
-                    if (isManual) {
-                        updateProgress(
-                            state = InstallState.DOWNLOADING, 
-                            step = "Downloading Update...", 
-                            currentFile = apkFile.name, 
-                            fileProgress = current.toFloat() / total,
-                            overallProgress = current.toFloat() / total,
-                            eta = "Soon",
-                        )
-                    }
+                Log.i(TAG, "Downloading update APK from: ${apkFile.url}")
+                
+                if (downloader.download(apkFile.url.replace(MANIFEST_URL, BOOSTER_URL), tempApk, apkFile.size) { current, total, _ ->
+                    updateProgress(
+                        state = InstallState.DOWNLOADING, 
+                        step = "Downloading Update V${manifest.version}...", 
+                        currentFile = apkFile.name, 
+                        fileProgress = current.toFloat() / total,
+                        overallProgress = current.toFloat() / total,
+                        eta = "Processing",
+                    )
                 }) {
-                    if (isManual) updateProgress(InstallState.UPDATE, "Installing Update...", apkFile.name)
-                    if (service.installPackage(tempApk.absolutePath)) {
-                        if (isManual) updateProgress(InstallState.SUCCESS, "UPDATE INSTALLED")
+                    updateProgress(InstallState.UPDATE, "Installing update and restarting...", apkFile.name)
+                    Log.i(TAG, "Download complete. Passing to privileged service for installation...")
+                    
+                    if (s.installPackage(tempApk.absolutePath)) {
+                        updateProgress(InstallState.SUCCESS, "UPDATE INSTALLED")
                         return true
+                    } else {
+                        fail("Installation failed. Check Shizuku permissions.")
                     }
                 } else {
                     val error = downloader.lastError
-                    if (isManual) fail("Update download failed: $error")
+                    fail("Update download failed: $error")
                 }
             } else {
                 if (isManual) updateProgress(InstallState.SUCCESS, "APP IS UP TO DATE")
+                Log.i(TAG, "App is already at the latest version (V$currentVersion)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Auto-update failed", e)

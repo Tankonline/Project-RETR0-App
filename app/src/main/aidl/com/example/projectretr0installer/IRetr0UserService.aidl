@@ -44,5 +44,11 @@ interface IRetr0UserService {
 
     boolean isPackageRunning(String packageName) = 21;
 
+    boolean dumpLogcat(String destinationPath) = 22;
+
+    boolean applyPatch(String targetPath, String patchPath) = 23;
+
+    int nativeExtract(in ParcelFileDescriptor pfd, String destPath) = 24;
+
     void destroy() = 16777114;
 }

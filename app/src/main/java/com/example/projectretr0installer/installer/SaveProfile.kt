@@ -10,7 +10,7 @@ data class SaveProfile(
     val timestamp: Long,
     val fileCount: Int,
     val totalSize: Long,
-    val path: File
+    val path: File,
 ) {
     val formattedSize: String get() = StorageUtils.formatSize(totalSize)
     val formattedDate: String get() = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(timestamp))

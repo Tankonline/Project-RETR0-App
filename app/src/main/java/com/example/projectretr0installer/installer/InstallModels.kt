@@ -30,6 +30,18 @@ data class InstallFile(
     val destination: String,
     val type: String = "file", // "file", "zip", etc.
     val required: Boolean = true,
+    val chunks: List<String> = emptyList(),
+    val parts: List<ArchivePart> = emptyList(),
+)
+
+/**
+ * A physical segment of a split ZIP archive, in concatenation order.
+ */
+data class ArchivePart(
+    val name: String,
+    val url: String,
+    val size: Long,
+    val sha256: String,
 )
 
 /**
@@ -88,17 +100,6 @@ data class CommunityMusic(
     val targetTrack: String, // e.g., "Garage_Music.mp3"
     val likes: Int = 0,
     val downloads: Int = 0,
-) {
-    val formattedSize: String get() = StorageUtils.formatSize(fileSize)
-}
-
-/**
- * Represents a piece of game music that can be modded.
- */
-data class MusicTrack(
-    val fileName: String,
-    val displayName: String,
-    val isModded: Boolean = false,
 )
 
 /**
@@ -110,10 +111,8 @@ data class LibraryMusic(
     val absolutePath: String,
     val trackName: String? = null,
     val artistName: String? = null,
-    val artworkUrl: String? = null
-) {
-    val formattedSize: String get() = StorageUtils.formatSize(fileSize)
-}
+    val artworkUrl: String? = null,
+)
 
 /**
  * Metadata for a YouTube video.
@@ -130,6 +129,15 @@ data class YouTubeInfo(
 data class YouTubeDownloadResult(
     val file: java.io.File,
     val info: YouTubeInfo
+)
+
+/**
+ * Represents a single message in the AI Chat.
+ */
+data class ChatMessage(
+    val content: String,
+    val isUser: Boolean,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 /**
