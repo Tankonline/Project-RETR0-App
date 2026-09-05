@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.util.Log
+import androidx.core.content.edit
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.projectretr0installer.IRetr0UserService
@@ -12,7 +13,7 @@ import com.example.projectretr0installer.Retr0UserService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
-import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Background worker that performs automated snapshots of RR3 character data.
@@ -54,7 +55,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             Shizuku.bindUserService(args, connection)
             
             // Wait up to 10 seconds for the privileged service to connect
-            val service = withTimeoutOrNull(10000L) {
+            val service = withTimeoutOrNull(10.seconds) {
                 deferredService.await()
             }
 
@@ -75,12 +76,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 return Result.retry()
             }
 
-            val androidId = android.provider.Settings.Secure.getString(
-                applicationContext.contentResolver, 
-                android.provider.Settings.Secure.ANDROID_ID
-            )
-            
-            val installer = Retr0Installer(applicationContext, service, androidId)
+            val installer = Retr0Installer(applicationContext, service)
             
             // Generate a timestamped name for the automatic backup
             val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.ENGLISH).format(java.util.Date())
@@ -118,6 +114,6 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 
     private fun saveStatus(prefs: android.content.SharedPreferences, status: String) {
-        prefs.edit().putString("last_backup_status", status).apply()
+        prefs.edit { putString("last_backup_status", status) }
     }
 }

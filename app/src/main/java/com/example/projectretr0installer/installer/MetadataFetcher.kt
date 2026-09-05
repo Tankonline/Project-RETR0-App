@@ -35,13 +35,15 @@ object MetadataFetcher {
                 
                 for (i in 0 until results.length()) {
                     val res = results.getJSONObject(i)
-                    resultsList.add(MusicMetadata(
-                        trackName = res.optString("trackName", "Unknown"),
-                        artistName = res.optString("artistName", "Unknown"),
-                        artworkUrl = res.optString("artworkUrl100", "").replace("100x100bb", "600x600bb"),
-                        previewUrl = if (res.has("previewUrl")) res.getString("previewUrl") else null,
-                        collectionName = if (res.has("collectionName")) res.getString("collectionName") else null
-                    ))
+                    resultsList.add(
+                        MusicMetadata(
+                            trackName = res.optString("trackName", "Unknown"),
+                            artistName = res.optString("artistName", "Unknown"),
+                            artworkUrl = res.optString("artworkUrl100", "").replace("100x100bb", "600x600bb"),
+                            previewUrl = if (res.has("previewUrl")) res.getString("previewUrl") else null,
+                            collectionName = if (res.has("collectionName")) res.getString("collectionName") else null
+                        )
+                    )
                 }
             }
         } catch (e: Exception) {

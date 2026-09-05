@@ -1,18 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.projectretr0installer"
     xmlns:tools="http://schemas.android.com/tools">
-    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
 
     <queries>
         <package android:name="com.ea.games.r3_row" />
         <package android:name="com.ea.games.r3_na" />
+        <package android:name="moe.shizuku.manager" />
     </queries>
 
     <application
@@ -25,17 +27,18 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ProjectRETR0Installer">
 
-        <!-- Shizuku provider -->
+        <!-- Keep Shizuku's provider contract unchanged. The manager sends the binder
+             through this exported provider and performs authorization through the SDK. -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
             android:multiprocess="false"
             android:enabled="true"
             android:exported="true"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+            tools:replace="android:exported" />
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.example.projectretr0installer.MainActivity"
             android:exported="true"
             android:theme="@style/Theme.ProjectRETR0Installer"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
@@ -49,14 +52,17 @@
 
         </activity>
 
-        <!-- Shizuku UserService entry point is not an Android Service, so no <service> tag here -->
-
         <!-- Foreground Service for background installation -->
         <service
-            android:name=".installer.Retr0InstallService"
+            android:name="com.example.projectretr0installer.installer.Retr0InstallService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <uses-library
+            android:name="org.apache.http.legacy"
+            android:required="false"
+            tools:node="replace" />
 
     </application>
 

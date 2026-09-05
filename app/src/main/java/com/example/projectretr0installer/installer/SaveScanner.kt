@@ -2,8 +2,6 @@ package com.example.projectretr0installer.installer
 
 import android.util.Log
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
  * High-Accuracy Scanner for Real Racing 3 character.2.dat files.
@@ -18,10 +16,10 @@ object SaveScanner {
     data class Stats(
         val level: Int = 0,
         val gold: Long = 0,
-        val rs: Long = 0
+        val rs: Long = 0,
     )
 
-    fun scan(file: File, androidId: String? = null): Stats {
+    fun scan(file: File): Stats {
         if (!file.exists()) return Stats()
         
         return try {
@@ -58,7 +56,7 @@ object SaveScanner {
         // Search the next 16 bytes for an integer marker (0x10-0x13)
         for (i in (index + keyName.length) until (index + keyName.length + 16).coerceAtMost(data.size)) {
             val byte = data[i].toInt() and 0xFF
-            if (byte in 0x10..0x13) {
+            if ((byte in 0x10..0x13)) {
                 val len = 1 shl (byte and 0x0F)
                 return parseBigEndian(data, i + 1, len)
             }

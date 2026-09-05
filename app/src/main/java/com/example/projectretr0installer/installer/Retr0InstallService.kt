@@ -12,6 +12,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.projectretr0installer.IRetr0UserService
@@ -24,6 +25,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -37,12 +40,18 @@ class Retr0InstallService : Service() {
         private const val NOTIFICATION_ID = 1337
         private const val CHANNEL_ID = "retr0_install_channel"
         private const val WAKE_LOCK_TAG = "ProjectRETR0:InstallWakeLock"
+        private const val NOTIFICATION_UPDATE_INTERVAL_MS = 500L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var installer: Retr0Installer? = null
     
     private var wakeLock: PowerManager.WakeLock? = null
+    private var isTaskRunning = false
+    private var lastNotificationAt = 0L
+    private var lastNotificationState = InstallState.IDLE
+    private var pendingNotificationJob: Job? = null
+    private var pendingNotificationProgress: InstallProgress? = null
 
     // Stable flow that MainActivity can always bind to
     private val _serviceProgress = MutableStateFlow(InstallProgress())
@@ -67,26 +76,30 @@ class Retr0InstallService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        val profileName = intent?.getStringExtra("PROFILE_NAME")
-        val uploaderName = intent?.getStringExtra("UPLOADER_NAME")
-        val saveId = intent?.getStringExtra("SAVE_ID")
-        val customName = intent?.getStringExtra("CUSTOM_NAME")
-        val trackFileName = intent?.getStringExtra("TRACK_FILENAME")
-        val targetTrack = intent?.getStringExtra("TARGET_TRACK")
-        val presetName = intent?.getStringExtra("PRESET_NAME")
-        val youtubeUrl = intent?.getStringExtra("YOUTUBE_URL")
-        val artworkUrl = intent?.getStringExtra("ARTWORK_URL")
-        val shareHub = intent?.getBooleanExtra("SHARE_HUB", false) ?: false
         
-        val mLevel = intent?.getIntExtra("MANUAL_LEVEL", -1) ?: -1
-        val mGold = intent?.getLongExtra("MANUAL_GOLD", -1L) ?: -1L
-        val mRS = intent?.getLongExtra("MANUAL_RS", -1L) ?: -1L
-        val mMS = intent?.getLongExtra("MANUAL_MS", -1L) ?: -1L
-
         if (action?.startsWith("START_") == true) {
-            val binderProxy = intent.extras?.let { 
-                androidx.core.app.BundleCompat.getBinder(it, "USER_SERVICE_BINDER") 
+            if (isTaskRunning) {
+                Log.w(TAG, "Task already running, ignoring: $action")
+                return START_STICKY
             }
+            
+            val profileName = intent.getStringExtra("PROFILE_NAME")
+            val uploaderName = intent.getStringExtra("UPLOADER_NAME")
+            val saveId = intent.getStringExtra("SAVE_ID")
+            val customName = intent.getStringExtra("CUSTOM_NAME")
+            val trackFileName = intent.getStringExtra("TRACK_FILENAME")
+            val targetTrack = intent.getStringExtra("TARGET_TRACK")
+            val presetName = intent.getStringExtra("PRESET_NAME")
+            val youtubeUrl = intent.getStringExtra("YOUTUBE_URL")
+            val artworkUrl = intent.getStringExtra("ARTWORK_URL")
+            val shareHub = intent.getBooleanExtra("SHARE_HUB", false)
+            
+            val mLevel = intent.getIntExtra("MANUAL_LEVEL", -1)
+            val mGold = intent.getLongExtra("MANUAL_GOLD", -1L)
+            val mRS = intent.getLongExtra("MANUAL_RS", -1L)
+            val mMS = intent.getLongExtra("MANUAL_MS", -1L)
+
+            val binderProxy = intent.extras?.getBinder("USER_SERVICE_BINDER") 
             if (binderProxy != null) {
                 val service = IRetr0UserService.Stub.asInterface(binderProxy)
                 startTask(
@@ -110,14 +123,15 @@ class Retr0InstallService : Service() {
                 )
             } else {
                 Log.e(TAG, "No User Service Binder provided")
-                stopSelf()
+                if (!isTaskRunning) stopSelf()
             }
         } else if (action == "RESTORE_NOTIFICATION") {
             // Re-issue the current notification if task is active
             val currentProgress = _serviceProgress.value
-            if (currentProgress.state != InstallState.IDLE && 
-                currentProgress.state != InstallState.SUCCESS && 
-                currentProgress.state != InstallState.FAILED) {
+            if ((currentProgress.state != InstallState.IDLE) &&
+            (currentProgress.state != InstallState.SUCCESS) &&
+            (currentProgress.state != InstallState.FAILED)
+        ) {
                 updateNotification(currentProgress)
             }
         } else if (action == "STOP_SERVICE") {
@@ -129,7 +143,7 @@ class Retr0InstallService : Service() {
             installer?.reset()
         }
         
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startTask(
@@ -151,11 +165,11 @@ class Retr0InstallService : Service() {
         shareHub: Boolean = false,
         artworkUrl: String? = null,
     ) {
-        val androidId = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-        installer = Retr0Installer(applicationContext, service, androidId)
+        isTaskRunning = true
+        installer = Retr0Installer(applicationContext, service)
         
         // HEARTBEAT: Keep Shizuku Binder alive during heavy extraction
-        serviceScope.launch {
+        val heartbeatJob = serviceScope.launch {
             while (true) {
                 try {
                     service.ping()
@@ -185,10 +199,12 @@ class Retr0InstallService : Service() {
             launch {
                 installer?.progress?.collect { progress ->
                     _serviceProgress.value = progress
-                    updateNotification(progress)
+                    scheduleNotificationUpdate(progress)
                     
                     if ((progress.state == InstallState.SUCCESS) || (progress.state == InstallState.FAILED) || (progress.state == InstallState.CANCELLED)) {
                         releaseWakeLock()
+                        isTaskRunning = false
+                        heartbeatJob.cancel()
                         if (progress.state == InstallState.SUCCESS) {
                             val finalNotif = createNotification("Process Complete!", 100, ongoing = false)
                             val manager = getSystemService(NotificationManager::class.java)
@@ -199,130 +215,163 @@ class Retr0InstallService : Service() {
             }
 
             // Run the requested task
-            when (taskType) {
-                "INSTALL" -> installer?.installMod()
-                "SAFE_TEST" -> installer?.runSafeTest()
-                "REPAIR" -> installer?.runAssetRepair()
-                "CHARACTER" -> uri?.let { installer?.importCharacterData(it) }
-                "DOC" -> uri?.let { installer?.importSaveDirectory(it) }
-                "BACKUP" -> profileName?.let { installer?.createSnapshot(it) }
-                "RESTORE" -> profileName?.let { name ->
-                    val hubPath = "/storage/emulated/0/Documents/ProjectRETR0/Backups"
-                    val profilePath = "$hubPath/$name.dat"
-                    
-                    if (service.exists(profilePath)) {
-                        val size = service.getFileSize(profilePath)
-                        val time = service.getLastModified(profilePath)
-                        val profile = SaveProfile(name, time, 1, size, File(profilePath))
-                        
-                        if (installer?.applyProfile(profile) == true) {
-                            // Fix permissions dynamically
-                            try {
-                                val rowPath = "/storage/emulated/0/Android/data/com.ea.games.r3_row/files/doc/character.2.dat"
-                                val naPath = "/storage/emulated/0/Android/data/com.ea.games.r3_na/files/doc/character.2.dat"
-                                
-                                val finalPath = if (service.exists(rowPath)) rowPath else naPath
-                                Runtime.getRuntime().exec(arrayOf("chmod", "666", finalPath)).waitFor()
-                            } catch (_: Exception) {}
-                        }
-                    }
-                }
-                "UPLOAD" -> {
-                    if ((profileName != null) && (uploaderName != null)) {
+            try {
+                when (taskType) {
+                    "INSTALL" -> installer?.installMod()
+                    "SAFE_TEST" -> installer?.runSafeTest()
+                    "REPAIR" -> installer?.runAssetRepair()
+                    "CHARACTER" -> uri?.let { installer?.importCharacterData(it) }
+                    "DOC" -> uri?.let { installer?.importSaveDirectory(it) }
+                    "BACKUP" -> profileName?.let { installer?.createSnapshot(it) }
+                    "RESTORE" -> profileName?.let { name ->
                         val hubPath = "/storage/emulated/0/Documents/ProjectRETR0/Backups"
-                        val profilePath = File(hubPath, "$profileName.dat")
-                        val profile = SaveProfile(profileName, service.getLastModified(profilePath.absolutePath), 1, service.getFileSize(profilePath.absolutePath), profilePath)
+                        val profilePath = "$hubPath/$name.dat"
                         
-                        installer?.uploadToCommunity(
-                            profile = profile, 
-                            uploaderName = uploaderName,
-                            manualLevel = manualLevel,
-                            manualGold = manualGold,
-                            manualRS = manualRS,
-                            manualMS = manualMS,
-                        )
-                    }
-                }
-                "DOWNLOAD_COMMUNITY" -> {
-                    if ((saveId != null) && (customName != null)) {
-                        val save = CommunitySave(saveId, customName, "", 0, "")
-                        installer?.downloadCommunitySave(save)
-                    }
-                }
-                "UPDATE" -> {
-                    installer?.autoUpdate(isManual = false)
-                }
-                "CHECK_UPDATE" -> {
-                    installer?.autoUpdate(isManual = true)
-                }
-                "MUSIC_MOD" -> {
-                    if ((uri != null) && (trackFileName != null)) {
-                        installer?.applyMusicMod(uri, trackFileName)
-                    }
-                }
-                "MUSIC_RESTORE" -> {
-                    trackFileName?.let { installer?.restoreMusic(it) }
-                }
-                "SAVE_TO_LIBRARY" -> {
-                    if (uri != null && customName != null) {
-                        installer?.saveToLibrary(uri, customName, metadata = if (artworkUrl != null) MusicMetadata(customName, "", artworkUrl) else null)
-                    }
-                }
-                "APPLY_FROM_LIBRARY" -> {
-                    if (trackFileName != null && targetTrack != null) {
-                        installer?.applyFromLibrary(trackFileName, targetTrack)
-                    }
-                }
-                "DOWNLOAD_TO_LIBRARY" -> {
-                    if (saveId != null && customName != null) {
-                        installer?.downloadCommunityMusic(CommunityMusic(saveId, customName, "", 0, "", ""), toLibrary = true)
-                    }
-                }
-                "UPLOAD_MUSIC" -> {
-                    if ((uri != null) && (uploaderName != null) && (customName != null) && (targetTrack != null)) {
-                        installer?.uploadMusic(uri, uploaderName, customName, targetTrack)
-                    }
-                }
-                "APPLY_AND_UPLOAD_MUSIC" -> {
-                    if ((uri != null) && (uploaderName != null) && (customName != null) && (targetTrack != null)) {
-                        // Pass the artworkUrl to the metadata-aware modder
-                        val meta = if (artworkUrl != null) MusicMetadata(customName, uploaderName, artworkUrl) else null
-                        installer?.applyAndUploadMusic(uri, targetTrack, uploaderName, customName, metadata = meta)
-                    }
-                }
-                "DOWNLOAD_COMMUNITY_MUSIC" -> {
-                    if ((saveId != null) && (targetTrack != null) && (customName != null)) {
-                        val music = CommunityMusic(saveId, customName, "", 0, "", targetTrack)
-                        installer?.downloadCommunityMusic(music)
-                    }
-                }
-                "YOUTUBE_DOWNLOAD", "YOUTUBE_TO_LIBRARY" -> {
-                    if (youtubeUrl != null && (targetTrack != null || taskType == "YOUTUBE_TO_LIBRARY")) {
-                        // Ensure engine is ready
-                        Retr0Installer.initDownloader(applicationContext)
-                        
-                        val result = installer?.downloadYouTubeAudio(youtubeUrl)
-                        if (result != null && result.file.exists()) {
-                            val mp3Uri = Uri.fromFile(result.file)
-                            val finalTitle = customName ?: result.info.title
+                        if (service.exists(profilePath)) {
+                            val size = service.getFileSize(profilePath)
+                            val time = service.getLastModified(profilePath)
+                            val profile = SaveProfile(name, time, 1, size, File(profilePath))
                             
-                            if (taskType == "YOUTUBE_TO_LIBRARY") {
-                                installer?.saveToLibrary(mp3Uri, finalTitle, thumbUrl = artworkUrl ?: result.info.thumbnailUrl)
-                            } else if (shareHub && uploaderName != null && targetTrack != null) {
-                                installer?.applyAndUploadMusic(mp3Uri, targetTrack, uploaderName, finalTitle)
-                            } else if (targetTrack != null) {
-                                installer?.applyMusicMod(mp3Uri, targetTrack)
+                            if (installer?.applyProfile(profile) == true) {
+                                // Fix permissions dynamically
+                                try {
+                                    val rowPath = "/storage/emulated/0/Android/data/com.ea.games.r3_row/files/doc/character.2.dat"
+                                    val naPath = "/storage/emulated/0/Android/data/com.ea.games.r3_na/files/doc/character.2.dat"
+                                    
+                                    val finalPath = if (service.exists(rowPath)) rowPath else naPath
+                                    Runtime.getRuntime().exec(arrayOf("chmod", "666", finalPath)).waitFor()
+                                } catch (_: Exception) {}
                             }
-                            result.file.delete()
                         }
                     }
+                    "UPLOAD" -> {
+                        if ((profileName != null) && (uploaderName != null)) {
+                            val hubPath = "/storage/emulated/0/Documents/ProjectRETR0/Backups"
+                            val profilePath = File(hubPath, "$profileName.dat")
+                            val profile = SaveProfile(profileName, service.getLastModified(profilePath.absolutePath), 1, service.getFileSize(profilePath.absolutePath), profilePath)
+                            
+                            installer?.uploadToCommunity(
+                                profile = profile, 
+                                uploaderName = uploaderName,
+                                manualLevel = manualLevel,
+                                manualGold = manualGold,
+                                manualRS = manualRS,
+                                manualMS = manualMS,
+                            )
+                        }
+                    }
+                    "DOWNLOAD_COMMUNITY" -> {
+                        if ((saveId != null) && (customName != null)) {
+                            val save = CommunitySave(saveId, customName, "", 0, "")
+                            installer?.downloadCommunitySave(save)
+                        }
+                    }
+                    "UPDATE" -> {
+                        installer?.autoUpdate(isManual = false)
+                    }
+                    "CHECK_UPDATE" -> {
+                        installer?.autoUpdate(isManual = true)
+                    }
+                    "MUSIC_MOD" -> {
+                        if ((uri != null) && (customName != null) && (targetTrack != null)) {
+                            val meta = artworkUrl?.let { MusicMetadata(customName, uploaderName ?: "Anonymous", it) }
+                            
+                            // Save to library as well for consistency
+                            installer?.saveToLibrary(uri, customName, metadata = meta)
+
+                            if (shareHub && uploaderName != null) {
+                                installer?.applyAndUploadMusic(uri, targetTrack, uploaderName, customName, metadata = meta)
+                            } else {
+                                installer?.applyMusicMod(uri, targetTrack, metadata = meta)
+                            }
+                        }
+                    }
+                    "MUSIC_RESTORE" -> {
+                        trackFileName?.let { installer?.restoreMusic(it) }
+                    }
+                    "SAVE_TO_LIBRARY" -> {
+                        if ((uri != null) && (customName != null)) {
+                            installer?.saveToLibrary(
+                                uri = uri,
+                                customName = customName,
+                                metadata = artworkUrl?.let { MusicMetadata(customName, "", it) },
+                            )
+                        }
+                    }
+                    "APPLY_FROM_LIBRARY" -> {
+                        if (trackFileName != null && targetTrack != null) {
+                            installer?.applyFromLibrary(trackFileName, targetTrack)
+                        }
+                    }
+                    "DOWNLOAD_TO_LIBRARY" -> {
+                        if (saveId != null && customName != null) {
+                            installer?.downloadCommunityMusic(CommunityMusic(saveId, customName, "", 0, "", ""), toLibrary = true)
+                        }
+                    }
+                    "UPLOAD_MUSIC" -> {
+                        if ((uri != null) && (uploaderName != null) && (customName != null) && (targetTrack != null)) {
+                            installer?.uploadMusic(uri, uploaderName, customName, targetTrack)
+                        }
+                    }
+                    "APPLY_AND_UPLOAD_MUSIC" -> {
+                        if ((uri != null) && (uploaderName != null) && (customName != null) && (targetTrack != null)) {
+                            // Pass the artworkUrl to the metadata-aware modder
+                            val meta = artworkUrl?.let { MusicMetadata(customName, uploaderName, it) }
+                            installer?.applyAndUploadMusic(uri, targetTrack, uploaderName, customName, metadata = meta)
+                        }
+                    }
+                    "DOWNLOAD_COMMUNITY_MUSIC" -> {
+                        if ((saveId != null) && (targetTrack != null) && (customName != null)) {
+                            val music = CommunityMusic(saveId, customName, "", 0, "", targetTrack)
+                            installer?.downloadCommunityMusic(music)
+                        }
+                    }
+                    "YOUTUBE_DOWNLOAD", "YOUTUBE_TO_LIBRARY" -> {
+                        if (youtubeUrl != null) {
+                            // Ensure engine is ready
+                            Retr0Installer.initDownloader(applicationContext)
+                            
+                            val result = installer?.downloadYouTubeAudio(youtubeUrl)
+                            if (result != null && result.file.exists()) {
+                                val mp3Uri = Uri.fromFile(result.file)
+                                val finalTitle = customName ?: result.info.title
+                                val meta = artworkUrl?.let { MusicMetadata(finalTitle, uploaderName ?: "Anonymous", it) }
+                                
+                                // 1. Save to permanent library first
+                                installer?.saveToLibrary(mp3Uri, finalTitle, thumbUrl = artworkUrl ?: result.info.thumbnailUrl, metadata = meta)
+                                
+                                // 2. Apply to game slot if targetTrack is provided
+                                if (targetTrack != null) {
+                                    if (shareHub && uploaderName != null) {
+                                        installer?.applyAndUploadMusic(mp3Uri, targetTrack, uploaderName, finalTitle, metadata = meta)
+                                    } else {
+                                        installer?.applyMusicMod(mp3Uri, targetTrack, metadata = meta)
+                                    }
+                                }
+                                result.file.delete()
+                            }
+                        }
+                    }
+                    "APPLY_GRAPHICS" -> {
+                        presetName?.let { installer?.applyGraphicsPreset(it) }
+                    }
+                    "RESTORE_GRAPHICS" -> {
+                        installer?.restoreOriginalGraphics()
+                    }
+                "REVERT_AUDIO" -> {
+                    if (targetTrack != null) {
+                        Log.i(TAG, "Starting revert task for: $targetTrack")
+                        installer?.revertAudioMod(targetTrack)
+                    }
                 }
-                "APPLY_GRAPHICS" -> {
-                    presetName?.let { installer?.applyGraphicsPreset(it) }
                 }
-                "RESTORE_GRAPHICS" -> {
-                    installer?.restoreOriginalGraphics()
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Task failed with exception", e)
+                _serviceProgress.value = _serviceProgress.value.copy(state = InstallState.FAILED, errorMessage = e.message)
+            } finally {
+                isTaskRunning = false
+                heartbeatJob.cancel()
+                releaseWakeLock()
             }
         }
     }
@@ -333,9 +382,38 @@ class Retr0InstallService : Service() {
         }
     }
 
+    private fun scheduleNotificationUpdate(progress: InstallProgress) {
+        val now = SystemClock.elapsedRealtime()
+        val stateChanged = progress.state != lastNotificationState
+        val terminal = progress.state == InstallState.SUCCESS ||
+            progress.state == InstallState.FAILED ||
+            progress.state == InstallState.CANCELLED
+        val elapsed = now - lastNotificationAt
+
+        if (stateChanged || terminal || elapsed >= NOTIFICATION_UPDATE_INTERVAL_MS) {
+            pendingNotificationJob?.cancel()
+            pendingNotificationJob = null
+            pendingNotificationProgress = null
+            updateNotification(progress)
+            return
+        }
+
+        pendingNotificationProgress = progress
+        if (pendingNotificationJob?.isActive == true) return
+        pendingNotificationJob = serviceScope.launch {
+            delay((NOTIFICATION_UPDATE_INTERVAL_MS - elapsed).coerceAtLeast(1L))
+            pendingNotificationProgress?.let(::updateNotification)
+            pendingNotificationProgress = null
+            pendingNotificationJob = null
+        }
+    }
+
     private fun updateNotification(progress: InstallProgress) {
+        lastNotificationAt = SystemClock.elapsedRealtime()
+        lastNotificationState = progress.state
         val percentageStr = String.format(java.util.Locale.ENGLISH, "%.2f%%", progress.fileProgress * 100)
-        val partInfo = if (progress.totalFiles > 1) " (Part ${progress.completedFiles + 1} of ${progress.totalFiles})" else ""
+        val displayedPart = (progress.completedFiles + 1).coerceAtMost(progress.totalFiles.coerceAtLeast(1))
+        val partInfo = if (progress.totalFiles > 1) " (Part $displayedPart of ${progress.totalFiles})" else ""
         val etaInfo = if ((progress.eta.isNotBlank()) && (progress.state == InstallState.DOWNLOADING)) " - ${progress.eta} remaining" else ""
         
         val content = when (progress.state) {
@@ -372,7 +450,7 @@ class Retr0InstallService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Project RETR0 Installer")
             .setContentText(content)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setProgress(maxProgress, progress, indeterminate)
@@ -386,30 +464,32 @@ class Retr0InstallService : Service() {
             val deleteIntent = Intent(this, Retr0InstallService::class.java).apply { action = "RESTORE_NOTIFICATION" }
             val deletePendingIntent = PendingIntent.getService(
                 this, 1, deleteIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             builder.setDeleteIntent(deletePendingIntent)
         }
-
+        
         return builder.build()
     }
 
     private fun createNotificationChannel() {
-        val name = "Installation Progress"
-        val descriptionText = "Shows the progress of Project RETR0 installation"
-        val importance = NotificationManager.IMPORTANCE_HIGH
+        val name = "Installer Channel"
+        val descriptionText = "Shows progress for Project RETR0 installation"
+        val importance = NotificationManager.IMPORTANCE_LOW
         val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
             description = descriptionText
-            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            setShowBadge(false)
             enableVibration(false)
+            setSound(null, null)
         }
-        val notificationManager: NotificationManager =
-            getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val notificationManager: NotificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.createNotificationChannel(channel)
     }
 
     override fun onDestroy() {
+        pendingNotificationJob?.cancel()
         serviceScope.cancel()
+        releaseWakeLock()
         super.onDestroy()
     }
 }

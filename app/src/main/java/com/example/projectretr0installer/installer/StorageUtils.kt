@@ -16,7 +16,7 @@ object StorageUtils {
         return try {
             val stat = StatFs(dir.absolutePath)
             stat.availableBlocksLong * stat.blockSizeLong
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             -1L
         }
     }

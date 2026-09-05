@@ -1,18 +1,21 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.example.projectretr0installer"
-    compileSdk = 37
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.example.projectretr0installer"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0.0-STABLE"
 
@@ -30,24 +33,43 @@ android {
         }
         val apiKey = localProperties.getProperty("RETR0_API_KEY") ?: "DEVELOPMENT_KEY"
         buildConfigField("String", "COMMUNITY_API_KEY", "\"$apiKey\"")
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
+        debug {
+            isMinifyEnabled = false
+        }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            optimization {
-                enable = true
-            }
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
     buildFeatures {
         compose = true
@@ -58,6 +80,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            keepDebugSymbols += "**/libsonic-extractor.so"
         }
     }
 }
@@ -66,6 +89,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
@@ -73,13 +97,20 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
     implementation(libs.youtubedl.android)
     implementation(libs.youtubedl.ffmpeg)
-    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
+    implementation(libs.cronet.api)
+    implementation(libs.cronet.embedded)
+    implementation(libs.coil.compose)
     testImplementation(libs.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
