@@ -486,6 +486,14 @@ class Retr0InstallService : Service() {
         notificationManager.createNotificationChannel(channel)
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.e(TAG, "Foreground data-sync time limit reached; stopping service")
+        pendingNotificationJob?.cancel()
+        releaseWakeLock()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+    }
+
     override fun onDestroy() {
         pendingNotificationJob?.cancel()
         serviceScope.cancel()

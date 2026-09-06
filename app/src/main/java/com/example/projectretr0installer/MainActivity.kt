@@ -458,10 +458,15 @@ class MainActivity : ComponentActivity() {
         ) {
             Spacer(modifier = Modifier.height(42.dp))
             // --- logo lockup ---
-            Box(Modifier.size(56.dp).background(RetroAccentTint, RoundedCornerShape(16.dp))
-                    .border(1.dp, RetroAccent.copy(alpha = 0.3f), RoundedCornerShape(16.dp)), Alignment.Center) {
-                Text("R0", fontFamily = PixelMood, color = RetroAccent, fontSize = 20.sp)
-            }
+            Image(
+                painter = painterResource(R.drawable.project_retr0_game_art),
+                contentDescription = "Project RETR0 logo",
+                modifier = Modifier
+                    .size(88.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .border(1.dp, RetroBorder, RoundedCornerShape(18.dp)),
+                contentScale = ContentScale.Crop,
+            )
             Spacer(modifier = Modifier.height(14.dp))
             Text("PROJECT RETR0", style = MaterialTheme.typography.headlineMedium, color = RetroText)
             Spacer(modifier = Modifier.height(4.dp))
