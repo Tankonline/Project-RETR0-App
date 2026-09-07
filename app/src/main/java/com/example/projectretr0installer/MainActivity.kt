@@ -55,6 +55,7 @@ import androidx.work.*
 import coil.compose.AsyncImage
 import com.example.projectretr0installer.installer.*
 import com.example.projectretr0installer.ui.components.*
+import com.example.projectretr0installer.ui.skins.CarSkinsTab
 import com.example.projectretr0installer.ui.theme.*
 import com.example.projectretr0installer.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
@@ -191,7 +192,7 @@ class MainActivity : ComponentActivity() {
             .daemon(false)
             .debuggable(BuildConfig.DEBUG)
             .processNameSuffix("retr0")
-            .version(3)
+            .version(4)
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
@@ -973,7 +974,7 @@ class MainActivity : ComponentActivity() {
 
         Column(
             Modifier.fillMaxSize().background(RetroBg)
-                .verticalScroll(scrollState)
+                .then(if (selectedTab == 2) Modifier else Modifier.verticalScroll(scrollState))
                 .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -994,7 +995,7 @@ class MainActivity : ComponentActivity() {
                         .clickable { /* toggleSort() */ }, Alignment.Center) { Icon(Icons.Filled.SwapVert, null, tint = RetroAccent) }
             }
             
-            SegmentedTabs(listOf("Saves","Music"), selectedTab) { selectedTab = it }
+            SegmentedTabs(listOf("Saves", "Music", "Skins"), selectedTab) { selectedTab = it }
 
             if (selectedTab == 0) {
                 if (isCommunityLoading) {
@@ -1026,7 +1027,7 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(12.dp))
                     }
                 }
-            } else {
+            } else if (selectedTab == 1) {
                 if (isCommunityLoading) {
                     repeat(3) {
                         Box(modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(16.dp)).shimmer())
@@ -1043,6 +1044,10 @@ class MainActivity : ComponentActivity() {
                         CommunityMusicItem(music)
                         Spacer(Modifier.height(12.dp))
                     }
+                }
+            } else {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    CarSkinsTab(service = service, isServiceConnected = isServiceBound)
                 }
             }
         }

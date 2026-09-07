@@ -83,6 +83,9 @@ android {
             keepDebugSymbols += "**/libsonic-extractor.so"
         }
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -110,6 +113,7 @@ dependencies {
     implementation(libs.cronet.api)
     implementation(libs.cronet.embedded)
     implementation(libs.coil.compose)
+    implementation(libs.androidx.exifinterface)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
