@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.Color
 val RetroBg          = Color(0xFF0B0D12)
 val RetroSurface     = Color(0xFF161A22)
 val RetroSurfaceAlt  = Color(0xFF12151C)
+val RetroCover       = Color(0xFF1A2030)
 val RetroElevated    = Color(0xFF1E232E)
 val RetroStatBg      = Color(0xFF0F131A)
 val RetroBorder      = Color(0x14FFFFFF) // white @ ~8%

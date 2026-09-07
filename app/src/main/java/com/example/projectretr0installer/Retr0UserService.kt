@@ -8,6 +8,7 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.file.Files
 
 /**
  * Shizuku UserService implementation.
@@ -313,10 +314,42 @@ class Retr0UserService : IRetr0UserService.Stub() {
     override fun listFiles(path: String): Array<String>? {
         if (!isPathAllowed(path)) return null
         val file = File(path)
-        return if (file.exists() && file.isDirectory) {
-            file.list()
-        } else {
-            null
+        return if (file.exists() && file.isDirectory) file.list() else null
+    }
+
+    override fun listDirectoryEntries(packageRoot: String, path: String): Array<String> {
+        Log.i(TAG, "listDirectoryEntries requested: root=$packageRoot path=$path")
+        val allowedPackageRoots = setOf(
+            "/storage/emulated/0/Android/data/com.ea.games.r3_row",
+            "/storage/emulated/0/Android/data/com.ea.games.r3_na",
+        )
+        if (packageRoot !in allowedPackageRoots || path.indexOf('\u0000') >= 0) throw SecurityException("Unsupported package root")
+        val root = File(packageRoot)
+        val candidate = File(path)
+        val rootCanonical = root.canonicalFile
+        val candidateCanonical = candidate.canonicalFile
+        val rootPath = rootCanonical.toPath()
+        val candidatePath = candidateCanonical.toPath()
+        if (candidatePath != rootPath && !candidatePath.startsWith(rootPath)) throw SecurityException("Path escapes package root")
+        if (!candidate.exists() || !candidate.isDirectory || Files.isSymbolicLink(candidate.toPath())) throw IllegalArgumentException("Not a readable directory")
+        val children = candidate.listFiles()
+            ?: throw IllegalStateException("Directory could not be listed: $path")
+        Log.i(TAG, "listDirectory raw children=${children.size}: $path")
+        return children.mapNotNull { child ->
+            if (child.name.indexOf('\u0000') >= 0 || child.name == "." || child.name == "..") return@mapNotNull null
+            val symlink = Files.isSymbolicLink(child.toPath())
+            val childCanonical = runCatching { child.canonicalFile }.getOrNull() ?: return@mapNotNull null
+            val childPath = childCanonical.toPath()
+            if (childPath != rootPath && !childPath.startsWith(rootPath)) return@mapNotNull null
+            val type = when {
+                symlink -> "L"
+                child.isDirectory -> "D"
+                child.isFile -> "F"
+                else -> return@mapNotNull null
+            }
+            "$type\t${child.length()}\t${child.name}"
+        }.sortedWith(compareBy<String> { !it.startsWith("D\t") }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.substringAfterLast('\t') }).toTypedArray().also {
+            Log.i(TAG, "listDirectoryEntries returned entries=${it.size}: $path")
         }
     }
 

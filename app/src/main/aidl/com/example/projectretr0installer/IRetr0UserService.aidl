@@ -50,5 +50,7 @@ interface IRetr0UserService {
 
     int nativeExtract(in ParcelFileDescriptor pfd, String destPath) = 24;
 
+    String[] listDirectoryEntries(String packageRoot, String path) = 25;
+
     void destroy() = 16777114;
 }
