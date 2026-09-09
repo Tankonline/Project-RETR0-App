@@ -30,7 +30,7 @@ class FileDownloader {
         fun localChunkFileName(chunk: String): String {
             val uri = runCatching { URI(chunk) }.getOrNull()
             val name = if (uri?.isAbsolute == true) uri.rawPath?.substringAfterLast('/') else chunk.substringAfterLast('/')
-            require(!name.isNullOrBlank() && name != "." && name != "..") { "Invalid chunk URL or name: $chunk" }
+            require(!name.isNullOrBlank() && (name != ".") && (name != "..")) { "Invalid chunk URL or name: $chunk" }
             return name
         }
     }
@@ -100,7 +100,7 @@ class FileDownloader {
                             
                             var success = false
                             var attempt = 1
-                            while (!success && attempt <= 8) {
+                            while (!success && (attempt <= 8)) {
                                 val sizeBeforeAttempt = chunkFile.takeIf { it.exists() }?.length() ?: 0L
                                 success = downloadChunkSingle(chunkUrl, chunkFile) { added ->
                                     val currentTotal = downloadedBytes.addAndGet(added.toLong())
@@ -114,7 +114,7 @@ class FileDownloader {
                                         downloadedBytes.addAndGet(sizeAfterAttempt - sizeBeforeAttempt)
                                     }
                                     val backoff = (1_000L shl (attempt - 1).coerceAtMost(5)) + Random.nextLong(250L, 1_000L)
-                                    Log.w(TAG, "Chunk attempt $attempt failed: $chunkUrl (${lastError})")
+                                    Log.w(TAG, "Chunk attempt $attempt failed: $chunkUrl ($lastError)")
                                     attempt++
                                     delay(backoff.milliseconds)
                                 }

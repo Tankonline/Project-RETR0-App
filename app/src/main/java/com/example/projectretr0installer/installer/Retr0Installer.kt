@@ -163,7 +163,11 @@ class Retr0Installer(
             val totalCompressed = requiredFiles.sumOf { it.size }.coerceAtLeast(1L)
             val totalUncompressed = requiredFiles.sumOf { it.uncompressedSize }
             val largestCompressedArchive = requiredFiles
-                .filter { it.type.equals("zip", true) || it.type.equals("split_zip", true) }
+                .asSequence()
+                .filter {
+                    it.type.equals("zip", ignoreCase = true) ||
+                        it.type.equals("split_zip", ignoreCase = true)
+                }
                 .maxOfOrNull { it.size } ?: 0L
             val requiredBytes = totalUncompressed + largestCompressedArchive + (512 * 1024 * 1024L)
             var downloadedBytesAccumulated = 0L
@@ -202,7 +206,7 @@ class Retr0Installer(
                         overallProgress = downloadedBytesAccumulated.toFloat() / totalCompressed,
                         completedFiles = index,
                         totalFiles = requiredFiles.size,
-                        eta = "Streaming..."
+                        eta = "Streaming...",
                     )
 
                     try {

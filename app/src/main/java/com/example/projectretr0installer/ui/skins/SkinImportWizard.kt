@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,7 +22,7 @@ import com.example.projectretr0installer.ui.theme.*
 
 data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null, val vehicle: String = "Audi R18 e-tron", val gamePackage: GamePackage = GamePackage.ROW, val target: SelectedSkinTarget? = null, val images: List<ProcessedSkinImage> = emptyList(), val apply: Boolean = false, val upload: Boolean = false, val guidelines: Boolean = false)
 
-@Composable fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 1, modifier: Modifier = Modifier, browserSource: SkinTargetBrowserSource = SkinTargetBrowserSource { _, _ -> BrowserResult.Error("Privileged service is disconnected.") }) {
+@Composable fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 1, modifier: Modifier = Modifier, browserSource: SkinTargetBrowserSource = SkinTargetBrowserSource { _, _ -> BrowserResult.Error("Privileged service is disconnected.") }, onTargetBrowserVisibilityChange: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(ImportState(step = initialStep)) }
@@ -33,6 +34,8 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
     val imageCache = remember(context) { SkinImportCache(context) }
     val imageProcessor = remember(context, imageCache) { SkinImageProcessor(context.contentResolver, imageCache) }
     DisposableEffect(imageCache) { onDispose { imageCache.cleanup() } }
+    LaunchedEffect(browsing) { onTargetBrowserVisibilityChange(browsing) }
+    DisposableEffect(Unit) { onDispose { onTargetBrowserVisibilityChange(false) } }
     var name by remember { mutableStateOf("Aurora Drift") }; var creator by remember { mutableStateOf("Retr0") }; var description by remember { mutableStateOf("") }
     val sourcePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -80,7 +83,7 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
             ScreenTopBar("Import skin", labels[state.step - 1], onBack); WizardStepIndicator(state.step, label = labels[state.step - 1])
             when (state.step) {
                 1 -> {
-                    SectionHeader("Car skin file", Icons.Filled.InsertDriveFile)
+                    SectionHeader("Car skin file", Icons.AutoMirrored.Filled.InsertDriveFile)
                     SecondaryButton(if (state.source == null) "Choose .dds.z file" else "Choose another file", Modifier.fillMaxWidth(), icon = Icons.Filled.FolderOpen) { sourcePicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) }
                     if (sourceLoading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Reading and verifying the file...", color = RetroTextMuted) }
                     sourceError?.let { Text(it, color = RetroDanger) }

@@ -17,6 +17,42 @@ sealed interface BrowserResult {
 
 fun interface SkinTargetBrowserSource { suspend fun list(packageRoot: String, path: String): BrowserResult }
 
+data class SmartScanLimits(val vehicleFolders: Int = 96, val entriesPerFolder: Int = 128)
+sealed interface SmartScanResult { data class Found(val entry: SkinBrowserEntry) : SmartScanResult; data object NotFound : SmartScanResult; data class Error(val message: String) : SmartScanResult }
+
+enum class ValidationSeverity { INFO, WARNING, ERROR, SUCCESS }
+data class ValidationPresentation(val message: String, val severity: ValidationSeverity)
+
+fun validationPresentation(error: Throwable?): ValidationPresentation = when {
+    error == null -> ValidationPresentation("Exact filename and livery target verified.", ValidationSeverity.SUCCESS)
+    error.message?.contains("exactly match") == true -> ValidationPresentation(error.message ?: "Filenames do not match.", ValidationSeverity.WARNING)
+    error.message?.contains("directly inside") == true -> ValidationPresentation("Open a vehicle's livery folder and choose the exact target file.", ValidationSeverity.WARNING)
+    error.message?.contains("symlink") == true -> ValidationPresentation("Symbolic links are blocked for safety.", ValidationSeverity.ERROR)
+    error.message?.contains("escapes") == true || error.message?.contains("Unsupported") == true -> ValidationPresentation("This location is outside the selected RR3 package.", ValidationSeverity.ERROR)
+    else -> ValidationPresentation(error.message ?: "Choose a valid RR3 .dds.z target.", ValidationSeverity.ERROR)
+}
+
+fun packageBreadcrumbs(root: String, path: String): List<Pair<String, String>> {
+    if (!path.startsWith(root)) return listOf(root.substringAfterLast('/') to root)
+    val relative = path.removePrefix(root).trim('/')
+    val result = mutableListOf(root.substringAfterLast('/') to root)
+    var current = root
+    relative.split('/').filter(String::isNotBlank).forEach { segment -> current += "/$segment"; result += segment to current }
+    return result
+}
+
+suspend fun smartMatch(source: SkinTargetBrowserSource, root: String, importedFileName: String, limits: SmartScanLimits = SmartScanLimits()): SmartScanResult {
+    val vehiclesPath = "$root/files/.depot/vehicles"
+    val vehicles = when (val result = source.list(root, vehiclesPath)) { is BrowserResult.Error -> return SmartScanResult.Error(result.message); is BrowserResult.Success -> result.entries }
+    for (vehicle in vehicles.asSequence().filter { it.isDirectory && !it.isSymbolicLink }.take(limits.vehicleFolders)) {
+        val liveryPath = "${vehicle.path}/livery"
+        val entries = when (val result = source.list(root, liveryPath)) { is BrowserResult.Error -> continue; is BrowserResult.Success -> result.entries }
+        val candidate = entries.take(limits.entriesPerFolder).firstOrNull { it.name == importedFileName } ?: continue
+        if (SkinTargetValidator.validate(root, importedFileName, candidate).isSuccess) return SmartScanResult.Found(candidate)
+    }
+    return SmartScanResult.NotFound
+}
+
 class ShizukuSkinTargetBrowserSource(private val service: IRetr0UserService?) : SkinTargetBrowserSource {
     override suspend fun list(packageRoot: String, path: String): BrowserResult = withContext(Dispatchers.IO) {
         val privileged = service ?: return@withContext BrowserResult.Error("Privileged service is disconnected. Connect Shizuku and retry.")
