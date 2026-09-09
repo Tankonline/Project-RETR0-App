@@ -42,7 +42,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -56,16 +55,17 @@ import coil.compose.AsyncImage
 import com.example.projectretr0installer.installer.*
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.skins.CarSkinsTab
+import com.example.projectretr0installer.ui.skins.GamePackage
+import com.example.projectretr0installer.ui.skins.SkinModsScreen
 import com.example.projectretr0installer.ui.theme.*
 import com.example.projectretr0installer.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import java.util.*
 import java.util.concurrent.TimeUnit
 import java.io.File
 import com.example.projectretr0installer.ui.shimmer
 import com.example.projectretr0installer.ui.tiltEffect
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import rikka.shizuku.Shizuku
@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
         SELECTION,
         DASHBOARD,
         COMMUNITY,
+        SKIN_MODS,
         AI_CHAT,
         EXPERIMENTAL_GRAPHICS,
         MUSIC_SLOTS
@@ -381,6 +382,7 @@ class MainActivity : ComponentActivity() {
     fun MainScreen() {
         // Collect from the service if bound, otherwise fallback to a remembered state to prevent flickering
         val installProgress by (installService?.getProgressFlow() ?: remember { MutableStateFlow(InstallProgress()) }).collectAsState()
+        var skinsFullScreen by remember { mutableStateOf(false) }
 
         if (showMusicImportDialog) {
             MusicImportDialog()
@@ -415,32 +417,39 @@ class MainActivity : ComponentActivity() {
         }
 
         Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing,
             bottomBar = {
-                if (currentMode != AppMode.EXPERIMENTAL_GRAPHICS && currentMode != AppMode.SELECTION) {
+                if (currentMode != AppMode.EXPERIMENTAL_GRAPHICS && currentMode != AppMode.SELECTION && !skinsFullScreen) {
                     RetroBottomBar(
                         selectedIndex = when(currentMode) {
                             AppMode.DASHBOARD -> 0
                             AppMode.COMMUNITY -> 1
-                            AppMode.AI_CHAT -> 2
+                            AppMode.SKIN_MODS -> 2
+                            AppMode.AI_CHAT -> 3
                             else -> 0
                         },
                         items = listOf(
-                            RetroNavItem("Dashboard", Icons.Filled.Build) { currentMode = AppMode.DASHBOARD },
-                            RetroNavItem("Community", Icons.Filled.Public) { currentMode = AppMode.COMMUNITY },
-                            RetroNavItem("AI Assistant", Icons.Filled.SmartToy) { currentMode = AppMode.AI_CHAT },
+                            RetroNavItem("Home", Icons.Filled.Home) { currentMode = AppMode.DASHBOARD },
+                            RetroNavItem("Hub", Icons.Filled.Public) { currentMode = AppMode.COMMUNITY },
+                            RetroNavItem("Skins", Icons.Filled.Brush) { currentMode = AppMode.SKIN_MODS },
+                            RetroNavItem("AI", Icons.Filled.SmartToy) { currentMode = AppMode.AI_CHAT },
                         )
                     )
                 }
             }
         ) { innerPadding ->
             Surface(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .consumeWindowInsets(innerPadding),
                 color = MaterialTheme.colorScheme.background
             ) {
                 when (currentMode) {
                     AppMode.SELECTION -> GameSelectionScreen()
                     AppMode.DASHBOARD -> RR3Dashboard(installProgress)
-                    AppMode.COMMUNITY -> CommunityGalleryScreen()
+                    AppMode.COMMUNITY -> CommunityGalleryScreen(onFullScreenChange = { skinsFullScreen = it })
+                    AppMode.SKIN_MODS -> SkinModsScreen(isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service, onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onFullScreenChange = { skinsFullScreen = it })
                     AppMode.AI_CHAT -> AiChatScreen()
                     AppMode.EXPERIMENTAL_GRAPHICS -> ExperimentalGraphicsScreen(
                         (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED)
@@ -951,10 +960,24 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CommunityGalleryScreen() {
+    fun CommunityGalleryScreen(onFullScreenChange: (Boolean) -> Unit = {}) {
         var searchQuery by remember { mutableStateOf("") }
         var selectedTab by remember { mutableIntStateOf(0) }
+        var focusedSkinRoute by remember { mutableStateOf(false) }
         val scrollState = rememberScrollState()
+        DisposableEffect(Unit) { onDispose { onFullScreenChange(false) } }
+        LaunchedEffect(focusedSkinRoute) { onFullScreenChange(focusedSkinRoute) }
+
+        if (selectedTab == 2 && focusedSkinRoute) {
+            CarSkinsTab(
+                service = service,
+                isServiceConnected = isServiceBound,
+                onOpenMySkins = { currentMode = AppMode.SKIN_MODS },
+                onOpenImport = { currentMode = AppMode.SKIN_MODS },
+                onFullScreenChange = { focusedSkinRoute = it },
+            )
+            return
+        }
 
         val filteredSaves = remember(communitySaves, searchQuery) {
             communitySaves.filter { 
@@ -1047,7 +1070,13 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    CarSkinsTab(service = service, isServiceConnected = isServiceBound)
+                    CarSkinsTab(
+                        service = service,
+                        isServiceConnected = isServiceBound,
+                        onOpenMySkins = { currentMode = AppMode.SKIN_MODS },
+                        onOpenImport = { currentMode = AppMode.SKIN_MODS },
+                        onFullScreenChange = { focusedSkinRoute = it },
+                    )
                 }
             }
         }
@@ -1646,7 +1675,7 @@ class MainActivity : ComponentActivity() {
         shizukuMonitorJob = lifecycleScope.launch {
             while (isActive) {
                 updateShizukuStatus()
-                delay(1_000)
+                delay(1.seconds)
             }
         }
     }

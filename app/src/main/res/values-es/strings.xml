@@ -116,7 +116,7 @@
     <string name="label_auto_snapshot">Instantánea Auto</string>
     <string name="label_last_run">Última ejecución: %1$s</string>
     <string name="label_snapshot">Instantánea</string>
-    <string name="label_search_placeholder">Busca por nombre, autor o ID...</string>
+    <string name="label_search_placeholder">Busca por nombre, autor o ID…</string>
     <string name="label_no_saves">No se encontraron partidas.</string>
     <string name="label_no_saves_match">Sin partidas que coincidan con \'%1$s\'</string>
     <string name="label_no_music">No se encontró música.</string>
@@ -133,7 +133,7 @@
     <string name="label_gold">Oro</string>
     <string name="label_rs">Moneda R$</string>
     <string name="label_ms">Moneda M$</string>
-    <string name="label_youtube_placeholder">Pega el enlace de YouTube aquí...</string>
+    <string name="label_youtube_placeholder">Pega el enlace de YouTube aquí…</string>
 
     <!-- Graphics Tiers -->
     <string name="tier_low">Bajo</string>

@@ -116,7 +116,7 @@
     <string name="label_auto_snapshot">Auto Snapshot</string>
     <string name="label_last_run">Last run: %1$s</string>
     <string name="label_snapshot">Snapshot</string>
-    <string name="label_search_placeholder">Search by name, author or file ID...</string>
+    <string name="label_search_placeholder">Search by name, author or file ID…</string>
     <string name="label_no_saves">No saves found.</string>
     <string name="label_no_saves_match">No saves match \'%1$s\'</string>
     <string name="label_no_music">No music found.</string>
@@ -133,7 +133,7 @@
     <string name="label_gold">Gold</string>
     <string name="label_rs">R$ Currency</string>
     <string name="label_ms">M$ Currency</string>
-    <string name="label_youtube_placeholder">Paste YouTube URL here...</string>
+    <string name="label_youtube_placeholder">Paste YouTube URL here…</string>
 
     <!-- Graphics Tiers -->
     <string name="tier_low">Low</string>

@@ -14,29 +14,26 @@ import com.example.projectretr0installer.ui.components.*
 
 enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
 
-@Composable fun CarSkinsTab(service: IRetr0UserService? = null, isServiceConnected: Boolean = false) {
+@Composable fun CarSkinsTab(service: IRetr0UserService? = null, isServiceConnected: Boolean = false, onOpenMySkins: () -> Unit = {}, onOpenImport: () -> Unit = onOpenMySkins, onFullScreenChange: (Boolean) -> Unit = {}) {
     val repository = remember { SkinRepository() }
     val stack = remember { mutableStateListOf<SkinsRoute>(SkinsRoute.Gallery) }
     var galleryCache by remember { mutableStateOf(emptyList<CommunitySkin>()) }
     fun push(route: SkinsRoute) { stack.add(route) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
     BackHandler(stack.size > 1) { back() }
+    val focusedRoute = stack.last() is SkinsRoute.CommunityDetails || stack.last() is SkinsRoute.Progress
+    LaunchedEffect(focusedRoute) { onFullScreenChange(focusedRoute) }
+    DisposableEffect(Unit) { onDispose { onFullScreenChange(false) } }
     Box(Modifier.fillMaxSize()) {
     when (val route = stack.last()) {
         SkinsRoute.Gallery -> CommunityGalleryContent(
             onOpen = { push(SkinsRoute.CommunityDetails(it)) },
-            onMySkins = { push(SkinsRoute.Library) },
-            onImport = { push(SkinsRoute.Import) },
+            onMySkins = onOpenMySkins,
+            onImport = onOpenImport,
             repository = repository,
             onItemsLoaded = { galleryCache = it },
         )
-        SkinsRoute.Library -> SkinLibraryScreen(onBack = ::back, onOpen = { push(SkinsRoute.LocalDetails(it)) }, onImport = { push(SkinsRoute.Import) })
-        SkinsRoute.Import -> SkinImportWizard(
-            onBack = ::back,
-            onDone = ::back,
-            modifier = Modifier.fillMaxSize(),
-            browserSource = ShizukuSkinTargetBrowserSource(if (isServiceConnected) service else null),
-        )
+        SkinsRoute.Library, SkinsRoute.Import -> LaunchedEffect(route) { onOpenMySkins(); back() }
         is SkinsRoute.CommunityDetails -> CommunitySkinDetails(route.id, ::back, { push(SkinsRoute.Progress(OpKind.APPLY, route.id)) }, repository, galleryCache)
         is SkinsRoute.LocalDetails -> LocalSkinDetails(route.id, ::back, { push(SkinsRoute.Progress(OpKind.APPLY, route.id)) }, { push(SkinsRoute.Progress(OpKind.REVERT, route.id)) })
         is SkinsRoute.Progress -> SkinProgressScreen(route.op, ::back, ::back)
@@ -68,11 +65,6 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
             .onFailure { state = GalleryState.ERROR }
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onMySkins, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Garage, null); Text(" My skins - ${FakeSkins.library.size}") }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onImport, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Upload, null); Text(" Import") }
-        }
         RetroSearchField(query, { query = it }, "Search car skins...", Icons.Filled.Search)
         SkinFilterRow(listOf("Compatible", "Newest", "Most downloaded", "Most liked"), filter) { filter = it }
         when (state) {
@@ -84,7 +76,7 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
                     SectionHeader("Featured", Icons.Filled.Star)
                     FeaturedSkinCard(featured, { onOpen(featured.id) }, { onOpen(featured.id) })
                 }
-                SectionHeader("All skins", Icons.Filled.GridView, skins.size)
+                SectionHeader("All skins", Icons.Filled.GridView, trailingCount = skins.size)
                 AdaptiveSkinGrid(skins) { item -> GalleryCard(item, onClick = { onOpen(item.id) }) }
             }
         }

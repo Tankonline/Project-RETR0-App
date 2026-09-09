@@ -27,10 +27,16 @@ import com.example.projectretr0installer.ui.theme.*
 /*  Replaces the plain floating text headers.                          */
 /* ------------------------------------------------------------------ */
 @Composable
-fun SectionHeader(text: String, icon: ImageVector, trailingCount: Int? = null) {
+fun SectionHeader(
+    text: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    trailingCount: Int? = null,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(bottom = 10.dp),
     ) {
@@ -50,6 +56,10 @@ fun SectionHeader(text: String, icon: ImageVector, trailingCount: Int? = null) {
         }
         Spacer(Modifier.width(10.dp))
         HorizontalDivider(color = RetroBorder, modifier = Modifier.weight(1f))
+        trailing?.let {
+            Spacer(Modifier.width(10.dp))
+            it()
+        }
     }
 }
 

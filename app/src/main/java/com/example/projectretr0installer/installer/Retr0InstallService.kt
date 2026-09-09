@@ -29,6 +29,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A Foreground Service that handles the installation and save management process in the background.
@@ -176,7 +178,7 @@ class Retr0InstallService : Service() {
                 } catch (_: Exception) {
                     Log.w(TAG, "Shizuku heartbeat failed - connection may be unstable")
                 }
-                kotlinx.coroutines.delay(kotlin.time.Duration.parse("5s")) // Ping every 5 seconds
+                delay(5.seconds) // Ping every 5 seconds
             }
         }
         
@@ -279,7 +281,7 @@ class Retr0InstallService : Service() {
                             // Save to library as well for consistency
                             installer?.saveToLibrary(uri, customName, metadata = meta)
 
-                            if (shareHub && uploaderName != null) {
+                            if (shareHub && (uploaderName != null)) {
                                 installer?.applyAndUploadMusic(uri, targetTrack, uploaderName, customName, metadata = meta)
                             } else {
                                 installer?.applyMusicMod(uri, targetTrack, metadata = meta)
@@ -299,7 +301,7 @@ class Retr0InstallService : Service() {
                         }
                     }
                     "APPLY_FROM_LIBRARY" -> {
-                        if (trackFileName != null && targetTrack != null) {
+                        if ((trackFileName != null) && (targetTrack != null)) {
                             installer?.applyFromLibrary(trackFileName, targetTrack)
                         }
                     }
@@ -401,7 +403,7 @@ class Retr0InstallService : Service() {
         pendingNotificationProgress = progress
         if (pendingNotificationJob?.isActive == true) return
         pendingNotificationJob = serviceScope.launch {
-            delay((NOTIFICATION_UPDATE_INTERVAL_MS - elapsed).coerceAtLeast(1L))
+            delay((NOTIFICATION_UPDATE_INTERVAL_MS - elapsed).coerceAtLeast(1L).milliseconds)
             pendingNotificationProgress?.let(::updateNotification)
             pendingNotificationProgress = null
             pendingNotificationJob = null

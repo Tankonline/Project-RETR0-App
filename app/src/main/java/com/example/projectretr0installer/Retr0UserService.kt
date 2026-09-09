@@ -65,12 +65,14 @@ class Retr0UserService : IRetr0UserService.Stub() {
         } catch (_: Exception) {
             return false
         }
-        val appRoot = File("/data/data/com.example.projectretr0installer").canonicalFile.toPath()
-        if (candidate == appRoot || candidate.startsWith(appRoot)) return true
+        val appRoot = File(System.getProperty("user.dir"), "com.example.projectretr0installer")
+            .canonicalFile
+            .toPath()
+        if ((candidate == appRoot) || candidate.startsWith(appRoot)) return true
 
         return ALLOWED_ROOTS.any { rootPath ->
             val root = File(rootPath).canonicalFile.toPath()
-            candidate == root || candidate.startsWith(root)
+            (candidate == root) || candidate.startsWith(root)
         }
     }
 
@@ -335,7 +337,7 @@ class Retr0UserService : IRetr0UserService.Stub() {
         val children = candidate.listFiles()
             ?: throw IllegalStateException("Directory could not be listed: $path")
         Log.i(TAG, "listDirectory raw children=${children.size}: $path")
-        return children.mapNotNull { child ->
+        return children.asSequence().mapNotNull { child ->
             if (child.name.indexOf('\u0000') >= 0 || child.name == "." || child.name == "..") return@mapNotNull null
             val symlink = Files.isSymbolicLink(child.toPath())
             val childCanonical = runCatching { child.canonicalFile }.getOrNull() ?: return@mapNotNull null
@@ -348,7 +350,7 @@ class Retr0UserService : IRetr0UserService.Stub() {
                 else -> return@mapNotNull null
             }
             "$type\t${child.length()}\t${child.name}"
-        }.sortedWith(compareBy<String> { !it.startsWith("D\t") }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.substringAfterLast('\t') }).toTypedArray().also {
+        }.sortedWith(compareBy<String> { !it.startsWith("D\t") }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.substringAfterLast('\t') }).toList().toTypedArray().also {
             Log.i(TAG, "listDirectoryEntries returned entries=${it.size}: $path")
         }
     }

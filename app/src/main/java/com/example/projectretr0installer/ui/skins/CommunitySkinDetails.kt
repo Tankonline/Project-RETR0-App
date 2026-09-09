@@ -1,13 +1,17 @@
 package com.example.projectretr0installer.ui.skins
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.projectretr0installer.data.skins.SkinApiException
 import com.example.projectretr0installer.data.skins.SkinRepository
@@ -25,6 +29,7 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
     galleryItems: List<CommunitySkin> = emptyList(),
     previewSkin: CommunitySkin? = null,
     previewState: DetailsState? = null,
+    previewTechnicalExpanded: Boolean = false,
 ) {
     val runtimeRepository = repository ?: remember { SkinRepository() }
     var state by remember(previewState) { mutableStateOf(previewState ?: DetailsState.LOADING) }
@@ -37,70 +42,176 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
             .onSuccess { skin = it; state = DetailsState.CONTENT }
             .onFailure { state = if (it is SkinApiException && it.statusCode == 404) DetailsState.NOT_FOUND else DetailsState.ERROR }
     }
-    when (state) {
-        DetailsState.LOADING -> Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { ScreenTopBar("Skin details", "Loading", onBack); LoadingSkinCard() }
-        DetailsState.ERROR -> DetailsMessage(onBack, "Couldn't load skin", "Check your connection and try again.", "Retry") { retry++ }
-        DetailsState.NOT_FOUND -> DetailsMessage(onBack, "Skin not found", "This community skin may have been removed.")
-        DetailsState.CONTENT -> skin?.let { SkinDetailsContent(it, onBack, onApply, galleryItems) }
-            ?: DetailsMessage(onBack, "Skin not found", "No details are available.")
+    DetailsShell(onBack, skin?.vehicle ?: state.label) {
+        when (state) {
+            DetailsState.LOADING -> item { LoadingSkinCard() }
+            DetailsState.ERROR -> item { EmptyState(Icons.Filled.ErrorOutline, "Couldn't load skin", "Check your connection and try again.", "Retry") { retry++ } }
+            DetailsState.NOT_FOUND -> item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "This community skin may have been removed.") }
+            DetailsState.CONTENT -> skin?.let { SkinDetailsItems(it, onApply, galleryItems, previewTechnicalExpanded) }
+                ?: item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "No details are available.") }
+        }
     }
 }
 
-@Composable private fun DetailsMessage(onBack: () -> Unit, title: String, body: String, action: String? = null, onAction: () -> Unit = {}) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
-        ScreenTopBar("Skin details", title, onBack)
-        EmptyState(Icons.Filled.ErrorOutline, title, body, action, if (action == null) null else onAction)
-    }
+private val DetailsState.label get() = when (this) {
+    DetailsState.LOADING -> "Loading"
+    DetailsState.CONTENT -> "Community skin"
+    DetailsState.ERROR -> "Unavailable"
+    DetailsState.NOT_FOUND -> "Unavailable"
 }
 
-@Composable private fun SkinDetailsContent(skin: CommunitySkin, onBack: () -> Unit, onApply: () -> Unit, galleryItems: List<CommunitySkin>) {
-    var sheet by remember { mutableStateOf(false) }
-    var liked by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp)
-                .padding(bottom = 96.dp),
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun DetailsShell(onBack: () -> Unit, subtitle: String, content: LazyListScope.() -> Unit) {
+    var overflow by remember { mutableStateOf(false) }
+    Scaffold(
+        containerColor = RetroBg,
+        contentWindowInsets = WindowInsets.safeDrawing,
+        topBar = {
+            TopAppBar(
+                title = { Column { Text("Skin details", maxLines = 1); Text(subtitle, color = RetroTextMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "Back") } },
+                actions = {
+                    Box {
+                        IconButton({ overflow = true }) { Icon(Icons.Filled.MoreVert, "More actions") }
+                        DropdownMenu(overflow, { overflow = false }) {
+                            DropdownMenuItem(text = { Text("Share (simulated)") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { overflow = false })
+                            DropdownMenuItem(text = { Text("Report (simulated)") }, leadingIcon = { Icon(Icons.Filled.Flag, null) }, onClick = { overflow = false })
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = RetroBg, titleContentColor = RetroText, navigationIconContentColor = RetroTextSoft, actionIconContentColor = RetroTextSoft),
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
+            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            ScreenTopBar("Skin details", skin.vehicle, onBack) {
-                IconButton({}) { Icon(Icons.Filled.Share, "Share (simulated)", tint = RetroTextSoft) }
-                IconButton({}) { Icon(Icons.Filled.Flag, "Report (simulated)", tint = RetroTextSoft) }
-            }
-            ScreenshotCarousel(skin.screenshotUrls.ifEmpty { listOfNotNull(skin.coverUrl) })
+            content = content,
+        )
+    }
+}
+
+private fun LazyListScope.SkinDetailsItems(skin: CommunitySkin, onApply: () -> Unit, galleryItems: List<CommunitySkin>, initiallyExpanded: Boolean) {
+    item { ResponsiveHero(skin) }
+    item { SkinIdentity(skin) }
+    item { CompatibilitySummary(skin.compatibility) }
+    item { DownloadActions(skin, onApply) }
+    item { ResponsiveStats(skin) }
+    if (skin.description.isNotBlank()) item { Text(skin.description, color = RetroTextSoft) }
+    item { TechnicalDetails(skin, initiallyExpanded) }
+    val related = galleryItems.filter { it.id != skin.id && (it.creator == skin.creator || it.carId == skin.carId) }.take(2)
+    if (related.isNotEmpty()) {
+        item { SectionHeader("Related skins", Icons.Filled.DirectionsCar) }
+        item { MiniSkinRow(related) }
+    }
+}
+
+@Composable private fun ResponsiveHero(skin: CommunitySkin) {
+    val configuration = LocalConfiguration.current
+    val ratio = if (configuration.screenHeightDp < 520) 1.95f else 1.72f
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        ScreenshotCarousel(
+            urls = skin.screenshotUrls.ifEmpty { listOfNotNull(skin.coverUrl) },
+            modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
+            aspectRatio = ratio,
+        )
+    }
+}
+
+@Composable private fun SkinIdentity(skin: CommunitySkin) {
+    var liked by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(skin.title, color = RetroText, style = MaterialTheme.typography.headlineSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(skin.title, color = RetroText, style = MaterialTheme.typography.headlineSmall); Text("by ${skin.creator}", color = RetroTextDim) }
-                IconButton({ liked = !liked }) { Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Like (simulated)", tint = RetroDanger) }
-                Text((skin.likes + if (liked) 1 else 0).toString(), color = RetroTextDim)
+                Text("by ${skin.creator}", color = RetroTextDim)
+                if (skin.verified) { Spacer(Modifier.width(8.dp)); Icon(Icons.Filled.Verified, "Verified creator", tint = RetroGold, modifier = Modifier.size(18.dp)) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                RetroStatCell("Downloads", skin.downloads.toString(), Modifier.weight(1f))
-                RetroStatCell("Size", formatSize(skin.binarySizeBytes), Modifier.weight(1f))
-                RetroStatCell("Uploaded", skin.uploadedLabel, Modifier.weight(1f))
-            }
-            RetroCard { CompatibilityBadge(skin.compatibility); Spacer(Modifier.height(6.dp)); Text(compatibilityText(skin.compatibility), color = RetroTextSoft, style = MaterialTheme.typography.bodySmall) }
-            MetadataCard(skin.vehicle, skin.carId, skin.slotLabel, skin.slotKey, skin.format, skin.gameVersions)
-            if (skin.description.isNotBlank()) Text(skin.description, color = RetroTextSoft)
-            skin.sourceFilename?.let { DataRow("Source file", it) }
-            skin.binarySha256?.let { DataRow("SHA-256", it) }
-            skin.updatedAt?.let { DataRow("Updated", it) }
-            PrimaryButton("Download & apply (simulated)", icon = Icons.Filled.Download, onClick = { sheet = true })
+        }
+        IconButton({ liked = !liked }) { Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Like (simulated)", tint = RetroDanger) }
+        Text((skin.likes + if (liked) 1 else 0).toString(), color = RetroTextDim)
+    }
+}
+
+@Composable private fun CompatibilitySummary(c: Compatibility) {
+    RetroCard { Row(verticalAlignment = Alignment.CenterVertically) { CompatibilityBadge(c); Spacer(Modifier.width(10.dp)); Text(compatibilityText(c), color = RetroTextSoft, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) } }
+}
+
+@Composable private fun DownloadActions(skin: CommunitySkin, onApply: () -> Unit) {
+    var sheet by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    Box {
+        if (configuration.screenWidthDp >= 600) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PrimaryButton("Download & apply (simulated)", Modifier.weight(1f), Icons.Filled.Download) { sheet = true }
+            OutlineButton("Download to library (simulated)", Modifier.weight(1f)) {}
+        } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            PrimaryButton("Download & apply (simulated)", icon = Icons.Filled.Download) { sheet = true }
             OutlineButton("Download to library (simulated)") {}
-            val related = galleryItems.filter { it.id != skin.id && (it.creator == skin.creator || it.carId == skin.carId) }.take(2)
-            if (related.isNotEmpty()) { SectionHeader("Related skins", Icons.Filled.DirectionsCar); MiniSkinRow(related) }
-            Spacer(Modifier.height(12.dp))
         }
     }
     if (sheet) DownloadApplySheet(skin, { sheet = false }, { sheet = false; onApply() })
 }
 
+@Composable private fun ResponsiveStats(skin: CommunitySkin) {
+    val configuration = LocalConfiguration.current
+    Box {
+        if (configuration.screenWidthDp < 350) Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                RetroStatCell("Downloads", skin.downloads.toString(), Modifier.weight(1f))
+                RetroStatCell("Size", formatSize(skin.binarySizeBytes), Modifier.weight(1f))
+            }
+            RetroStatCell("Uploaded", skin.uploadedLabel, Modifier.fillMaxWidth())
+        } else Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            RetroStatCell("Downloads", skin.downloads.toString(), Modifier.weight(1f))
+            RetroStatCell("Size", formatSize(skin.binarySizeBytes), Modifier.weight(1f))
+            RetroStatCell("Uploaded", skin.uploadedLabel, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable private fun TechnicalDetails(skin: CommunitySkin, initiallyExpanded: Boolean) {
+    var expanded by remember(initiallyExpanded) { mutableStateOf(initiallyExpanded) }
+    RetroCard {
+        TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
+            Text("Technical details", color = RetroText, modifier = Modifier.weight(1f))
+            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, if (expanded) "Collapse technical details" else "Expand technical details", tint = RetroTextMuted)
+        }
+        if (expanded) {
+            DetailsMetadataRow("Vehicle", skin.vehicle)
+            DetailsMetadataRow("Car ID", skin.carId, technical = true)
+            DetailsMetadataRow("Slot", "${skin.slotLabel} (${skin.slotKey})")
+            DetailsMetadataRow("Format", skin.format)
+            skin.gameVersions?.takeIf { it.isNotBlank() }?.let { DetailsMetadataRow("Game versions", it) }
+            skin.sourceFilename?.let { DetailsMetadataRow("Source file", it, longValue = true, technical = true) }
+            skin.binarySha256?.let { DetailsMetadataRow("SHA-256", it, longValue = true, technical = true) }
+            skin.updatedAt?.let { DetailsMetadataRow("Updated", it, longValue = true) }
+        }
+    }
+}
+
+@Composable private fun DetailsMetadataRow(label: String, value: String, longValue: Boolean = false, technical: Boolean = false) {
+    val configuration = LocalConfiguration.current
+    Box(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+        val stacked = longValue || configuration.screenWidthDp < 360
+        val valueText: @Composable (Modifier) -> Unit = { modifier ->
+            SelectionContainer(modifier) { Text(value, color = RetroTextSoft, style = MaterialTheme.typography.bodySmall.copy(fontFamily = if (technical) FontFamily.Monospace else FontFamily.Default)) }
+        }
+        if (stacked) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, color = RetroTextMuted, style = MaterialTheme.typography.labelSmall)
+            valueText(Modifier.fillMaxWidth())
+        } else Row {
+            Text(label, color = RetroTextMuted, modifier = Modifier.weight(.35f))
+            valueText(Modifier.weight(.65f))
+        }
+    }
+}
+
 private fun compatibilityText(c: Compatibility) = when (c) {
-    Compatibility.COMPATIBLE -> "Compatible with the detected game package and texture slot."
+    Compatibility.COMPATIBLE -> "Ready for the detected game package and texture slot."
     Compatibility.WRONG_FORMAT -> "This format may need conversion before it can be applied."
     Compatibility.TARGET_MISSING -> "The target vehicle files were not detected."
-    Compatibility.GAME_NOT_DETECTED -> "Compatibility will be checked when local target scanning is implemented."
+    Compatibility.GAME_NOT_DETECTED -> "Compatibility will be checked when a target is available."
 }
 private fun formatSize(bytes: Long) = String.format(Locale.US, "%.2f MiB", bytes / 1024.0 / 1024.0)
 @Composable fun MetadataCard(vehicle: String, carId: String, slotLabel: String, slotKey: String, format: String, versions: String? = null) { RetroCard { DataRow("Vehicle", vehicle); DataRow("Car ID", carId); DataRow("Slot", "$slotLabel ($slotKey)"); DataRow("Format", format); versions?.takeIf { it.isNotBlank() }?.let { DataRow("Game versions", it) } } }
