@@ -9,9 +9,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.projectretr0installer.data.skins.local.LocalSkinRepository
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.theme.*
+import java.text.DateFormat
+import java.util.Date
 import kotlin.math.max
 
 @Composable
@@ -24,12 +28,28 @@ fun SkinLibraryScreen(
     onApply: (String) -> Unit = {},
     onRevert: (String) -> Unit = {},
     previewQuery: String = "",
-    previewSkins: List<CarSkin> = FakeSkins.library,
+    previewSkins: List<CarSkin>? = null,
 ) {
+    val context = LocalContext.current
+    val repository = remember(context) { LocalSkinRepository(context) }
+    val storedSkins by repository.observeSkins().collectAsState(initial = emptyList())
+    val storedApplied by repository.observeApplied().collectAsState(initial = emptyList())
+    val runtimeSkins = previewSkins ?: storedSkins.map { entity ->
+        val active = storedApplied.any { it.skinId == entity.id }
+        CarSkin(
+            entity.id, entity.title, entity.vehicle, entity.carDirectory, entity.creator,
+            slotFromKey(entity.slotKey), entity.textureFormat, entity.binarySize / 1024.0 / 1024.0,
+            if (active) SkinStatus.ACTIVE else SkinStatus.LOCAL,
+            if (entity.targetPath != null) Compatibility.COMPATIBLE else Compatibility.TARGET_MISSING,
+            sha256 = entity.binarySha256,
+            hasBackup = false,
+            importedLabel = DateFormat.getDateInstance().format(Date(entity.importedAt)),
+        )
+    }
     var query by rememberSaveable { mutableStateOf(previewQuery) }
     var filter by rememberSaveable { mutableIntStateOf(0) }
     val options = listOf("All", "Active", "Audi", "Porsche", "Other")
-    val skins = previewSkins.filter {
+    val skins = runtimeSkins.filter {
         (it.title.contains(query, true) || it.vehicle.contains(query, true)) && when (filter) {
             1 -> it.status == SkinStatus.ACTIVE
             2 -> "Audi" in it.vehicle
@@ -59,7 +79,7 @@ fun SkinLibraryScreen(
             if (!embedded) item(key = "top-bar") { ScreenTopBar("Car Skins", "Your local skin library", onBack) }
             item(key = "search") { RetroSearchField(query, { query = it }, "Search your skins…", Icons.Filled.Search) }
             if (!embedded) {
-                previewSkins.firstOrNull { it.status == SkinStatus.ACTIVE }?.let { active ->
+                runtimeSkins.firstOrNull { it.status == SkinStatus.ACTIVE }?.let { active ->
                     item(key = "active-heading") { SectionHeader("Active skin", Icons.Filled.CheckCircle) }
                     item(key = "active-${active.id}") { ActiveSkinCard(active) { onRevert(active.id) } }
                 }
@@ -101,6 +121,12 @@ fun SkinLibraryScreen(
             }
         }
     }
+}
+
+private fun slotFromKey(value: String): SkinSlot = when {
+    value.startsWith("int", true) -> SkinSlot.INTERIOR
+    value.contains("two", true) || value.endsWith("2") -> SkinSlot.EXTERIOR_2
+    else -> SkinSlot.EXTERIOR_1
 }
 
 @Composable

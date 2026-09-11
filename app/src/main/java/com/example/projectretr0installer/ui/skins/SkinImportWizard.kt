@@ -17,6 +17,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import java.util.Locale
+import com.example.projectretr0installer.data.skins.SkinRepository
+import com.example.projectretr0installer.data.skins.local.LocalSkinRepository
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.theme.*
 
@@ -33,7 +35,10 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
     var imageLoading by remember { mutableStateOf(false) }
     val imageCache = remember(context) { SkinImportCache(context) }
     val imageProcessor = remember(context, imageCache) { SkinImageProcessor(context.contentResolver, imageCache) }
-    DisposableEffect(imageCache) { onDispose { imageCache.cleanup() } }
+    val viewModel = remember(context) { SkinImportViewModel(LocalSkinRepository(context), SkinRepository(context)) }
+    val importProgress by viewModel.progress.collectAsState()
+    var finishing by remember { mutableStateOf(false) }
+    DisposableEffect(imageCache, finishing) { onDispose { if (!finishing) imageCache.cleanup() } }
     LaunchedEffect(browsing) { onTargetBrowserVisibilityChange(browsing) }
     DisposableEffect(Unit) { onDispose { onTargetBrowserVisibilityChange(false) } }
     var name by remember { mutableStateOf("Aurora Drift") }; var creator by remember { mutableStateOf("Retr0") }; var description by remember { mutableStateOf("") }
@@ -95,10 +100,10 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
                 }
                 2 -> { SectionHeader("Target", Icons.Filled.DirectionsCar); VehicleSelector(state.vehicle) { state = state.copy(vehicle = it, target = null) }; GamePackageSelector(state.gamePackage) { state = state.copy(gamePackage = it, target = null) }; SecondaryButton("Browse RR3 Files", Modifier.fillMaxWidth(), icon = Icons.Filled.FolderOpen) { browsing = true }; RetroCard { DataRow("Package", state.gamePackage.short); DataRow("Selected target", state.target?.relativePath ?: "No target selected"); DataRow("Exact filename", if (state.target != null) "Match" else "Required") }; if (!valid) Text("Choose an existing exact-name exterior livery target before continuing.", color = RetroDanger) }
                 3 -> { SectionHeader("Skin details", Icons.Filled.Edit); OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(creator, { creator = it }, label = { Text("Creator") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(description, { if (it.length <= 280) description = it }, label = { Text("Description") }, supportingText = { Text("${description.length} / 280") }, minLines = 3, modifier = Modifier.fillMaxWidth()); ScreenshotPicker(state.images, onAdd = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, onRemove = { removed -> imageCache.delete(removed.file); val rest = state.images - removed; if (removed.role == SkinImageRole.COVER && rest.isNotEmpty()) scope.launch { state = state.copy(images = rest); promote(rest.first()) } else state = state.copy(images = rest) }, onSetCover = { scope.launch { promote(it) } }); if (imageLoading) LinearProgressIndicator(Modifier.fillMaxWidth()); imageError?.let { Text(it, color = RetroDanger) }; if (state.upload && state.images.none { it.role == SkinImageRole.COVER }) Text("A cover image is required for community upload.", color = RetroDanger) }
-                4 -> { SectionHeader("Options", Icons.Filled.Tune); UploadOptionsCard(state.apply, state.upload, { state = state.copy(apply = it) }, { state = state.copy(upload = it) }); if (state.upload) CommunityGuidelinesCard(state.guidelines) { state = state.copy(guidelines = it) }; SectionHeader("Summary", Icons.Filled.Summarize); RetroCard { DataRow("Skin", name); DataRow("Source", state.source?.fileName ?: "Not selected"); DataRow("Vehicle", "${state.vehicle} · Exterior livery"); DataRow("Package", state.gamePackage.short); DataRow("Target", state.target?.relativePath ?: "Not selected"); DataRow("Cover", if (state.images.any { it.role == SkinImageRole.COVER }) "Selected" else "Not selected"); DataRow("Screenshots", state.images.count { it.role == SkinImageRole.SCREENSHOT }.toString()) } }
+                4 -> { SectionHeader("Options", Icons.Filled.Tune); UploadOptionsCard(state.apply, state.upload, { state = state.copy(apply = it) }, { state = state.copy(upload = it) }); if (state.upload) CommunityGuidelinesCard(state.guidelines) { state = state.copy(guidelines = it) }; SectionHeader("Summary", Icons.Filled.Summarize); RetroCard { DataRow("Skin", name); DataRow("Source", state.source?.fileName ?: "Not selected"); DataRow("Vehicle", "${state.vehicle} · Exterior livery"); DataRow("Package", state.gamePackage.short); DataRow("Target", state.target?.relativePath ?: "Not selected"); DataRow("Cover", if (state.images.any { it.role == SkinImageRole.COVER }) "Selected" else "Not selected"); DataRow("Screenshots", state.images.count { it.role == SkinImageRole.SCREENSHOT }.toString()) }; when (val progress = importProgress) { is ImportProgress.Running -> { LinearProgressIndicator({ progress.percent / 100f }, Modifier.fillMaxWidth()); Text(progress.message, color = RetroTextMuted) }; is ImportProgress.Failed -> Text(progress.message, color = RetroDanger); else -> Unit } }
             }; Spacer(Modifier.height(12.dp))
         }
-        Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton(if (state.step == 1) "Cancel" else "Back", Modifier.weight(1f)) { if (state.step == 1) { imageCache.cleanup(); onBack() } else state = state.copy(step = state.step - 1) }; Box(Modifier.weight(1f)) { PrimaryButton(if (state.step < 4) "Continue" else "Finish", Modifier.fillMaxWidth()) { if (valid) { if (state.step < 4) state = state.copy(step = state.step + 1) else { imageCache.cleanup(); onDone() } } } } }
+        Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton(if (state.step == 1) "Cancel" else "Back", Modifier.weight(1f)) { if (!finishing) { if (state.step == 1) { imageCache.cleanup(); onBack() } else state = state.copy(step = state.step - 1) } }; Box(Modifier.weight(1f)) { PrimaryButton(if (state.step < 4) "Continue" else if (finishing) "Saving..." else "Finish", Modifier.fillMaxWidth()) { if (valid && !finishing) { if (state.step < 4) state = state.copy(step = state.step + 1) else scope.launch { finishing = true; viewModel.finish(state, name, creator, description).onSuccess { imageCache.cleanup(); onDone() }; finishing = false } } } } }
     }
 }
 

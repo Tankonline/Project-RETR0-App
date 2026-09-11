@@ -1,11 +1,11 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    id("androidx.room") version "2.8.4"
 }
 
 android {
@@ -25,15 +25,6 @@ android {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
         }
 
-        // Inject API Key from local.properties for GitHub safety
-        val localProperties = Properties()
-        val localPropertiesFile = rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            localProperties.load(localPropertiesFile.inputStream())
-        }
-        val apiKey = localProperties.getProperty("RETR0_API_KEY") ?: "DEVELOPMENT_KEY"
-        buildConfigField("String", "COMMUNITY_API_KEY", "\"$apiKey\"")
-
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++17"
@@ -52,9 +43,11 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
+            buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://projectretr0-skins-dev.armaandeep08-ap.workers.dev\"")
         }
         release {
             isMinifyEnabled = false
+            buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -75,6 +68,10 @@ android {
         compose = true
         aidl = true
         buildConfig = true
+    }
+
+    room {
+        schemaDirectory("$projectDir/schemas")
     }
 
     packaging {
@@ -98,6 +95,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.room.runtime)
@@ -115,9 +113,11 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.androidx.exifinterface)
     testImplementation(libs.junit)
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation("androidx.room:room-testing:2.8.4")
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

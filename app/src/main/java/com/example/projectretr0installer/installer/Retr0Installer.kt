@@ -39,8 +39,7 @@ class Retr0Installer(
         
         // COMMUNITY API URL
         private const val COMMUNITY_API_URL = "https://save-files.armaandeep08-ap.workers.dev"
-        private const val COMMUNITY_API_KEY = com.example.projectretr0installer.BuildConfig.COMMUNITY_API_KEY
-
+        
         // Workers.dev proxy for globally cached release downloads.
         private const val BOOSTER_URL = "https://save-files.armaandeep08-ap.workers.dev"
 
@@ -614,8 +613,7 @@ class Retr0Installer(
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 10000
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            
+                
             if (connection.responseCode == 200) {
                 val responseText = connection.inputStream.bufferedReader().readText()
                 Log.i(TAG, "Community API Response: $responseText")
@@ -666,8 +664,7 @@ class Retr0Installer(
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 10000
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            
+                
             if (connection.responseCode == 200) {
                 val responseText = connection.inputStream.bufferedReader().readText()
                 Log.i(TAG, "Community Music Response: $responseText")
@@ -710,8 +707,7 @@ class Retr0Installer(
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 10000
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            return@withContext connection.responseCode == 200
+                return@withContext connection.responseCode == 200
         } catch (_: Exception) { false }
     }
 
@@ -726,8 +722,7 @@ class Retr0Installer(
             connection.doOutput = true
             connection.connectTimeout = 15000
             connection.readTimeout = 15000
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
 
@@ -769,8 +764,7 @@ class Retr0Installer(
             connection.doOutput = true
             connection.connectTimeout = 20000
             connection.readTimeout = 20000
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
 
@@ -852,8 +846,7 @@ class Retr0Installer(
             connection.doOutput = true
             connection.connectTimeout = 60000
             connection.readTimeout = 60000
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            connection.setRequestProperty("Content-Type", "application/octet-stream")
+                connection.setRequestProperty("Content-Type", "application/octet-stream")
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)")
             connection.setRequestProperty("Accept", "*/*")
             connection.setRequestProperty("Accept-Encoding", "identity")
@@ -916,8 +909,7 @@ class Retr0Installer(
             val encodedId = java.net.URLEncoder.encode(save.id, "UTF-8")
             val url = URL("$BOOSTER_URL/download?id=$encodedId")
             val connection = url.openConnection() as HttpURLConnection
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            
+                
             if (connection.responseCode == 200) {
                 val tempFile = File(context.externalCacheDir, "community_download.tmp")
                 connection.inputStream.use { input ->
@@ -988,8 +980,7 @@ class Retr0Installer(
             connection.doOutput = true
             connection.connectTimeout = 60000 // 60 seconds
             connection.readTimeout = 60000    // 60 seconds
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            connection.setRequestProperty("Content-Type", "application/octet-stream")
+                connection.setRequestProperty("Content-Type", "application/octet-stream")
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)")
             connection.setRequestProperty("Accept", "*/*")
             connection.setRequestProperty("Accept-Encoding", "identity")
@@ -1068,8 +1059,7 @@ class Retr0Installer(
             val encodedId = java.net.URLEncoder.encode(music.id, "UTF-8")
             val url = URL("$BOOSTER_URL/music/download?id=$encodedId")
             val connection = url.openConnection() as HttpURLConnection
-            connection.setRequestProperty("X-RETR0-KEY", COMMUNITY_API_KEY)
-            
+                
             if (connection.responseCode == 200) {
                 val tempFile = File(context.externalCacheDir, "music_download.tmp")
                 connection.inputStream.use { input ->

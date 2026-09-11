@@ -9,6 +9,8 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 
 /**
  * Shizuku UserService implementation.
@@ -120,8 +122,8 @@ class Retr0UserService : IRetr0UserService.Stub() {
 
     override fun copyFile(source: String, destination: String): Boolean {
         Log.i(TAG, "copyFile: $source -> $destination")
-        if (!isPathAllowed(destination)) {
-            Log.e(TAG, "Blocked unauthorized copy destination: $destination")
+        if (!isPathAllowed(source) || !isPathAllowed(destination)) {
+            Log.e(TAG, "Blocked unauthorized copy: $source -> $destination")
             return false
         }
         return try {
@@ -155,8 +157,8 @@ class Retr0UserService : IRetr0UserService.Stub() {
     }
 
     override fun copyDirectory(source: String, destination: String): Boolean {
-        if (!isPathAllowed(destination)) {
-            Log.e(TAG, "Blocked unauthorized copyDirectory destination: $destination")
+        if (!isPathAllowed(source) || !isPathAllowed(destination)) {
+            Log.e(TAG, "Blocked unauthorized copyDirectory: $source -> $destination")
             return false
         }
         val srcDir = File(source)
@@ -172,8 +174,8 @@ class Retr0UserService : IRetr0UserService.Stub() {
     }
 
     override fun move(source: String, destination: String): Boolean {
-        if (!isPathAllowed(destination)) {
-            Log.e(TAG, "Blocked unauthorized move destination: $destination")
+        if (!isPathAllowed(source) || !isPathAllowed(destination)) {
+            Log.e(TAG, "Blocked unauthorized move: $source -> $destination")
             return false
         }
         return try {
@@ -217,6 +219,78 @@ class Retr0UserService : IRetr0UserService.Stub() {
             false
         }
     }
+
+    override fun sha256File(path: String): String {
+        if (!isPathAllowed(path)) return ""
+        return runCatching { hashFile(File(path)) }.getOrDefault("")
+    }
+
+    override fun createImmutableSkinBackup(targetPath: String, backupPath: String, expectedSha256: String): Boolean {
+        if (!isValidSkinTarget(targetPath) || !isPathAllowed(backupPath) || !expectedSha256.isSha256()) return false
+        return runCatching {
+            val target = File(targetPath)
+            val backup = File(backupPath)
+            if (!target.isFile || Files.isSymbolicLink(target.toPath()) || hashFile(target) != expectedSha256.lowercase()) return false
+            if (backup.exists()) return backup.isFile && !Files.isSymbolicLink(backup.toPath()) && hashFile(backup) == expectedSha256.lowercase()
+            backup.parentFile?.mkdirs()
+            val temp = File(backup.parentFile, ".${backup.name}.partial-${System.nanoTime()}")
+            FileInputStream(target).use { input -> FileOutputStream(temp).use { output -> input.copyTo(output); output.fd.sync() } }
+            if (hashFile(temp) != expectedSha256.lowercase()) { temp.delete(); return false }
+            Files.move(temp.toPath(), backup.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            hashFile(backup) == expectedSha256.lowercase()
+        }.getOrElse { Log.e(TAG, "Immutable skin backup failed", it); false }
+    }
+
+    override fun atomicImportSkin(pfd: ParcelFileDescriptor, targetPath: String, expectedSha256: String, expectedSize: Long): Boolean {
+        if (!isValidSkinTarget(targetPath) || !expectedSha256.isSha256() || expectedSize !in 1..(5L * 1024L * 1024L)) return false
+        return runCatching {
+            val target = File(targetPath)
+            if (!target.isFile || Files.isSymbolicLink(target.toPath())) return false
+            val temp = File(target.parentFile, ".${target.name}.retr0-skin-${System.nanoTime()}")
+            var total = 0L
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                FileOutputStream(temp).use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) { val count = input.read(buffer); if (count < 0) break; total += count; if (total > expectedSize) { temp.delete(); return false }; output.write(buffer, 0, count) }
+                    output.fd.sync()
+                }
+            }
+            if (total != expectedSize || hashFile(temp) != expectedSha256.lowercase()) { temp.delete(); return false }
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            hashFile(target) == expectedSha256.lowercase()
+        }.getOrElse { Log.e(TAG, "Atomic skin import failed", it); false }
+    }
+
+    override fun restoreSkinBackup(backupPath: String, targetPath: String, expectedBackupSha256: String): Boolean {
+        if (!isPathAllowed(backupPath) || !isValidSkinTarget(targetPath) || !expectedBackupSha256.isSha256()) return false
+        return runCatching {
+            val backup = File(backupPath)
+            val target = File(targetPath)
+            if (!backup.isFile || Files.isSymbolicLink(backup.toPath()) || hashFile(backup) != expectedBackupSha256.lowercase()) return false
+            val temp = File(target.parentFile, ".${target.name}.retr0-restore-${System.nanoTime()}")
+            FileInputStream(backup).use { input -> FileOutputStream(temp).use { output -> input.copyTo(output); output.fd.sync() } }
+            if (hashFile(temp) != expectedBackupSha256.lowercase()) { temp.delete(); return false }
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            hashFile(target) == expectedBackupSha256.lowercase()
+        }.getOrElse { Log.e(TAG, "Skin restore failed", it); false }
+    }
+
+    private fun isValidSkinTarget(path: String): Boolean {
+        if (!isPathAllowed(path)) return false
+        val normalized = path.replace('\\', '/')
+        return Regex("^/storage/emulated/0/Android/data/com\\.ea\\.games\\.r3_(?:row|na)/files/\\.depot/vehicles/[a-zA-Z0-9_-]+/livery/[a-zA-Z0-9_() .-]+\\.dds\\.z$").matches(normalized)
+    }
+
+    private fun hashFile(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(32 * 1024)
+            while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun String.isSha256() = matches(Regex("[0-9a-fA-F]{64}"))
 
     override fun installPackage(apkPath: String): Boolean {
         return try {
