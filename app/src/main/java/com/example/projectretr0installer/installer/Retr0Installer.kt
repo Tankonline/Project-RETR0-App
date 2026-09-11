@@ -5,6 +5,8 @@ import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.projectretr0installer.IRetr0UserService
+import com.example.projectretr0installer.data.skins.SaveApiClient
+import com.example.projectretr0installer.data.skins.SkinApiException
 import com.example.projectretr0installer.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -836,63 +838,33 @@ class Retr0Installer(
             val finalRS = if (manualRS >= 0) manualRS else stats.rs
             val finalMS = if (manualMS >= 0) manualMS else 0L // M$ is now strictly manual
 
-            // 3. Upload with Stat Parameters (Preflight-Proof)
-            val encodedName = java.net.URLEncoder.encode(profile.name, "UTF-8")
-            val encodedUser = java.net.URLEncoder.encode(uploaderName, "UTF-8")
-            
-            val url = URL("$COMMUNITY_API_URL/upload?name=$encodedName&user=$encodedUser&level=$finalLevel&gold=$finalGold&rs=$finalRS&ms=$finalMS")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = 60000
-            connection.readTimeout = 60000
-                connection.setRequestProperty("Content-Type", "application/octet-stream")
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)")
-            connection.setRequestProperty("Accept", "*/*")
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            connection.instanceFollowRedirects = true
-
-            // Use Chunked Streaming for better compatibility with Cloudflare Workers
-            connection.setChunkedStreamingMode(16384) // 16KB chunks
-
-            // Stream from file to network
-            tempFile.inputStream().buffered().use { input ->
-                connection.outputStream.use { output ->
-                    val buffer = ByteArray(8192)
-                    var bytesRead: Int
-                    var totalWritten = 0L
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        totalWritten += bytesRead
-                    }
-                    output.flush()
-                    Log.d("RETR0_UPLOAD", "Successfully wrote $totalWritten bytes (save) to socket")
-                }
-            }
-
-            tempFile.delete()
-
-            if (connection.responseCode == 200) {
-                updateProgress(InstallState.SUCCESS, "SHARED SUCCESSFULLY")
-                true
-            } else {
-                val errorMsg = try {
-                    connection.errorStream?.bufferedReader()?.readText() ?: ""
-                } catch (_: Exception) {
-                    "Could not read error stream"
-                }
-                Log.e("RETR0_UPLOAD", "Server rejected save upload: ${connection.responseCode} - $errorMsg")
-                val fixHint = if (connection.responseCode == 500) "FIX: Check your Cloudflare Worker's R2 bucket binding." else "FIX: Try again later or check your internet."
-                fail("Upload failed: HTTP ${connection.responseCode}. $fixHint")
-                false
-            }
-        } catch (e: Exception) {
-            val msg = e.message ?: ""
-            val fixHint = if (msg.contains("reset")) "FIX: Internet unstable or file too large for Worker limits." 
-                         else if (msg.contains("EACCES") || msg.contains("Permission denied")) "FIX: Storage permission error. Try restarting the app."
-                         else "FIX: Ensure you have internet and try again."
-            fail("Upload error: ${e.message}. $fixHint")
+            // 3. Upload through the signed accountless v1 API. The request body reports the
+            // exact file length, so OkHttp sends Content-Length instead of chunked encoding.
+            val result = SaveApiClient(context).upload(
+                file = tempFile,
+                saveName = profile.name,
+                uploaderName = uploaderName,
+                level = finalLevel,
+                gold = finalGold,
+                rs = finalRS,
+                ms = finalMS,
+            )
+            Log.i("RETR0_UPLOAD", "Uploaded ${result.size} bytes as ${result.id}; requestId=${result.requestId}")
+            updateProgress(InstallState.SUCCESS, "SHARED SUCCESSFULLY")
+            true
+        } catch (e: SkinApiException) {
+            Log.e("RETR0_UPLOAD", "Signed save upload failed: status=${e.statusCode}, code=${e.errorCode}, requestId=${e.requestId}", e)
+            val requestSuffix = e.requestId?.let { " Request ID: $it." }.orEmpty()
+            fail("Upload failed${e.statusCode?.let { " (HTTP $it)" }.orEmpty()}: ${e.message}.$requestSuffix")
             false
+        } catch (e: Exception) {
+            val msg = e.message ?: "Unknown error"
+            val fixHint = if (msg.contains("EACCES") || msg.contains("Permission denied")) "Storage permission error. Try restarting the app."
+                else "Ensure you have internet and try again."
+            fail("Upload error: $msg. $fixHint")
+            false
+        } finally {
+            File(context.cacheDir, "upload_buffer.dat").delete()
         }
     }
 
