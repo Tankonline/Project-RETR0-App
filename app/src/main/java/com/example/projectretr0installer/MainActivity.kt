@@ -1364,8 +1364,17 @@ class MainActivity : ComponentActivity() {
                                 profile.name,
                                 "${StorageUtils.formatSize(profile.totalSize)} · active",
                                 primary = i == 0, 
-                                onApply = { if (isUiIdle) startBackgroundInstall("RESTORE", profileName = profile.name) }, 
-                                onExport = { /* share */ },
+                                onApply = { if (isUiIdle) startBackgroundInstall("RESTORE", profileName = profile.name) },
+                                onExport = {
+                                    if (isUiIdle) {
+                                        Log.i(TAG, "Uploading save profile to Community Hub: ${profile.name}")
+                                        startBackgroundInstall(
+                                            actionType = "UPLOAD",
+                                            profileName = profile.name,
+                                            uploaderName = "Retr0",
+                                        )
+                                    }
+                                },
                                 onRename = {
                                     // Show rename dialog (logic omitted for brevity but function is now "used")
                                     lifecycleScope.launch {
