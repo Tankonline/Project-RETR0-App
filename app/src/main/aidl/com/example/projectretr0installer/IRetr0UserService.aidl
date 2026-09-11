@@ -52,5 +52,13 @@ interface IRetr0UserService {
 
     String[] listDirectoryEntries(String packageRoot, String path) = 25;
 
+    String sha256File(String path) = 26;
+
+    boolean createImmutableSkinBackup(String targetPath, String backupPath, String expectedSha256) = 27;
+
+    boolean atomicImportSkin(in ParcelFileDescriptor pfd, String targetPath, String expectedSha256, long expectedSize) = 28;
+
+    boolean restoreSkinBackup(String backupPath, String targetPath, String expectedBackupSha256) = 29;
+
     void destroy() = 16777114;
 }

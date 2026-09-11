@@ -7,15 +7,21 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.projectretr0installer.IRetr0UserService
+import com.example.projectretr0installer.data.skins.SkinDownloadManager
 import com.example.projectretr0installer.data.skins.SkinRepository
 import com.example.projectretr0installer.ui.components.*
 
 enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
 
 @Composable fun CarSkinsTab(service: IRetr0UserService? = null, isServiceConnected: Boolean = false, onOpenMySkins: () -> Unit = {}, onOpenImport: () -> Unit = onOpenMySkins, onFullScreenChange: (Boolean) -> Unit = {}) {
-    val repository = remember { SkinRepository() }
+    val context = LocalContext.current
+    val repository = remember(context) { SkinRepository(context) }
+    val communityViewModel = remember(context, repository) {
+        SkinCommunityViewModel(repository, SkinDownloadManager(context))
+    }
     val stack = remember { mutableStateListOf<SkinsRoute>(SkinsRoute.Gallery) }
     var galleryCache by remember { mutableStateOf(emptyList<CommunitySkin>()) }
     fun push(route: SkinsRoute) { stack.add(route) }
@@ -34,7 +40,14 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
             onItemsLoaded = { galleryCache = it },
         )
         SkinsRoute.Library, SkinsRoute.Import -> LaunchedEffect(route) { onOpenMySkins(); back() }
-        is SkinsRoute.CommunityDetails -> CommunitySkinDetails(route.id, ::back, { push(SkinsRoute.Progress(OpKind.APPLY, route.id)) }, repository, galleryCache)
+        is SkinsRoute.CommunityDetails -> CommunitySkinDetails(
+            route.id,
+            ::back,
+            { push(SkinsRoute.Progress(OpKind.APPLY, route.id)) },
+            repository,
+            galleryCache,
+            communityViewModel = communityViewModel,
+        )
         is SkinsRoute.LocalDetails -> LocalSkinDetails(route.id, ::back, { push(SkinsRoute.Progress(OpKind.APPLY, route.id)) }, { push(SkinsRoute.Progress(OpKind.REVERT, route.id)) })
         is SkinsRoute.Progress -> SkinProgressScreen(route.op, ::back, ::back)
     }
@@ -46,11 +59,12 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
     onMySkins: () -> Unit,
     onImport: () -> Unit,
     previewState: GalleryState? = null,
-    previewItems: List<CommunitySkin> = FakeSkins.community,
+    previewItems: List<CommunitySkin> = emptyList(),
     repository: SkinRepository? = null,
     onItemsLoaded: (List<CommunitySkin>) -> Unit = {},
 ) {
-    val runtimeRepository = repository ?: remember { SkinRepository() }
+    val context = LocalContext.current
+    val runtimeRepository = repository ?: remember(context) { SkinRepository(context) }
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableIntStateOf(0) }
     var retry by remember { mutableIntStateOf(0) }

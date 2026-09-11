@@ -9,12 +9,16 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.projectretr0installer.data.skins.SkinApiException
+import com.example.projectretr0installer.data.skins.SkinDownloadManager
+import com.example.projectretr0installer.data.skins.SkinReportReason
 import com.example.projectretr0installer.data.skins.SkinRepository
+import kotlinx.coroutines.launch
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.theme.*
 import java.util.Locale
@@ -30,8 +34,16 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
     previewSkin: CommunitySkin? = null,
     previewState: DetailsState? = null,
     previewTechnicalExpanded: Boolean = false,
+    communityViewModel: SkinCommunityViewModel? = null,
 ) {
-    val runtimeRepository = repository ?: remember { SkinRepository() }
+    val context = LocalContext.current
+    val runtimeRepository = repository ?: remember(context) { SkinRepository(context) }
+    val runtimeViewModel = communityViewModel ?: remember(context, runtimeRepository) {
+        SkinCommunityViewModel(runtimeRepository, SkinDownloadManager(context))
+    }
+    val scope = rememberCoroutineScope()
+    var actionMessage by remember { mutableStateOf<String?>(null) }
+    var reportDialog by remember { mutableStateOf(false) }
     var state by remember(previewState) { mutableStateOf(previewState ?: DetailsState.LOADING) }
     var skin by remember(previewSkin) { mutableStateOf(previewSkin) }
     var retry by remember { mutableIntStateOf(0) }
@@ -47,9 +59,41 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
             DetailsState.LOADING -> item { LoadingSkinCard() }
             DetailsState.ERROR -> item { EmptyState(Icons.Filled.ErrorOutline, "Couldn't load skin", "Check your connection and try again.", "Retry") { retry++ } }
             DetailsState.NOT_FOUND -> item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "This community skin may have been removed.") }
-            DetailsState.CONTENT -> skin?.let { SkinDetailsItems(it, onApply, galleryItems, previewTechnicalExpanded) }
-                ?: item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "No details are available.") }
+            DetailsState.CONTENT -> skin?.let { current ->
+                SkinDetailsItems(
+                    current,
+                    galleryItems = galleryItems,
+                    initiallyExpanded = previewTechnicalExpanded,
+                    onLike = { liked ->
+                        scope.launch {
+                            runtimeViewModel.setLike(current.id, liked)
+                                .onSuccess { skin = skin?.copy(likes = (skin?.likes ?: 0) + if (liked) 1 else -1) }
+                                .onFailure { actionMessage = it.message ?: "Unable to update like" }
+                        }
+                    },
+                    onDownload = { applyAfterDownload ->
+                        scope.launch {
+                            runtimeViewModel.download(current)
+                                .onSuccess { actionMessage = "Saved to My skins"; if (applyAfterDownload) onApply() }
+                                .onFailure { actionMessage = it.message ?: "Unable to download skin" }
+                        }
+                    },
+                    onReport = { reportDialog = true },
+                )
+            } ?: item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "No details are available.") }
         }
+    }
+    actionMessage?.let { message ->
+        AlertDialog(onDismissRequest = { actionMessage = null }, confirmButton = { TextButton({ actionMessage = null }) { Text("OK") } }, title = { Text("Skin action") }, text = { Text(message) })
+    }
+    if (reportDialog) {
+        AlertDialog(
+            onDismissRequest = { reportDialog = false },
+            confirmButton = { TextButton({ reportDialog = false; scope.launch { runtimeViewModel.report(id, SkinReportReason.OTHER, "Reported from Android app").onFailure { actionMessage = it.message } } }) { Text("Report") } },
+            dismissButton = { TextButton({ reportDialog = false }) { Text("Cancel") } },
+            title = { Text("Report skin") },
+            text = { Text("Report this skin for review?") },
+        )
     }
 }
 
@@ -92,11 +136,19 @@ private val DetailsState.label get() = when (this) {
     }
 }
 
-private fun LazyListScope.SkinDetailsItems(skin: CommunitySkin, onApply: () -> Unit, galleryItems: List<CommunitySkin>, initiallyExpanded: Boolean) {
+private fun LazyListScope.SkinDetailsItems(
+    skin: CommunitySkin,
+    galleryItems: List<CommunitySkin>,
+    initiallyExpanded: Boolean,
+    onLike: (Boolean) -> Unit,
+    onDownload: (Boolean) -> Unit,
+    onReport: () -> Unit,
+) {
     item { ResponsiveHero(skin) }
-    item { SkinIdentity(skin) }
+    item { SkinIdentity(skin, onLike) }
     item { CompatibilitySummary(skin.compatibility) }
-    item { DownloadActions(skin, onApply) }
+    item { DownloadActions(skin, onDownload) }
+    item { OutlineButton("Report skin", onClick = onReport) }
     item { ResponsiveStats(skin) }
     if (skin.description.isNotBlank()) item { Text(skin.description, color = RetroTextSoft) }
     item { TechnicalDetails(skin, initiallyExpanded) }
@@ -119,8 +171,8 @@ private fun LazyListScope.SkinDetailsItems(skin: CommunitySkin, onApply: () -> U
     }
 }
 
-@Composable private fun SkinIdentity(skin: CommunitySkin) {
-    var liked by remember { mutableStateOf(false) }
+@Composable private fun SkinIdentity(skin: CommunitySkin, onLike: (Boolean) -> Unit) {
+    var liked by remember(skin.id) { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(skin.title, color = RetroText, style = MaterialTheme.typography.headlineSmall)
@@ -129,7 +181,7 @@ private fun LazyListScope.SkinDetailsItems(skin: CommunitySkin, onApply: () -> U
                 if (skin.verified) { Spacer(Modifier.width(8.dp)); Icon(Icons.Filled.Verified, "Verified creator", tint = RetroGold, modifier = Modifier.size(18.dp)) }
             }
         }
-        IconButton({ liked = !liked }) { Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Like (simulated)", tint = RetroDanger) }
+        IconButton({ liked = !liked; onLike(liked) }) { Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (liked) "Unlike" else "Like", tint = RetroDanger) }
         Text((skin.likes + if (liked) 1 else 0).toString(), color = RetroTextDim)
     }
 }
@@ -138,19 +190,19 @@ private fun LazyListScope.SkinDetailsItems(skin: CommunitySkin, onApply: () -> U
     RetroCard { Row(verticalAlignment = Alignment.CenterVertically) { CompatibilityBadge(c); Spacer(Modifier.width(10.dp)); Text(compatibilityText(c), color = RetroTextSoft, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) } }
 }
 
-@Composable private fun DownloadActions(skin: CommunitySkin, onApply: () -> Unit) {
+@Composable private fun DownloadActions(skin: CommunitySkin, onDownload: (Boolean) -> Unit) {
     var sheet by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     Box {
         if (configuration.screenWidthDp >= 600) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PrimaryButton("Download & apply (simulated)", Modifier.weight(1f), Icons.Filled.Download) { sheet = true }
-            OutlineButton("Download to library (simulated)", Modifier.weight(1f)) {}
+            PrimaryButton("Download & apply", Modifier.weight(1f), Icons.Filled.Download) { sheet = true }
+            OutlineButton("Download to library", Modifier.weight(1f)) { onDownload(false) }
         } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            PrimaryButton("Download & apply (simulated)", icon = Icons.Filled.Download) { sheet = true }
-            OutlineButton("Download to library (simulated)") {}
+            PrimaryButton("Download & apply", icon = Icons.Filled.Download) { sheet = true }
+            OutlineButton("Download to library") { onDownload(false) }
         }
     }
-    if (sheet) DownloadApplySheet(skin, { sheet = false }, { sheet = false; onApply() })
+    if (sheet) DownloadApplySheet(skin, { sheet = false }, { sheet = false; onDownload(true) })
 }
 
 @Composable private fun ResponsiveStats(skin: CommunitySkin) {
