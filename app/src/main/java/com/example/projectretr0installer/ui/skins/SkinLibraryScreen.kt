@@ -85,12 +85,12 @@ fun SkinLibraryScreen(
                 }
                 item(key = "standalone-actions") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PrimaryButton("Import skin", Modifier.weight(1f), Icons.Filled.Upload, onImport)
+                        PrimaryButton("Import skin", Modifier.weight(1f), icon = Icons.Filled.Upload, onClick = onImport)
                         SecondaryButton("Community", Modifier.weight(1f), Icons.Filled.Public, onCommunity)
                     }
                 }
             } else {
-                item(key = "import") { PrimaryButton("Import skin", Modifier.fillMaxWidth(), Icons.Filled.Upload, onImport) }
+                item(key = "import") { PrimaryButton("Import skin", Modifier.fillMaxWidth(), icon = Icons.Filled.Upload, onClick = onImport) }
             }
             item(key = "filters") { SkinFilterRow(options, filter) { filter = it } }
             item(key = "library-heading") { SectionHeader("Library", Icons.Filled.Garage, trailingCount = skins.size) }
