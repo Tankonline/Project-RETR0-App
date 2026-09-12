@@ -82,22 +82,22 @@ fun RetroCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
 /*  BUTTONS — one PrimaryButton per screen; everything else demoted.   */
 /* ------------------------------------------------------------------ */
 @Composable
-fun PrimaryButton(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, onClick: () -> Unit) {
+fun PrimaryButton(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(RetroAccent)
-            .clickable(onClick = onClick)
+            .background(if (enabled) RetroAccent else RetroAccent.copy(alpha = 0.3f))
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 15.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Icon(icon, null, tint = Color.White, modifier = Modifier.size(19.dp))
+            Icon(icon, null, tint = if (enabled) Color.White else Color.White.copy(alpha = 0.5f), modifier = Modifier.size(19.dp))
             Spacer(Modifier.width(9.dp))
         }
-        Text(text, color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text(text, color = if (enabled) Color.White else Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.titleMedium)
     }
 }
 

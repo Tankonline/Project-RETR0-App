@@ -39,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.*
@@ -47,6 +49,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
@@ -121,6 +124,10 @@ class MainActivity : ComponentActivity() {
     private var isSlotsLoading by mutableStateOf(false)
     private var isInstallServiceConnecting by mutableStateOf(true)
     private var isClearingTempFiles by mutableStateOf(false)
+
+    // Save Upload State
+    private var showSaveUploadDialog by mutableStateOf(false)
+    private var profileToUpload by mutableStateOf<SaveProfile?>(null)
 
     // Music Import Workflow State
     private var showMusicImportDialog by mutableStateOf(false)
@@ -386,6 +393,10 @@ class MainActivity : ComponentActivity() {
 
         if (showMusicImportDialog) {
             MusicImportDialog()
+        }
+
+        if (showSaveUploadDialog) {
+            SaveUploadDialog()
         }
 
         if (showLibraryPickerForSlot != null) {
@@ -1367,12 +1378,8 @@ class MainActivity : ComponentActivity() {
                                 onApply = { if (isUiIdle) startBackgroundInstall("RESTORE", profileName = profile.name) },
                                 onExport = {
                                     if (isUiIdle) {
-                                        Log.i(TAG, "Uploading save profile to Community Hub: ${profile.name}")
-                                        startBackgroundInstall(
-                                            actionType = "UPLOAD",
-                                            profileName = profile.name,
-                                            uploaderName = "Retr0",
-                                        )
+                                        profileToUpload = profile
+                                        showSaveUploadDialog = true
                                     }
                                 },
                                 onRename = {
@@ -2019,7 +2026,7 @@ class MainActivity : ComponentActivity() {
             it.fileName.contains(searchQuery, true)
         }
 
-        androidx.compose.ui.window.Dialog(onDismissRequest = { showLibraryPickerForSlot = null }) {
+        Dialog(onDismissRequest = { showLibraryPickerForSlot = null }) {
             RetroCard(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Pick from Library", style = MaterialTheme.typography.titleLarge, color = RetroText)
@@ -2085,7 +2092,7 @@ class MainActivity : ComponentActivity() {
             "Ryan_Kurt_Red_Green.mp3" to "Red Green"
         )
 
-        androidx.compose.ui.window.Dialog(onDismissRequest = { showSlotPickerForLibraryTrack = null }) {
+        Dialog(onDismissRequest = { showSlotPickerForLibraryTrack = null }) {
             RetroCard(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Apply Track to Game", style = MaterialTheme.typography.titleLarge, color = RetroText)
@@ -2169,7 +2176,7 @@ class MainActivity : ComponentActivity() {
         var targetTrackSlot by remember { mutableStateOf("Garage_Music.mp3") }
         var currentStep by remember { mutableIntStateOf(0) } // 0: Search, 1: Selection, 2: Confirmation
 
-        androidx.compose.ui.window.Dialog(onDismissRequest = { showMusicImportDialog = false }) {
+        Dialog(onDismissRequest = { showMusicImportDialog = false }) {
             RetroCard(
                 Modifier
                     .fillMaxWidth()
@@ -2367,5 +2374,130 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    @Composable
+    fun SaveUploadDialog() {
+        val profile = profileToUpload ?: return
+        var uploaderName by remember { mutableStateOf("Retr0") }
+        var manualLevel by remember { mutableStateOf("") }
+        var manualGold by remember { mutableStateOf("") }
+        var manualRS by remember { mutableStateOf("") }
+        var manualMS by remember { mutableStateOf("") }
+
+        val canUpload = uploaderName.isNotBlank() && manualLevel.isNotBlank() && manualGold.isNotBlank() && manualRS.isNotBlank() && manualMS.isNotBlank()
+
+        Dialog(onDismissRequest = { showSaveUploadDialog = false }) {
+            RetroCard(
+                Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .imePadding()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(18.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(42.dp).background(RetroAccentTint, RoundedCornerShape(12.dp)), Alignment.Center) {
+                            Icon(Icons.Filled.CloudUpload, null, tint = RetroAccent)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Share to Community", style = MaterialTheme.typography.titleLarge, color = RetroText)
+                            Text(profile.name, style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                        }
+                    }
+
+                    HorizontalDivider(color = RetroBorder)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Creator identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                        OutlinedTextField(
+                            value = uploaderName,
+                            onValueChange = { uploaderName = it },
+                            label = { Text("Display Name") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            leadingIcon = { Icon(Icons.Filled.Person, null, tint = RetroAccent) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = RetroText,
+                                unfocusedTextColor = RetroText,
+                                focusedBorderColor = RetroAccent,
+                                unfocusedBorderColor = RetroBorder,
+                                focusedLabelColor = RetroAccent,
+                                unfocusedLabelColor = RetroTextMuted
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Save statistics (mandatory)", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.weight(1f)) {
+                                CurrencyField(value = manualLevel, onValueChange = { if (it.all { c -> c.isDigit() }) manualLevel = it }, label = "Level")
+                            }
+                            Box(Modifier.weight(1f)) {
+                                CurrencyField(value = manualGold, onValueChange = { if (it.all { c -> c.isDigit() }) manualGold = it }, label = "Gold")
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.weight(1f)) {
+                                CurrencyField(value = manualRS, onValueChange = { if (it.all { c -> c.isDigit() }) manualRS = it }, label = "R$")
+                            }
+                            Box(Modifier.weight(1f)) {
+                                CurrencyField(value = manualMS, onValueChange = { if (it.all { c -> c.isDigit() }) manualMS = it }, label = "M$")
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        SecondaryButton("Cancel", Modifier.weight(1f)) {
+                            showSaveUploadDialog = false
+                        }
+                        PrimaryButton("Upload Now", Modifier.weight(1f), enabled = canUpload) {
+                            startBackgroundInstall(
+                                actionType = "UPLOAD",
+                                profileName = profile.name,
+                                uploaderName = uploaderName,
+                                manualLevel = manualLevel,
+                                manualGold = manualGold,
+                                manualRS = manualRS,
+                                manualMS = manualMS
+                            )
+                            showSaveUploadDialog = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun CurrencyField(value: String, onValueChange: (String) -> Unit, label: String) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyMedium,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = RetroText,
+                unfocusedTextColor = RetroText,
+                focusedBorderColor = RetroAccent,
+                unfocusedBorderColor = RetroBorder,
+                focusedLabelColor = RetroAccent,
+                unfocusedLabelColor = RetroTextMuted
+            ),
+            shape = RoundedCornerShape(8.dp)
+        )
     }
 }

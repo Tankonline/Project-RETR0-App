@@ -43,11 +43,13 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://projectretr0-skins-dev.armaandeep08-ap.workers.dev\"")
+            buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
+            buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
         }
         release {
             isMinifyEnabled = false
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
+            buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
             isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.example.projectretr0installer.BuildConfig
 import com.example.projectretr0installer.IRetr0UserService
 import com.example.projectretr0installer.data.skins.SaveApiClient
 import com.example.projectretr0installer.data.skins.SkinApiException
@@ -40,10 +41,10 @@ class Retr0Installer(
         private const val MUSIC_LIBRARY_PATH = "/storage/emulated/0/Documents/ProjectRETR0/MusicLibrary"
         
         // COMMUNITY API URL
-        private const val COMMUNITY_API_URL = "https://save-files.armaandeep08-ap.workers.dev"
+        private const val COMMUNITY_API_URL = BuildConfig.COMMUNITY_API_BASE_URL
         
         // Workers.dev proxy for globally cached release downloads.
-        private const val BOOSTER_URL = "https://save-files.armaandeep08-ap.workers.dev"
+        private const val BOOSTER_URL = COMMUNITY_API_URL
 
         private var isDownloaderInit = false
         
@@ -611,46 +612,10 @@ class Retr0Installer(
      */
     suspend fun fetchCommunitySaves(sort: String = "newest"): List<CommunitySave> = withContext(Dispatchers.IO) {
         try {
-            val url = URL("$COMMUNITY_API_URL/list?sort=$sort")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10000
-                
-            if (connection.responseCode == 200) {
-                val responseText = connection.inputStream.bufferedReader().readText()
-                Log.i(TAG, "Community API Response: $responseText")
-                
-                // Safety check: Is this my JSON or the default 'Hello World'?
-                if (!responseText.trim().startsWith("[")) {
-                    Log.e(TAG, "Invalid server response. Worker is likely not deployed correctly.")
-                    return@withContext emptyList()
-                }
-
-                val array = org.json.JSONArray(responseText)
-                val list = mutableListOf<CommunitySave>()
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    list.add(
-                        CommunitySave(
-                            id = obj.getString("id"),
-                            customName = obj.getString("custom_name"),
-                            uploaderName = obj.getString("uploader_name"),
-                            fileSize = obj.getLong("file_size"),
-                            createdAt = obj.getString("created_at"),
-                            playerLevel = obj.optInt("player_level", 0),
-                            playerGold = obj.optLong("player_gold", 0),
-                            playerRs = obj.optLong("player_rs", 0),
-                            playerMs = obj.optLong("player_ms", 0),
-                            likes = obj.optInt("likes", 0),
-                            downloads = obj.optInt("downloads", 0),
-                        ),
-                    )
-                }
-                list
-            } else {
-                Log.e(TAG, "Community API error: ${connection.responseCode}")
-                emptyList()
-            }
+            SaveApiClient(context).listSaves(sort)
+        } catch (e: SkinApiException) {
+            Log.e(TAG, "Community saves API error: status=${e.statusCode}, code=${e.errorCode}, requestId=${e.requestId}", e)
+            emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch community saves", e)
             emptyList()
@@ -666,7 +631,11 @@ class Retr0Installer(
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 10000
-                
+            connection.setRequestProperty("Accept", "application/json")
+            if (BuildConfig.COMMUNITY_API_KEY.isNotBlank()) {
+                connection.setRequestProperty("X-RETR0-KEY", BuildConfig.COMMUNITY_API_KEY)
+            }
+
             if (connection.responseCode == 200) {
                 val responseText = connection.inputStream.bufferedReader().readText()
                 Log.i(TAG, "Community Music Response: $responseText")
@@ -709,7 +678,11 @@ class Retr0Installer(
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 10000
-                return@withContext connection.responseCode == 200
+            connection.setRequestProperty("Accept", "application/json")
+            if (BuildConfig.COMMUNITY_API_KEY.isNotBlank()) {
+                connection.setRequestProperty("X-RETR0-KEY", BuildConfig.COMMUNITY_API_KEY)
+            }
+            return@withContext connection.responseCode == 200
         } catch (_: Exception) { false }
     }
 
@@ -879,9 +852,15 @@ class Retr0Installer(
             s.createDirectory(SAVE_HUB_PATH)
 
             val encodedId = java.net.URLEncoder.encode(save.id, "UTF-8")
-            val url = URL("$BOOSTER_URL/download?id=$encodedId")
+            val url = URL("$COMMUNITY_API_URL/v1/saves/$encodedId")
             val connection = url.openConnection() as HttpURLConnection
-                
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 70000
+            connection.setRequestProperty("Accept", "application/octet-stream")
+            if (BuildConfig.COMMUNITY_API_KEY.isNotBlank()) {
+                connection.setRequestProperty("X-RETR0-KEY", BuildConfig.COMMUNITY_API_KEY)
+            }
             if (connection.responseCode == 200) {
                 val tempFile = File(context.externalCacheDir, "community_download.tmp")
                 connection.inputStream.use { input ->
