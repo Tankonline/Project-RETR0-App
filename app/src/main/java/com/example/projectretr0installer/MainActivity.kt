@@ -1,6 +1,8 @@
 package com.example.projectretr0installer
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
@@ -47,6 +49,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -56,6 +59,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import coil.compose.AsyncImage
 import com.example.projectretr0installer.installer.*
+import com.example.projectretr0installer.data.skins.SkinInstallationIdentity
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.skins.CarSkinsTab
 import com.example.projectretr0installer.ui.skins.GamePackage
@@ -118,6 +122,10 @@ class MainActivity : ComponentActivity() {
     private var availablePresets by mutableStateOf<List<String>>(emptyList())
     
     private var isSystemStatusLoading by mutableStateOf(value = true)
+    private var installationId by mutableStateOf("Loading...")
+    private var showResetIdentityDialog by mutableStateOf(false)
+    private val identity by lazy { SkinInstallationIdentity(this) }
+
     private var isCommunityLoading by mutableStateOf(false)
     private var isLibraryLoading by mutableStateOf(false)
     private var isSavesLoading by mutableStateOf(false)
@@ -260,6 +268,7 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.IO) {
                 updateShizukuStatus()
                 updateStorageStatus()
+                installationId = identity.installationId
                 
                 val prefs = getSharedPreferences("retr0_prefs", MODE_PRIVATE)
                 isSmartBackupEnabled = prefs.getBoolean("smart_backup", false)
@@ -425,6 +434,10 @@ class MainActivity : ComponentActivity() {
                 refreshMusicLibrary()
                 refreshMusicSlots()
             }
+        }
+
+        if (showResetIdentityDialog) {
+            ResetIdentityDialog()
         }
 
         Scaffold(
@@ -909,8 +922,54 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            SectionHeader("Advanced tools", Icons.Filled.SmartToy)
-            SecondaryButton("Open AI conversation", Modifier.fillMaxWidth(), icon = Icons.AutoMirrored.Filled.Chat) { currentMode = AppMode.AI_CHAT }
+            SectionHeader("Community Identity", Icons.Filled.Fingerprint)
+            // Installation Identity
+            RetroCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Fingerprint, null, tint = RetroAccent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Installation Identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                        Spacer(Modifier.weight(1f))
+                        Text(if (isServiceBound) "Secured" else "Local", color = if (isServiceBound) RetroSuccess else RetroTextDim, style = MaterialTheme.typography.labelSmall)
+                    }
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
+                        .background(RetroBg, RoundedCornerShape(11.dp))
+                        .border(1.dp, RetroBorder, RoundedCornerShape(11.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)) {
+                        Text(
+                            installationId,
+                            modifier = Modifier.weight(1f),
+                            color = RetroText,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = "Copy ID",
+                            tint = RetroAccent,
+                            modifier = Modifier.size(18.dp).clickable {
+                                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("Installation ID", installationId)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(this@MainActivity, "ID copied to clipboard", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                    
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Text(
+                            "Reset Identity",
+                            color = RetroDanger,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.clickable { showResetIdentityDialog = true }.padding(4.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -2499,5 +2558,48 @@ class MainActivity : ComponentActivity() {
             ),
             shape = RoundedCornerShape(8.dp)
         )
+    }
+
+    @Composable
+    fun ResetIdentityDialog() {
+        Dialog(onDismissRequest = { showResetIdentityDialog = false }) {
+            RetroCard(Modifier.fillMaxWidth().wrapContentHeight()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(42.dp).background(RetroDangerTint, RoundedCornerShape(12.dp)), Alignment.Center) {
+                            Icon(Icons.Filled.Warning, null, tint = RetroDanger)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text("Reset Identity?", style = MaterialTheme.typography.titleLarge, color = RetroText)
+                    }
+
+                    Text(
+                        "This will permanently delete your current community profile and generate a fresh one. You will lose access to your previous likes and uploads on the server.",
+                        color = RetroTextSoft,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { showResetIdentityDialog = false }) {
+                            Text("Cancel", color = RetroTextMuted)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                identity.resetIdentity()
+                                installationId = identity.installationId
+                                showResetIdentityDialog = false
+                                Toast.makeText(this@MainActivity, "Identity Reset", Toast.LENGTH_SHORT).show()
+                                refreshCommunityHub()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = RetroDanger),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Reset", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
