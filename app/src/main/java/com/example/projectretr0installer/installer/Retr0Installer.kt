@@ -2,11 +2,15 @@ package com.example.projectretr0installer.installer
 
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.projectretr0installer.BuildConfig
 import com.example.projectretr0installer.IRetr0UserService
+import com.example.projectretr0installer.data.skins.MusicApiClient
 import com.example.projectretr0installer.data.skins.SaveApiClient
+import com.example.projectretr0installer.data.skins.SkinInstallationIdentity
+import com.example.projectretr0installer.data.skins.SkinRequestCanonicalizer
 import com.example.projectretr0installer.data.skins.SkinApiException
 import com.example.projectretr0installer.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
@@ -627,41 +631,7 @@ class Retr0Installer(
      */
     suspend fun fetchCommunityMusic(sort: String = "newest"): List<CommunityMusic> = withContext(Dispatchers.IO) {
         try {
-            val url = URL("$COMMUNITY_API_URL/music/list?sort=$sort")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10000
-            connection.setRequestProperty("Accept", "application/json")
-            if (BuildConfig.COMMUNITY_API_KEY.isNotBlank()) {
-                connection.setRequestProperty("X-RETR0-KEY", BuildConfig.COMMUNITY_API_KEY)
-            }
-
-            if (connection.responseCode == 200) {
-                val responseText = connection.inputStream.bufferedReader().readText()
-                Log.i(TAG, "Community Music Response: $responseText")
-                
-                val array = org.json.JSONArray(responseText)
-                val list = mutableListOf<CommunityMusic>()
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    list.add(
-                        CommunityMusic(
-                            id = obj.getString("id"),
-                            customName = obj.optString("custom_name", "Untitled"),
-                            uploaderName = obj.optString("uploader_name", "Anonymous"),
-                            fileSize = obj.optLong("file_size", 0L),
-                            createdAt = obj.optString("created_at", ""),
-                            targetTrack = obj.optString("target_track", "Garage_Music.mp3"),
-                            likes = obj.optInt("likes", 0),
-                            downloads = obj.optInt("downloads", 0),
-                        ),
-                    )
-                }
-                list
-            } else {
-                Log.e(TAG, "Music API error: ${connection.responseCode}")
-                emptyList()
-            }
+            MusicApiClient(context).listMusic(sort)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch community music", e)
             emptyList()
@@ -671,20 +641,7 @@ class Retr0Installer(
     /**
      * Sends a 'Like' signal to the community hub.
      */
-    suspend fun likeItem(id: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val encodedId = java.net.URLEncoder.encode(id, "UTF-8")
-            val url = URL("$COMMUNITY_API_URL/like?id=$encodedId")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 10000
-            connection.setRequestProperty("Accept", "application/json")
-            if (BuildConfig.COMMUNITY_API_KEY.isNotBlank()) {
-                connection.setRequestProperty("X-RETR0-KEY", BuildConfig.COMMUNITY_API_KEY)
-            }
-            return@withContext connection.responseCode == 200
-        } catch (_: Exception) { false }
-    }
+
 
     /**
      * Uses Cloudflare AI to analyze an error and provide a fix.
@@ -899,13 +856,14 @@ class Retr0Installer(
         uploaderName: String,
         customName: String,
         metadata: MusicMetadata? = null,
+        artworkUri: Uri? = null,
     ): Boolean = withContext(Dispatchers.IO) {
-        // 1. Apply Locally (saving metadata)
+        // 1. Apply locally while preserving the selected metadata.
         val applied = applyMusicMod(uri, trackFileName, metadata)
         if (!applied) return@withContext false
-        
-        // 2. Upload to Community
-        uploadMusic(uri, uploaderName, customName, trackFileName)
+
+        // 2. Upload to Community.
+        uploadMusic(uri, uploaderName, customName, trackFileName, artworkUri)
     }
 
     /**
@@ -916,81 +874,78 @@ class Retr0Installer(
         uploaderName: String,
         customName: String,
         targetTrack: String,
+        artworkUri: Uri? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             updateProgress(InstallState.PREPARING, "Uploading to Hub...")
 
-            val encodedName = java.net.URLEncoder.encode(customName, "UTF-8")
-            val encodedUser = java.net.URLEncoder.encode(uploaderName, "UTF-8")
-            val encodedTrack = java.net.URLEncoder.encode(targetTrack.trim(), "UTF-8")
-            
-            val url = URL("$COMMUNITY_API_URL/music/upload?name=$encodedName&user=$encodedUser&track=$encodedTrack")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = 60000 // 60 seconds
-            connection.readTimeout = 60000    // 60 seconds
-                connection.setRequestProperty("Content-Type", "application/octet-stream")
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)")
-            connection.setRequestProperty("Accept", "*/*")
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            connection.instanceFollowRedirects = true
+            // Copy to temp file because the new signed API uses file hashing and size checks
+            val tempFile = File(context.cacheDir, "music_upload_tmp.mp3")
+            if (tempFile.exists()) tempFile.delete()
 
-            // Use Chunked Streaming for better compatibility with Cloudflare Workers
-            connection.setChunkedStreamingMode(16384) // 16KB chunks
-            
-            // Stream from URI directly to Network Socket
-            // Fix: If it's a file URI from the library, it might need privileged access
-            val inputStream = try {
-                context.contentResolver.openInputStream(uri)
-            } catch (e: Exception) {
-                if (uri.scheme == "file") {
-                    // Fallback: Pull from privileged storage to local cache if standard read fails
-                    val tempFile = File(context.cacheDir, "music_upload_tmp.mp3")
-                    val pfd = android.os.ParcelFileDescriptor.open(tempFile, android.os.ParcelFileDescriptor.MODE_READ_WRITE or android.os.ParcelFileDescriptor.MODE_CREATE)
-                    val pulled = pfd.use { s.exportFile(uri.path ?: "", it) }
-                    if (pulled) tempFile.inputStream() else throw e
-                } else throw e
-            } ?: throw java.io.FileNotFoundException("Could not open stream for URI: $uri")
-                
-            inputStream.buffered().use { input ->
-                connection.outputStream.use { output ->
-                    val buffer = ByteArray(8192) // 8KB chunks
-                    var bytesRead: Int
-                    var totalWritten = 0L
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        totalWritten += bytesRead
+            val exportSuccess = when (uri.scheme) {
+                "file" -> {
+                    val sourcePath = uri.path
+                    if (sourcePath.isNullOrBlank()) {
+                        false
+                    } else {
+                        val sourceFile = File(sourcePath)
+                        if (sourceFile.isFile && sourceFile.canRead()) {
+                            sourceFile.inputStream().use { input ->
+                                tempFile.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            true
+                        } else {
+                            ParcelFileDescriptor.open(
+                                tempFile,
+                                ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE,
+                            ).use { destination ->
+                                s.exportFile(sourcePath, destination)
+                            }
+                        }
                     }
-                    output.flush()
-                    Log.d("RETR0_UPLOAD", "Successfully wrote $totalWritten bytes to socket")
                 }
+                else -> context.contentResolver.openInputStream(uri)?.use { input ->
+                    tempFile.outputStream().use { output -> input.copyTo(output) }
+                    true
+                } ?: false
             }
 
-            if (connection.responseCode == 200) {
-                updateProgress(InstallState.SUCCESS, "APPLIED & SHARED SUCCESSFULLY")
-                true
-            } else {
-                val responseCode = connection.responseCode
-                val errorMsg = try {
-                    connection.errorStream?.bufferedReader()?.readText() ?: ""
-                } catch (_: Exception) {
-                    "Could not read error stream"
-                }
-                Log.e("RETR0_UPLOAD", "Server rejected upload: $responseCode - $errorMsg")
-                val fixHint = if (responseCode == 500) "FIX: Check your Cloudflare Worker's R2 bucket binding." else "FIX: Try again later or check your internet."
-                fail("Upload failed: HTTP $responseCode. $fixHint")
-                false
+            if (!exportSuccess || !tempFile.isFile || tempFile.length() == 0L) {
+                Log.e("RETR0_UPLOAD", "Could not prepare music upload file: uri=$uri, copiedBytes=${tempFile.length()}, exportSuccess=$exportSuccess")
+                fail("Could not prepare music file for upload.")
+                return@withContext false
             }
+
+            val result = MusicApiClient(context).upload(
+                file = tempFile,
+                musicName = customName,
+                uploaderName = uploaderName,
+                targetTrack = targetTrack,
+            )
+
+            artworkUri?.let { artwork ->
+                val contentType = context.contentResolver.getType(artwork) ?: "image/jpeg"
+                context.contentResolver.openInputStream(artwork)?.use { input ->
+                    MusicApiClient(context).uploadCover(result.id, input, contentType)
+                } ?: Log.w("RETR0_UPLOAD", "Artwork picker URI could not be opened: $artwork")
+            }
+
+            Log.i("RETR0_UPLOAD", "Uploaded music ${result.size} bytes as ${result.id}; requestId=${result.requestId}")
+            updateProgress(InstallState.SUCCESS, "APPLIED & SHARED SUCCESSFULLY")
+            true
+        } catch (e: SkinApiException) {
+            Log.e("RETR0_UPLOAD", "Signed music upload failed: status=${e.statusCode}, code=${e.errorCode}, requestId=${e.requestId}", e)
+            val requestSuffix = e.requestId?.let { " Request ID: $it." }.orEmpty()
+            fail("Upload failed${e.statusCode?.let { " (HTTP $it)" }.orEmpty()}: ${e.message}.$requestSuffix")
+            false
         } catch (e: Exception) {
             Log.e("RETR0_UPLOAD", "Fatal upload error", e)
-            val msg = e.message ?: ""
-            val fixHint = if (msg.contains("reset")) "FIX: Internet unstable or file too large for Worker limits." 
-                         else if (msg.contains("EACCES") || msg.contains("Permission denied")) "FIX: Storage permission error. Try restarting the app."
-                         else "FIX: Ensure you have internet and try again."
-            fail("Upload error: ${e.message}. $fixHint")
+            fail("Upload error: ${e.message}")
             false
+        } finally {
+            File(context.cacheDir, "music_upload_tmp.mp3").delete()
         }
     }
 
@@ -1008,8 +963,21 @@ class Retr0Installer(
             else backupOriginalMusic()
 
             val encodedId = java.net.URLEncoder.encode(music.id, "UTF-8")
-            val url = URL("$BOOSTER_URL/music/download?id=$encodedId")
+            val url = URL("$COMMUNITY_API_URL/v1/music/$encodedId")
             val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 70000
+            connection.setRequestProperty("Accept", "application/octet-stream")
+            
+            // Signs the download request for the new authenticated /v1/music endpoint
+            val identity = SkinInstallationIdentity(context)
+            val signed = identity.sign("GET", "/v1/music/$encodedId", SkinRequestCanonicalizer.sha256(ByteArray(0)))
+
+            connection.setRequestProperty("X-Installation-ID", signed.installationId)
+            connection.setRequestProperty("X-Timestamp", signed.timestamp)
+            connection.setRequestProperty("X-Nonce", signed.nonce)
+            connection.setRequestProperty("X-Signature", signed.signature)
                 
             if (connection.responseCode == 200) {
                 val tempFile = File(context.externalCacheDir, "music_download.tmp")

@@ -94,6 +94,7 @@ class Retr0InstallService : Service() {
             val presetName = intent.getStringExtra("PRESET_NAME")
             val youtubeUrl = intent.getStringExtra("YOUTUBE_URL")
             val artworkUrl = intent.getStringExtra("ARTWORK_URL")
+            val artworkUri = intent.getStringExtra("ARTWORK_URI")?.let(Uri::parse)
             val shareHub = intent.getBooleanExtra("SHARE_HUB", false)
             
             val mLevel = intent.getIntExtra("MANUAL_LEVEL", -1)
@@ -122,6 +123,7 @@ class Retr0InstallService : Service() {
                     youtubeUrl = youtubeUrl,
                     shareHub = shareHub,
                     artworkUrl = artworkUrl,
+                    artworkUri = artworkUri,
                 )
             } else {
                 Log.e(TAG, "No User Service Binder provided")
@@ -166,6 +168,7 @@ class Retr0InstallService : Service() {
         youtubeUrl: String? = null,
         shareHub: Boolean = false,
         artworkUrl: String? = null,
+        artworkUri: Uri? = null,
     ) {
         isTaskRunning = true
         installer = Retr0Installer(applicationContext, service)
@@ -319,7 +322,7 @@ class Retr0InstallService : Service() {
                         if ((uri != null) && (uploaderName != null) && (customName != null) && (targetTrack != null)) {
                             // Pass the artworkUrl to the metadata-aware modder
                             val meta = artworkUrl?.let { MusicMetadata(customName, uploaderName, it) }
-                            installer?.applyAndUploadMusic(uri, targetTrack, uploaderName, customName, metadata = meta)
+                            installer?.applyAndUploadMusic(uri, targetTrack, uploaderName, customName, metadata = meta, artworkUri = artworkUri)
                         }
                     }
                     "DOWNLOAD_COMMUNITY_MUSIC" -> {
@@ -345,7 +348,7 @@ class Retr0InstallService : Service() {
                                 // 2. Apply to game slot if targetTrack is provided
                                 if (targetTrack != null) {
                                     if (shareHub && uploaderName != null) {
-                                        installer?.applyAndUploadMusic(mp3Uri, targetTrack, uploaderName, finalTitle, metadata = meta)
+                                        installer?.applyAndUploadMusic(mp3Uri, targetTrack, uploaderName, finalTitle, metadata = meta, artworkUri = artworkUri)
                                     } else {
                                         installer?.applyMusicMod(mp3Uri, targetTrack, metadata = meta)
                                     }

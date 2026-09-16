@@ -10,6 +10,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.util.Log
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,21 +46,56 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
     val scope = rememberCoroutineScope()
     var actionMessage by remember { mutableStateOf<String?>(null) }
     var reportDialog by remember { mutableStateOf(false) }
+    var deleteDialog by remember { mutableStateOf(false) }
     var state by remember(previewState) { mutableStateOf(previewState ?: DetailsState.LOADING) }
     var skin by remember(previewSkin) { mutableStateOf(previewSkin) }
+    var loadError by remember(id) { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     LaunchedEffect(id, retry, previewState) {
         if (previewState != null || previewSkin != null) return@LaunchedEffect
         state = DetailsState.LOADING
+        loadError = null
         runCatching { runtimeRepository.details(id) }
             .onSuccess { skin = it; state = DetailsState.CONTENT }
-            .onFailure { state = if (it is SkinApiException && it.statusCode == 404) DetailsState.NOT_FOUND else DetailsState.ERROR }
+            .onFailure { error ->
+                loadError = error.toDetailDiagnostic(id)
+                state = if (error is SkinApiException && error.statusCode == 404) DetailsState.NOT_FOUND else DetailsState.ERROR
+            }
     }
-    DetailsShell(onBack, skin?.vehicle ?: state.label) {
+    DetailsShell(
+        onBack = onBack,
+        subtitle = skin?.vehicle ?: state.label,
+        onShare = {
+            val current = skin ?: return@DetailsShell
+            val shareText = current.shareUrl ?: current.coverUrl ?: ""
+            Log.i("COMMUNITY_SKIN", "Sharing skin link: $shareText")
+            if (shareText.isNotEmpty()) {
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, shareText)
+                }, "Share skin link"))
+            }
+        },
+        onReport = { reportDialog = true },
+        onDelete = { deleteDialog = true },
+    ) {
         when (state) {
             DetailsState.LOADING -> item { LoadingSkinCard() }
-            DetailsState.ERROR -> item { EmptyState(Icons.Filled.ErrorOutline, "Couldn't load skin", "Check your connection and try again.", "Retry") { retry++ } }
-            DetailsState.NOT_FOUND -> item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "This community skin may have been removed.") }
+            DetailsState.ERROR -> item {
+                EmptyState(
+                    Icons.Filled.ErrorOutline,
+                    "Couldn't load skin",
+                    loadError ?: "Check your connection and try again.",
+                    "Retry",
+                ) { retry++ }
+            }
+            DetailsState.NOT_FOUND -> item {
+                EmptyState(
+                    Icons.Filled.ErrorOutline,
+                    "Skin not found",
+                    loadError ?: "This community skin may have been removed.",
+                )
+            }
             DetailsState.CONTENT -> skin?.let { current ->
                 SkinDetailsItems(
                     current,
@@ -67,7 +104,7 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
                     onLike = { liked ->
                         scope.launch {
                             runtimeViewModel.setLike(current.id, liked)
-                                .onSuccess { skin = skin?.copy(likes = (skin?.likes ?: 0) + if (liked) 1 else -1) }
+                                .onSuccess { likes -> skin = skin?.copy(likes = likes ?: skin!!.likes) }
                                 .onFailure { actionMessage = it.message ?: "Unable to update like" }
                         }
                     },
@@ -79,12 +116,31 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
                         }
                     },
                     onReport = { reportDialog = true },
+                    onDelete = { deleteDialog = true },
                 )
             } ?: item { EmptyState(Icons.Filled.ErrorOutline, "Skin not found", "No details are available.") }
         }
     }
     actionMessage?.let { message ->
         AlertDialog(onDismissRequest = { actionMessage = null }, confirmButton = { TextButton({ actionMessage = null }) { Text("OK") } }, title = { Text("Skin action") }, text = { Text(message) })
+    }
+    if (deleteDialog) {
+        AlertDialog(
+            onDismissRequest = { deleteDialog = false },
+            title = { Text("Delete community skin?") },
+            text = { Text("This permanently removes your community upload and its media. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteDialog = false
+                    scope.launch {
+                        runtimeViewModel.deleteOwned(id)
+                            .onSuccess { onBack() }
+                            .onFailure { error -> actionMessage = error.toDetailDiagnostic(id) }
+                    }
+                }) { Text("Delete", color = RetroDanger) }
+            },
+            dismissButton = { TextButton(onClick = { deleteDialog = false }) { Text("Cancel") } },
+        )
     }
     if (reportDialog) {
         AlertDialog(
@@ -97,6 +153,18 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
     }
 }
 
+private fun Throwable.toDetailDiagnostic(skinId: String): String = when (this) {
+    is SkinApiException -> buildString {
+        append(errorCode ?: "skin_details_failed")
+        statusCode?.let { append(" (HTTP $it)") }
+        append(": ")
+        append(message ?: "The server rejected the details request.")
+        requestId?.let { append(" [requestId: $it]") }
+        append(" [skinId: $skinId]")
+    }
+    else -> "${this::class.java.simpleName}: ${message ?: "Unable to load skin details"} [skinId: $skinId]"
+}
+
 private val DetailsState.label get() = when (this) {
     DetailsState.LOADING -> "Loading"
     DetailsState.CONTENT -> "Community skin"
@@ -105,7 +173,14 @@ private val DetailsState.label get() = when (this) {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun DetailsShell(onBack: () -> Unit, subtitle: String, content: LazyListScope.() -> Unit) {
+@Composable private fun DetailsShell(
+    onBack: () -> Unit,
+    subtitle: String,
+    onShare: () -> Unit,
+    onReport: () -> Unit,
+    onDelete: () -> Unit,
+    content: LazyListScope.() -> Unit,
+) {
     var overflow by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = RetroBg,
@@ -118,8 +193,9 @@ private val DetailsState.label get() = when (this) {
                     Box {
                         IconButton({ overflow = true }) { Icon(Icons.Filled.MoreVert, "More actions") }
                         DropdownMenu(overflow, { overflow = false }) {
-                            DropdownMenuItem(text = { Text("Share (simulated)") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { overflow = false })
-                            DropdownMenuItem(text = { Text("Report (simulated)") }, leadingIcon = { Icon(Icons.Filled.Flag, null) }, onClick = { overflow = false })
+                            DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { overflow = false; onShare() })
+                            DropdownMenuItem(text = { Text("Report") }, leadingIcon = { Icon(Icons.Filled.Flag, null) }, onClick = { overflow = false; onReport() })
+                            DropdownMenuItem(text = { Text("Delete from Community Hub") }, leadingIcon = { Icon(Icons.Filled.Delete, null, tint = RetroDanger) }, onClick = { overflow = false; onDelete() })
                         }
                     }
                 },
@@ -143,12 +219,14 @@ private fun LazyListScope.SkinDetailsItems(
     onLike: (Boolean) -> Unit,
     onDownload: (Boolean) -> Unit,
     onReport: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     item { ResponsiveHero(skin) }
     item { SkinIdentity(skin, onLike) }
     item { CompatibilitySummary(skin.compatibility) }
     item { DownloadActions(skin, onDownload) }
     item { OutlineButton("Report skin", onClick = onReport) }
+    if (skin.isOwner) item { DangerButton("Delete from Community Hub", icon = Icons.Filled.Delete, onClick = onDelete) }
     item { ResponsiveStats(skin) }
     if (skin.description.isNotBlank()) item { Text(skin.description, color = RetroTextSoft) }
     item { TechnicalDetails(skin, initiallyExpanded) }
@@ -172,7 +250,7 @@ private fun LazyListScope.SkinDetailsItems(
 }
 
 @Composable private fun SkinIdentity(skin: CommunitySkin, onLike: (Boolean) -> Unit) {
-    var liked by remember(skin.id) { mutableStateOf(false) }
+    var liked by remember(skin.id, skin.likedByMe) { mutableStateOf(skin.likedByMe) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(skin.title, color = RetroText, style = MaterialTheme.typography.headlineSmall)
@@ -182,7 +260,7 @@ private fun LazyListScope.SkinDetailsItems(
             }
         }
         IconButton({ liked = !liked; onLike(liked) }) { Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (liked) "Unlike" else "Like", tint = RetroDanger) }
-        Text((skin.likes + if (liked) 1 else 0).toString(), color = RetroTextDim)
+        Text(skin.likes.toString(), color = RetroTextDim)
     }
 }
 

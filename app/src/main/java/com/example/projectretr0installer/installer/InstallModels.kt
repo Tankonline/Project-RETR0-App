@@ -84,6 +84,9 @@ data class CommunitySave(
     val playerMs: Long = 0,
     val likes: Int = 0,
     val downloads: Int = 0,
+    val isOwner: Boolean = false,
+    val likedByMe: Boolean = false,
+    val shareUrl: String? = null,
 ) {
     val formattedSize: String get() = StorageUtils.formatSize(fileSize)
 }
@@ -100,6 +103,10 @@ data class CommunityMusic(
     val targetTrack: String, // e.g., "Garage_Music.mp3"
     val likes: Int = 0,
     val downloads: Int = 0,
+    val isOwner: Boolean = false,
+    val likedByMe: Boolean = false,
+    val shareUrl: String? = null,
+    val coverUrl: String? = null,
 )
 
 /**
