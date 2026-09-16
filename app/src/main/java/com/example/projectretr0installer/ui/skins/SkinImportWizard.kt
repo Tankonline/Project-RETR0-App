@@ -38,7 +38,11 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
     val viewModel = remember(context) { SkinImportViewModel(LocalSkinRepository(context), SkinRepository(context)) }
     val importProgress by viewModel.progress.collectAsState()
     var finishing by remember { mutableStateOf(false) }
-    DisposableEffect(imageCache, finishing) { onDispose { if (!finishing) imageCache.cleanup() } }
+    // The wizard can be temporarily removed from composition while opening the
+    // RR3 target browser or media picker. Do not treat that as cancellation and
+    // delete images the wizard state still references. Cleanup happens only on
+    // explicit Cancel/Back from step 1 or after a successful completed import.
+    DisposableEffect(imageCache) { onDispose { } }
     LaunchedEffect(browsing) { onTargetBrowserVisibilityChange(browsing) }
     DisposableEffect(Unit) { onDispose { onTargetBrowserVisibilityChange(false) } }
     var name by remember { mutableStateOf("Aurora Drift") }; var creator by remember { mutableStateOf("Retr0") }; var description by remember { mutableStateOf("") }
@@ -57,14 +61,21 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
         if (uris.isNotEmpty()) scope.launch {
-            imageLoading = true; imageError = null
+            imageLoading = true
+            imageError = null
             val remaining = (5 - state.images.size).coerceAtLeast(0)
             for (uri in uris.take(remaining)) {
-                val role = if (state.images.isEmpty()) SkinImageRole.COVER else SkinImageRole.SCREENSHOT
+                val role = if (state.images.none { it.role == SkinImageRole.COVER }) SkinImageRole.COVER else SkinImageRole.SCREENSHOT
                 imageProcessor.process(uri, role).onSuccess { image ->
-                    if (state.images.any { it.sourceHash == image.sourceHash }) { imageCache.delete(image.file); imageError = "Duplicate image skipped." }
-                    else state = state.copy(images = state.images + image)
-                }.onFailure { imageError = it.message ?: "Unable to process the selected image." }
+                    if (state.images.any { it.sourceHash == image.sourceHash }) {
+                        imageCache.delete(image.file)
+                        imageError = "Duplicate image skipped."
+                    } else {
+                        state = state.copy(images = state.images + image)
+                    }
+                }.onFailure { error ->
+                    imageError = error.message ?: "Unable to process the selected image."
+                }
             }
             imageLoading = false
         }
@@ -76,7 +87,9 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
         val newCover = imageProcessor.changeRole(image, SkinImageRole.COVER).getOrElse { imageError = it.message; imageLoading = false; return }
         val oldScreenshot = oldCover?.let { imageProcessor.changeRole(it, SkinImageRole.SCREENSHOT).getOrElse { error -> imageCache.delete(newCover.file); imageError = error.message; imageLoading = false; return } }
         val replacements = state.images.map { when (it.id) { image.id -> newCover; oldCover?.id -> oldScreenshot ?: it; else -> it } }
-        imageCache.delete(image.file); oldCover?.let { imageCache.delete(it.file) }
+        // changeRole creates a replacement file. Delete only the superseded cover,
+        // never the newly promoted image, because it is now the file to upload.
+        oldCover?.let { imageCache.delete(it.file) }
         state = state.copy(images = replacements); imageLoading = false
     }
     val importedFileName = state.source?.fileName.orEmpty()
@@ -99,7 +112,7 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
                     } ?: Text("Select the custom skin file you want to import.", color = RetroTextMuted)
                 }
                 2 -> { SectionHeader("Target", Icons.Filled.DirectionsCar); VehicleSelector(state.vehicle) { state = state.copy(vehicle = it, target = null) }; GamePackageSelector(state.gamePackage) { state = state.copy(gamePackage = it, target = null) }; SecondaryButton("Browse RR3 Files", Modifier.fillMaxWidth(), icon = Icons.Filled.FolderOpen) { browsing = true }; RetroCard { DataRow("Package", state.gamePackage.short); DataRow("Selected target", state.target?.relativePath ?: "No target selected"); DataRow("Exact filename", if (state.target != null) "Match" else "Required") }; if (!valid) Text("Choose an existing exact-name exterior livery target before continuing.", color = RetroDanger) }
-                3 -> { SectionHeader("Skin details", Icons.Filled.Edit); OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(creator, { creator = it }, label = { Text("Creator") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(description, { if (it.length <= 280) description = it }, label = { Text("Description") }, supportingText = { Text("${description.length} / 280") }, minLines = 3, modifier = Modifier.fillMaxWidth()); ScreenshotPicker(state.images, onAdd = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, onRemove = { removed -> imageCache.delete(removed.file); val rest = state.images - removed; if (removed.role == SkinImageRole.COVER && rest.isNotEmpty()) scope.launch { state = state.copy(images = rest); promote(rest.first()) } else state = state.copy(images = rest) }, onSetCover = { scope.launch { promote(it) } }); if (imageLoading) LinearProgressIndicator(Modifier.fillMaxWidth()); imageError?.let { Text(it, color = RetroDanger) }; if (state.upload && state.images.none { it.role == SkinImageRole.COVER }) Text("A cover image is required for community upload.", color = RetroDanger) }
+                3 -> { SectionHeader("Skin details", Icons.Filled.Edit); OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(creator, { creator = it }, label = { Text("Creator") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(description, { if (it.length <= 280) description = it }, label = { Text("Description") }, supportingText = { Text("${description.length} / 280") }, minLines = 3, modifier = Modifier.fillMaxWidth()); ScreenshotPicker(state.images, onAdd = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, onRemove = { removed -> imageCache.delete(removed.file); state = state.copy(images = state.images - removed) }, onSetCover = { scope.launch { promote(it) } }); if (imageLoading) LinearProgressIndicator(Modifier.fillMaxWidth()); imageError?.let { Text(it, color = RetroDanger) }; if (state.upload && state.images.none { it.role == SkinImageRole.COVER }) Text("A cover image is required for community upload.", color = RetroDanger) }
                 4 -> { SectionHeader("Options", Icons.Filled.Tune); UploadOptionsCard(state.apply, state.upload, { state = state.copy(apply = it) }, { state = state.copy(upload = it) }); if (state.upload) CommunityGuidelinesCard(state.guidelines) { state = state.copy(guidelines = it) }; SectionHeader("Summary", Icons.Filled.Summarize); RetroCard { DataRow("Skin", name); DataRow("Source", state.source?.fileName ?: "Not selected"); DataRow("Vehicle", "${state.vehicle} · Exterior livery"); DataRow("Package", state.gamePackage.short); DataRow("Target", state.target?.relativePath ?: "Not selected"); DataRow("Cover", if (state.images.any { it.role == SkinImageRole.COVER }) "Selected" else "Not selected"); DataRow("Screenshots", state.images.count { it.role == SkinImageRole.SCREENSHOT }.toString()) }; when (val progress = importProgress) { is ImportProgress.Running -> { LinearProgressIndicator({ progress.percent / 100f }, Modifier.fillMaxWidth()); Text(progress.message, color = RetroTextMuted) }; is ImportProgress.Failed -> Text(progress.message, color = RetroDanger); else -> Unit } }
             }; Spacer(Modifier.height(12.dp))
         }

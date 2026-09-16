@@ -56,9 +56,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.work.*
 import coil.compose.AsyncImage
 import com.example.projectretr0installer.installer.*
+import com.example.projectretr0installer.data.skins.MusicApiClient
+import com.example.projectretr0installer.data.skins.SaveApiClient
 import com.example.projectretr0installer.data.skins.SkinInstallationIdentity
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.skins.CarSkinsTab
@@ -108,6 +111,11 @@ class MainActivity : ComponentActivity() {
     private var isSmartBackupEnabled by mutableStateOf(value = false)
     private var lastBackupStatus by mutableStateOf("Never")
     
+    private var pendingDeepLinkSkinId by mutableStateOf<String?>(null)
+    private var pendingDeepLinkSaveId by mutableStateOf<String?>(null)
+    private var pendingDeepLinkMusicId by mutableStateOf<String?>(null)
+    private var communityTab by mutableIntStateOf(0)
+    
     private var installService: Retr0InstallService.LocalBinder? by mutableStateOf(null)
     private var isInstallServiceBound by mutableStateOf(value = false)
     
@@ -142,6 +150,7 @@ class MainActivity : ComponentActivity() {
     private var currentMusicImportType by mutableStateOf("YOUTUBE") // "YOUTUBE" or "LOCAL"
     private var musicImportYtUrl by mutableStateOf("")
     private var musicImportLocalUri by mutableStateOf<Uri?>(null)
+    private var musicImportArtworkUri by mutableStateOf<Uri?>(null)
     private var musicImportSearchQuery by mutableStateOf("")
     private var musicImportResults by mutableStateOf<List<MusicMetadata>>(emptyList())
     private var isMusicSearching by mutableStateOf(false)
@@ -288,9 +297,36 @@ class MainActivity : ComponentActivity() {
             bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
         }
 
+        handleDeepLink(intent)
+
         setContent {
             ProjectRETR0InstallerTheme {
                 MainScreen()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    private fun handleDeepLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        Log.i(TAG, "Handling deep link: $data")
+        if (data.scheme == "https" && data.host == "save-files.armaandeep08-ap.workers.dev") {
+            val segments = data.pathSegments
+            if (segments.size >= 3 && segments[0] == "v1") {
+                val type = segments[1]
+                val id = segments[2]
+                Log.i(TAG, "Extracted deep link: type=$type, id=$id")
+                when (type) {
+                    "skins" -> { pendingDeepLinkSkinId = id; communityTab = 2 }
+                    "saves" -> { pendingDeepLinkSaveId = id; communityTab = 0 }
+                    "music" -> { pendingDeepLinkMusicId = id; communityTab = 1 }
+                }
+                currentMode = AppMode.COMMUNITY
             }
         }
     }
@@ -1032,22 +1068,59 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun CommunityGalleryScreen(onFullScreenChange: (Boolean) -> Unit = {}) {
         var searchQuery by remember { mutableStateOf("") }
-        var selectedTab by remember { mutableIntStateOf(0) }
-        var focusedSkinRoute by remember { mutableStateOf(false) }
+        var focusedSkinRoute by rememberSaveable { mutableStateOf(false) }
         val scrollState = rememberScrollState()
+
+        // Handle deep link navigation
+        LaunchedEffect(pendingDeepLinkSkinId, pendingDeepLinkSaveId, pendingDeepLinkMusicId) {
+            pendingDeepLinkSkinId?.let { communityTab = 2 }
+            pendingDeepLinkSaveId?.let { communityTab = 0 }
+            pendingDeepLinkMusicId?.let { communityTab = 1 }
+        }
+
+        val linkedSave = remember(communitySaves, pendingDeepLinkSaveId) {
+            pendingDeepLinkSaveId?.let { id -> communitySaves.find { it.id == id } }
+        }
+        val linkedMusic = remember(communityMusic, pendingDeepLinkMusicId) {
+            pendingDeepLinkMusicId?.let { id -> communityMusic.find { it.id == id } }
+        }
+
+        linkedSave?.let { save ->
+            AlertDialog(
+                onDismissRequest = { pendingDeepLinkSaveId = null },
+                title = { Text("Shared Save Found") },
+                text = { Text("A community member shared a save: ${save.customName} by ${save.uploaderName}. Would you like to get it?") },
+                confirmButton = {
+                    TextButton(onClick = { 
+                        pendingDeepLinkSaveId = null
+                        startBackgroundInstall("DOWNLOAD_COMMUNITY", saveId = save.id, customName = save.customName)
+                    }) { Text("Get Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeepLinkSaveId = null }) { Text("Close") }
+                }
+            )
+        }
+
+        linkedMusic?.let { music ->
+            AlertDialog(
+                onDismissRequest = { pendingDeepLinkMusicId = null },
+                title = { Text("Shared Music Found") },
+                text = { Text("A community member shared a track: ${music.customName} by ${music.uploaderName}. Would you like to get it?") },
+                confirmButton = {
+                    TextButton(onClick = { 
+                        pendingDeepLinkMusicId = null
+                        startBackgroundInstall("DOWNLOAD_TO_LIBRARY", saveId = music.id, customName = music.customName)
+                    }) { Text("Get Music") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeepLinkMusicId = null }) { Text("Close") }
+                }
+            )
+        }
+
         DisposableEffect(Unit) { onDispose { onFullScreenChange(false) } }
         LaunchedEffect(focusedSkinRoute) { onFullScreenChange(focusedSkinRoute) }
-
-        if (selectedTab == 2 && focusedSkinRoute) {
-            CarSkinsTab(
-                service = service,
-                isServiceConnected = isServiceBound,
-                onOpenMySkins = { currentMode = AppMode.SKIN_MODS },
-                onOpenImport = { currentMode = AppMode.SKIN_MODS },
-                onFullScreenChange = { focusedSkinRoute = it },
-            )
-            return
-        }
 
         val filteredSaves = remember(communitySaves, searchQuery) {
             communitySaves.filter { 
@@ -1067,7 +1140,7 @@ class MainActivity : ComponentActivity() {
 
         Column(
             Modifier.fillMaxSize().background(RetroBg)
-                .then(if (selectedTab == 2) Modifier else Modifier.verticalScroll(scrollState))
+                .then(if (communityTab == 2) Modifier else Modifier.verticalScroll(scrollState))
                 .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -1088,9 +1161,9 @@ class MainActivity : ComponentActivity() {
                         .clickable { /* toggleSort() */ }, Alignment.Center) { Icon(Icons.Filled.SwapVert, null, tint = RetroAccent) }
             }
             
-            SegmentedTabs(listOf("Saves", "Music", "Skins"), selectedTab) { selectedTab = it }
+            SegmentedTabs(listOf("Saves", "Music", "Skins"), communityTab) { communityTab = it }
 
-            if (selectedTab == 0) {
+            if (communityTab == 0) {
                 if (isCommunityLoading) {
                     repeat(3) {
                         Box(modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)).shimmer())
@@ -1108,19 +1181,35 @@ class MainActivity : ComponentActivity() {
                             save = save,
                             onGet = { startBackgroundInstall("DOWNLOAD_COMMUNITY", saveId = save.id, customName = save.customName) },
                             onFav = {
-                                lifecycleScope.launch {
-                                    val s = service ?: return@launch
-                                    if (Retr0Installer(this@MainActivity, s).likeItem(save.id)) {
-                                        Toast.makeText(this@MainActivity, "Liked!", Toast.LENGTH_SHORT).show()
-                                        refreshCommunityHub()
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    if (SaveApiClient(this@MainActivity).setLike(save.id, !save.likedByMe)) {
+                                        withContext(Dispatchers.Main) { refreshCommunityHub() }
                                     }
                                 }
+                            },
+                            onDelete = if (save.isOwner) { {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    if (SaveApiClient(this@MainActivity).deleteSave(save.id)) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(this@MainActivity, "Save deleted", Toast.LENGTH_SHORT).show()
+                                            refreshCommunityHub()
+                                        }
+                                    }
+                                }
+                            } } else null,
+                            onShare = { 
+                                val url = save.shareUrl ?: return@SaveCard
+                                val intent = Intent(Intent.ACTION_SEND).apply { 
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, url)
+                                }
+                                startActivity(Intent.createChooser(intent, "Share save"))
                             }
                         )
                         Spacer(Modifier.height(12.dp))
                     }
                 }
-            } else if (selectedTab == 1) {
+            } else if (communityTab == 1) {
                 if (isCommunityLoading) {
                     repeat(3) {
                         Box(modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(16.dp)).shimmer())
@@ -1134,26 +1223,57 @@ class MainActivity : ComponentActivity() {
                     }
                 } else {
                     filteredMusic.forEach { music ->
-                        CommunityMusicItem(music)
+                        CommunityMusicItem(
+                            music = music,
+                            onFav = {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    if (MusicApiClient(this@MainActivity).setLike(music.id, !music.likedByMe)) {
+                                        withContext(Dispatchers.Main) { refreshCommunityHub() }
+                                    }
+                                }
+                            },
+                            onDelete = if (music.isOwner) { {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    if (MusicApiClient(this@MainActivity).deleteMusic(music.id)) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(this@MainActivity, "Music deleted", Toast.LENGTH_SHORT).show()
+                                            refreshCommunityHub()
+                                        }
+                                    }
+                                }
+                            } } else null,
+                            onShare = {
+                                val url = music.shareUrl ?: return@CommunityMusicItem
+                                val intent = Intent(Intent.ACTION_SEND).apply { 
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, url)
+                                }
+                                startActivity(Intent.createChooser(intent, "Share music"))
+                            }
+                        )
                         Spacer(Modifier.height(12.dp))
                     }
                 }
             } else {
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    CarSkinsTab(
-                        service = service,
-                        isServiceConnected = isServiceBound,
-                        onOpenMySkins = { currentMode = AppMode.SKIN_MODS },
-                        onOpenImport = { currentMode = AppMode.SKIN_MODS },
-                        onFullScreenChange = { focusedSkinRoute = it },
-                    )
-                }
+                // Keep this instance composed while it switches between the gallery and
+                // a skin detail. Replacing it with a full-screen instance reset its
+                // local selected-skin state and immediately returned users to the gallery.
+                CarSkinsTab(
+                    service = service,
+                    isServiceConnected = isServiceBound,
+                    onOpenMySkins = { currentMode = AppMode.SKIN_MODS },
+                    onOpenImport = { currentMode = AppMode.SKIN_MODS },
+                    onFullScreenChange = { focusedSkinRoute = it },
+                    initialSkinId = pendingDeepLinkSkinId,
+                    onInitialSkinIdHandled = { pendingDeepLinkSkinId = null },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             }
         }
     }
 
     @Composable
-    fun SaveCard(save: CommunitySave, onGet: () -> Unit, onFav: () -> Unit) {
+    fun SaveCard(save: CommunitySave, onGet: () -> Unit, onFav: () -> Unit, onDelete: (() -> Unit)? = null, onShare: () -> Unit = {}) {
         RetroCard {
             Row(verticalAlignment = Alignment.Top) {
                 Box(Modifier.size(38.dp).background(RetroAccentTint, RoundedCornerShape(11.dp)), Alignment.Center) {
@@ -1161,11 +1281,22 @@ class MainActivity : ComponentActivity() {
                 }
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(save.customName, style = MaterialTheme.typography.titleMedium, color = RetroText)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(save.customName, style = MaterialTheme.typography.titleMedium, color = RetroText, modifier = Modifier.weight(1f, fill = false))
+                        if (save.isOwner) {
+                            Spacer(Modifier.width(6.dp))
+                            BadgePill("Mine", Icons.Filled.Person, RetroAccent)
+                        }
+                    }
                     Text("by ${save.uploaderName} · ${StorageUtils.formatSize(save.fileSize)}", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
                 }
-                Icon(Icons.Filled.FavoriteBorder, null,
-                    tint = RetroTextMuted, modifier = Modifier.clickable(onClick = onFav))
+                IconButton(onClick = onShare) { Icon(Icons.Filled.Share, null, tint = RetroAccent) }
+                if (save.isOwner && onDelete != null) {
+                    IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, null, tint = RetroDanger) }
+                } else {
+                    Icon(if (save.likedByMe) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, null,
+                        tint = if (save.likedByMe) RetroDanger else RetroTextMuted, modifier = Modifier.clickable(onClick = onFav))
+                }
             }
             Spacer(Modifier.height(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -1196,20 +1327,88 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CommunityMusicItem(music: CommunityMusic) {
+    fun CommunityMusicItem(music: CommunityMusic, onFav: () -> Unit, onDelete: (() -> Unit)? = null, onShare: () -> Unit = {}) {
         RetroCard {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(
+                    Modifier
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(RetroAccentTint),
+                    Alignment.Center,
+                ) {
+                    if (music.coverUrl != null) {
+                        AsyncImage(
+                            model = music.coverUrl,
+                            contentDescription = "Artwork for ${music.customName}",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Icon(Icons.Filled.MusicNote, null, tint = RetroAccent, modifier = Modifier.size(30.dp))
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            music.customName,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = RetroText,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (music.isOwner) {
+                            Spacer(Modifier.width(6.dp))
+                            BadgePill("Mine", Icons.Filled.Person, RetroAccent)
+                        }
+                    }
+                    Text(
+                        music.uploaderName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = RetroTextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "Replaces: ${music.targetTrack}",
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                        color = RetroAccent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        StorageUtils.formatSize(music.fileSize),
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                        color = RetroTextMuted,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).background(RetroAccentTint, RoundedCornerShape(11.dp)), Alignment.Center) {
-                    Icon(Icons.Filled.MusicNote, null, tint = RetroAccent)
+                IconButton(onClick = onShare) { Icon(Icons.Filled.Share, null, tint = RetroAccent) }
+                Icon(
+                    if (music.likedByMe) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    null,
+                    tint = if (music.likedByMe) RetroDanger else RetroTextMuted,
+                    modifier = Modifier.clickable(onClick = onFav),
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(music.likes.toString(), color = RetroTextDim, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.width(14.dp))
+                Icon(Icons.Filled.Download, null, tint = RetroTextMuted, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(music.downloads.toString(), color = RetroTextDim, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.weight(1f))
+                if (music.isOwner && onDelete != null) {
+                    IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, null, tint = RetroDanger) }
                 }
-                Spacer(Modifier.width(11.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(music.customName, style = MaterialTheme.typography.titleMedium, color = RetroText)
-                    Text("by ${music.uploaderName} · ${StorageUtils.formatSize(music.fileSize)}", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
-                }
-                Box(Modifier.clip(RoundedCornerShape(20.dp)).background(RetroAccent).clickable { 
-                    startBackgroundInstall("DOWNLOAD_TO_LIBRARY", saveId = music.id, customName = music.customName)
-                }.padding(horizontal = 20.dp, vertical = 7.dp)) {
+                Box(
+                    Modifier.clip(RoundedCornerShape(20.dp)).background(RetroAccent).clickable {
+                        startBackgroundInstall("DOWNLOAD_TO_LIBRARY", saveId = music.id, customName = music.customName)
+                    }.padding(horizontal = 22.dp, vertical = 9.dp),
+                ) {
                     Text("Get", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                 }
             }
@@ -1218,7 +1417,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun MusicHubSection(musicPicker: androidx.activity.result.ActivityResultLauncher<String>) {
-        var selectedTabIndex by remember { mutableIntStateOf(0) }
+        var communityTabIndex by remember { mutableIntStateOf(0) }
         var ytUrl by remember { mutableStateOf("") }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1229,10 +1428,10 @@ class MainActivity : ComponentActivity() {
             
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 RetroCard {
-                    SegmentedTabs(listOf("Core","Extended","Library"), selectedTabIndex) { selectedTabIndex = it }
+                    SegmentedTabs(listOf("Core","Extended","Library"), communityTabIndex) { communityTabIndex = it }
                     Spacer(Modifier.height(12.dp))
                     
-                    when (selectedTabIndex) {
+                    when (communityTabIndex) {
                         0 -> {
                             TrackRow("Main menu", "Menu_Music.mp3") { startBackgroundInstall("MUSIC_RESTORE", trackFileName = "Menu_Music.mp3") }
                             HorizontalDivider(color = RetroBorder)
@@ -1709,6 +1908,7 @@ class MainActivity : ComponentActivity() {
         youtubeUrl: String? = null,
         shareHub: Boolean = false,
         artworkUrl: String? = null,
+        artworkUri: Uri? = null,
     ) {
         if (actionType == "RESET_PROGRESS") {
             val intent = Intent(this, Retr0InstallService::class.java).apply { action = "RESET_PROGRESS" }
@@ -1733,6 +1933,7 @@ class MainActivity : ComponentActivity() {
                 putExtra("PRESET_NAME", presetName)
                 putExtra("YOUTUBE_URL", youtubeUrl)
                 putExtra("ARTWORK_URL", artworkUrl)
+                putExtra("ARTWORK_URI", artworkUri?.toString())
                 putExtra("SHARE_HUB", shareHub)
                 
                 manualLevel?.toIntOrNull()?.let { putExtra("MANUAL_LEVEL", it) }
@@ -2234,6 +2435,9 @@ class MainActivity : ComponentActivity() {
         var shareOnHub by remember { mutableStateOf(false) }
         var targetTrackSlot by remember { mutableStateOf("Garage_Music.mp3") }
         var currentStep by remember { mutableIntStateOf(0) } // 0: Search, 1: Selection, 2: Confirmation
+        val artworkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            musicImportArtworkUri = uri
+        }
 
         Dialog(onDismissRequest = { showMusicImportDialog = false }) {
             RetroCard(
@@ -2327,27 +2531,41 @@ class MainActivity : ComponentActivity() {
                         }
                         2 -> {
                             val meta = selectedMetadata!!
+                            val selectedArtwork = musicImportArtworkUri ?: meta.artworkUrl
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 AsyncImage(
-                                    model = meta.artworkUrl,
-                                    contentDescription = null,
+                                    model = selectedArtwork,
+                                    contentDescription = "Selected artwork",
                                     modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)),
                                     contentScale = ContentScale.Crop
                                 )
                                 Spacer(Modifier.width(16.dp))
-                                Column {
-                                    Text(meta.trackName, style = MaterialTheme.typography.titleMedium, color = RetroText)
-                                    Text(meta.artistName, style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
+                                Column(Modifier.weight(1f)) {
+                                    Text(meta.trackName, style = MaterialTheme.typography.titleMedium, color = RetroText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(meta.artistName, style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
-                            
+
                             HorizontalDivider(color = RetroBorder)
-                            
+
+                            Text("Artwork", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlineButton("Choose image", Modifier.weight(1f)) { artworkPicker.launch("image/*") }
+                                if (musicImportArtworkUri != null) {
+                                    TextButton(onClick = { musicImportArtworkUri = null }) { Text("Use YouTube") }
+                                }
+                            }
+                            Text(
+                                if (musicImportArtworkUri != null) "Using selected local artwork." else "Using the matched YouTube artwork when available.",
+                                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                                color = RetroTextMuted,
+                            )
+
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Upload to Community Hub?", Modifier.weight(1f), color = RetroText, style = MaterialTheme.typography.bodyMedium)
                                 Switch(checked = shareOnHub, onCheckedChange = { shareOnHub = it }, colors = SwitchDefaults.colors(checkedTrackColor = RetroAccent))
                             }
-                            
+
                             if (shareOnHub) {
                                 RetroSearchField(value = uploaderName, onValueChange = { uploaderName = it }, placeholder = "Your name…", icon = Icons.Filled.Person)
                             }
@@ -2412,7 +2630,8 @@ class MainActivity : ComponentActivity() {
                                         uploaderName = uploaderName,
                                         targetTrack = targetTrackSlot,
                                         shareHub = shareOnHub,
-                                        artworkUrl = meta.artworkUrl
+                                        artworkUrl = meta.artworkUrl,
+                                        artworkUri = musicImportArtworkUri
                                     )
                                 } else {
                                     startBackgroundInstall(
@@ -2423,7 +2642,8 @@ class MainActivity : ComponentActivity() {
                                         trackFileName = targetTrackSlot, // This is the 'target' in the game
                                         targetTrack = targetTrackSlot,   // Duplicated for the shared uploader logic
                                         shareHub = shareOnHub,
-                                        artworkUrl = meta.artworkUrl
+                                        artworkUrl = meta.artworkUrl,
+                                        artworkUri = musicImportArtworkUri
                                     )
                                 }
                                 showMusicImportDialog = false
@@ -2586,11 +2806,27 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                identity.resetIdentity()
-                                installationId = identity.installationId
-                                showResetIdentityDialog = false
-                                Toast.makeText(this@MainActivity, "Identity Reset", Toast.LENGTH_SHORT).show()
-                                refreshCommunityHub()
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    val client = SaveApiClient(this@MainActivity)
+                                    // 1. Tell server to wipe old identity data
+                                    runCatching { client.deleteInstallation() }
+                                        .onFailure { Log.w(TAG, "Failed to wipe remote data during reset", it) }
+                                    
+                                    withContext(Dispatchers.Main) {
+                                        // 2. Wipe local identity
+                                        identity.resetIdentity()
+                                        installationId = identity.installationId
+                                        showResetIdentityDialog = false
+                                        Toast.makeText(this@MainActivity, "Identity Reset", Toast.LENGTH_SHORT).show()
+                                        refreshCommunityHub()
+                                        
+                                        // 3. Register new identity
+                                        lifecycleScope.launch(Dispatchers.IO) {
+                                            runCatching { SaveApiClient(this@MainActivity).registerInstallationIfNeeded() }
+                                                .onFailure { Log.w(TAG, "New installation registration will be retried when needed", it) }
+                                        }
+                                    }
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = RetroDanger),
                             shape = RoundedCornerShape(10.dp)

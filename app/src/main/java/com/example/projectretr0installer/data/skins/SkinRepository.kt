@@ -50,7 +50,8 @@ open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) 
         createdAt = api.createdAt, updatedAt = api.updatedAt, verified = false, featured = false,
         compatibility = Compatibility.GAME_NOT_DETECTED, description = api.description.orEmpty(), coverUrl = api.coverUrl,
         screenshotUrls = api.screenshots.map { it.url }, sourceFilename = api.sourceFilename, binaryUrl = api.binaryUrl,
-        binarySha256 = api.binarySha256, status = api.status,
+        detailsUrl = api.detailsUrl, shareUrl = api.shareUrl,
+        binarySha256 = api.binarySha256, status = api.status, isOwner = api.isOwner, likedByMe = api.likedByMe,
     )
 
     private fun slotName(value: String): String = when (value.lowercase(Locale.ROOT)) {

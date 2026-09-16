@@ -31,8 +31,12 @@ data class CommunitySkin(
     val screenshotUrls: List<String> = emptyList(),
     val sourceFilename: String? = null,
     val binaryUrl: String? = null,
+    val detailsUrl: String? = null,
+    val shareUrl: String? = null,
     val binarySha256: String? = null,
     val status: String? = null,
+    val isOwner: Boolean = false,
+    val likedByMe: Boolean = false,
 ) {
     val sizeMb: Double get() = binarySizeBytes / 1024.0 / 1024.0
     val uploadedLabel: String get() = createdAt?.take(10) ?: "Unknown"

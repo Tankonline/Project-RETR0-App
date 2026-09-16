@@ -17,8 +17,17 @@ sealed interface BrowserResult {
 
 fun interface SkinTargetBrowserSource { suspend fun list(packageRoot: String, path: String): BrowserResult }
 
-data class SmartScanLimits(val vehicleFolders: Int = 96, val entriesPerFolder: Int = 128)
-sealed interface SmartScanResult { data class Found(val entry: SkinBrowserEntry) : SmartScanResult; data object NotFound : SmartScanResult; data class Error(val message: String) : SmartScanResult }
+data class SmartScanLimits(
+    val directories: Int = 2_000,
+    val entriesPerDirectory: Int = 512,
+    val candidates: Int = 24,
+)
+sealed interface SmartScanResult {
+    data class Found(val entry: SkinBrowserEntry) : SmartScanResult
+    data class Candidates(val entries: List<SkinBrowserEntry>) : SmartScanResult
+    data object NotFound : SmartScanResult
+    data class Error(val message: String) : SmartScanResult
+}
 
 enum class ValidationSeverity { INFO, WARNING, ERROR, SUCCESS }
 data class ValidationPresentation(val message: String, val severity: ValidationSeverity)
@@ -42,15 +51,40 @@ fun packageBreadcrumbs(root: String, path: String): List<Pair<String, String>> {
 }
 
 suspend fun smartMatch(source: SkinTargetBrowserSource, root: String, importedFileName: String, limits: SmartScanLimits = SmartScanLimits()): SmartScanResult {
-    val vehiclesPath = "$root/files/.depot/vehicles"
-    val vehicles = when (val result = source.list(root, vehiclesPath)) { is BrowserResult.Error -> return SmartScanResult.Error(result.message); is BrowserResult.Success -> result.entries }
-    for (vehicle in vehicles.asSequence().filter { it.isDirectory && !it.isSymbolicLink }.take(limits.vehicleFolders)) {
-        val liveryPath = "${vehicle.path}/livery"
-        val entries = when (val result = source.list(root, liveryPath)) { is BrowserResult.Error -> continue; is BrowserResult.Success -> result.entries }
-        val candidate = entries.take(limits.entriesPerFolder).firstOrNull { it.name == importedFileName } ?: continue
-        if (SkinTargetValidator.validate(root, importedFileName, candidate).isSuccess) return SmartScanResult.Found(candidate)
+    val candidates = mutableListOf<SkinBrowserEntry>()
+    val foldersToScan = ArrayDeque<String>().apply { add(root) }
+    val importedTokens = SkinTargetValidator.searchTokens(importedFileName)
+    var directoriesScanned = 0
+
+    // Search the complete selected RR3 package, not a presumed vehicle-folder layout.
+    // This supports game-version-specific directory layouts and collects approximate
+    // matches that the user can choose from instead of silently failing.
+    while (foldersToScan.isNotEmpty() && directoriesScanned < limits.directories) {
+        val folder = foldersToScan.removeFirst()
+        val entries = when (val result = source.list(root, folder)) {
+            is BrowserResult.Error -> continue
+            is BrowserResult.Success -> result.entries
+        }
+        directoriesScanned++
+        entries.filter { it.isDirectory && !it.isSymbolicLink }.forEach { foldersToScan.addLast(it.path) }
+        candidates += entries.asSequence()
+            .filter { it.isRegularFile && !it.isSymbolicLink && it.name.endsWith(".dds.z", ignoreCase = true) }
+            .map { entry -> entry to SkinTargetValidator.matchScore(importedTokens, importedFileName, entry.name) }
+            .filter { (_, score) -> score > 0 }
+            .sortedByDescending { (_, score) -> score }
+            .take(limits.entriesPerDirectory)
+            .map { (entry, _) -> entry }
     }
-    return SmartScanResult.NotFound
+
+    val ranked = candidates
+        .distinctBy { it.path }
+        .sortedByDescending { SkinTargetValidator.matchScore(importedTokens, importedFileName, it.name) }
+        .take(limits.candidates)
+    return when (ranked.size) {
+        0 -> SmartScanResult.NotFound
+        1 -> SmartScanResult.Found(ranked.single())
+        else -> SmartScanResult.Candidates(ranked)
+    }
 }
 
 class ShizukuSkinTargetBrowserSource(private val service: IRetr0UserService?) : SkinTargetBrowserSource {
@@ -101,12 +135,18 @@ object SkinTargetValidator {
         require(normalizedTarget.startsWith(normalizedRoot) && normalizedTarget != normalizedRoot) { "Target escapes the selected package." }
         val relative = normalizedRoot.relativize(normalizedTarget).joinToString("/")
         val segments = relative.split('/')
-        require(segments.size == 6 && segments[0] == "files" && segments[1] == ".depot" && segments[2] == "vehicles" && segments[3].isSafeName() && segments[4] == "livery") { "Choose a file directly inside files/.depot/vehicles/<car>/livery." }
+        require(segments.size >= 6 && segments[0] == "files" && segments[1] == ".depot" && segments[2] == "vehicles" && segments[3].isSafeName() && segments[segments.lastIndex - 1].equals("livery", ignoreCase = true)) {
+            "Choose a file inside an RR3 vehicle livery folder."
+        }
         require(entry.name.endsWith(".dds.z")) { "Target must be a .dds.z file." }
-        require(entry.name == importedFileName) { "Filename must exactly match $importedFileName." }
+        require(targetStem(entry.name).equals(targetStem(importedFileName), ignoreCase = true)) {
+            "Filename must match the selected skin's vehicle and slot."
+        }
         val importedFormat = textureFormat(importedFileName)
         val targetFormat = textureFormat(entry.name)
-        require(importedFormat == targetFormat) { "Texture formats do not match." }
+        require(importedFormat.substringBefore('(') == targetFormat.substringBefore('(')) {
+            "Texture formats do not match."
+        }
         SelectedSkinTarget(normalizedTarget.toString().replace('\\', '/'), relative, entry.name, targetFormat)
     }
 
@@ -117,6 +157,30 @@ object SkinTargetValidator {
             Regex(".*atc\\(\\d+\\)$").matches(stem) -> stem.substringAfterLast('_', stem)
             else -> "dds.z"
         }
+    }
+
+    /**
+     * RR3's normal livery filenames use a dot-separated texture suffix, for example
+     * `2014_audi_r18etronquattro_ext_one.etc.dds.z`. The portion before that suffix
+     * identifies the car and slot and is the correct key for Smart Match.
+     */
+    fun targetStem(name: String): String {
+        val base = name.removeSuffix(".dds.z")
+        return base.substringBeforeLast('.', base)
+    }
+
+    fun searchTokens(name: String): Set<String> = targetStem(name)
+        .lowercase(Locale.ROOT)
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.length >= 2 && it !in setOf("dds", "ext", "int", "one", "two") }
+        .toSet()
+
+    fun matchScore(importedTokens: Set<String>, importedFileName: String, candidateName: String): Int {
+        val candidateStem = targetStem(candidateName).lowercase(Locale.ROOT)
+        val candidateTokens = searchTokens(candidateName)
+        val shared = importedTokens.count { it in candidateTokens }
+        val exact = targetStem(candidateName).equals(targetStem(importedFileName), ignoreCase = true)
+        return shared * 10 + if (exact) 100 else 0 + if (candidateStem.contains("livery")) 1 else 0
     }
 
     private fun String.isSafeName() = isNotBlank() && this != "." && this != ".." && indexOf('\u0000') < 0 && '/' !in this && '\\' !in this

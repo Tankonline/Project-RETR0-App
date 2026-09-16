@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
@@ -60,6 +61,21 @@ fun SectionHeader(
             Spacer(Modifier.width(10.dp))
             it()
         }
+    }
+}
+
+@Composable
+fun BadgePill(text: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .background(color.copy(.13f), RoundedCornerShape(50))
+            .border(1.dp, color.copy(.4f), RoundedCornerShape(50))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text, color = color, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
