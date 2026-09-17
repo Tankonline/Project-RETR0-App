@@ -27,6 +27,7 @@ data class CommunitySkin(
     val featured: Boolean,
     val compatibility: Compatibility,
     val description: String,
+    val creatorId: String? = null,
     val coverUrl: String? = null,
     val screenshotUrls: List<String> = emptyList(),
     val sourceFilename: String? = null,
@@ -51,9 +52,9 @@ object FakeSkins {
         CarSkin("l4", "Blue Steel", "McLaren P1 GTR", "2015_mclaren_p1gtr", "Retr0", SkinSlot.INTERIOR, "etc(1)", 2.9, SkinStatus.LOCAL, Compatibility.COMPATIBLE)
     )
     val community = listOf(
-        CommunitySkin("c1", "Aurora Drift", "Porsche 911 RSR", "2016_porsche_911rsr", "NovaMods", "ext_one", "Exterior - Slot 1", "etc(1)", "12.x - 13.x", 4_928_307, 1200, 4800, "2026-04-12", "2026-04-12", true, true, Compatibility.COMPATIBLE, "Hand-painted aurora gradient with brushed-metal flake and matte race numbers.", screenshotUrls = List(4) { "https://example.com/shot$it.jpg" }),
-        CommunitySkin("c2", "Midnight Carbon", "Audi R18 e-tron", "2014_audi_r18etronquattro", "Retr0", "ext_one", "Exterior - Slot 1", "etc(1)", "12.x - 13.x", 4_404_019, 842, 2100, "2026-04-09", "2026-04-09", false, false, Compatibility.COMPATIBLE, "Matte carbon wrap with blue accents.", screenshotUrls = List(2) { "https://example.com/shot$it.jpg" }),
-        CommunitySkin("c3", "Crimson Ghost", "Ferrari 488 GTE", "2016_ferrari_488gte", "NovaMods", "ext_two", "Exterior - Slot 2", "dxt5", "13.x", 5_347_738, 1500, 3900, "2026-04-07", "2026-04-07", true, false, Compatibility.WRONG_FORMAT, "Deep red with ghosted stripes.", screenshotUrls = List(3) { "https://example.com/shot$it.jpg" })
+        CommunitySkin("c1", "Aurora Drift", "Porsche 911 RSR", "2016_porsche_911rsr", "NovaMods", "ext_one", "Exterior - Slot 1", "etc(1)", "12.x - 13.x", 4_928_307, 1200, 4800, "2026-04-12", "2026-04-12", true, true, Compatibility.COMPATIBLE, "Hand-painted aurora gradient with brushed-metal flake and matte race numbers.", creatorId = "uuid-1", screenshotUrls = List(4) { "https://example.com/shot$it.jpg" }),
+        CommunitySkin("c2", "Midnight Carbon", "Audi R18 e-tron", "2014_audi_r18etronquattro", "Retr0", "ext_one", "Exterior - Slot 1", "etc(1)", "12.x - 13.x", 4_404_019, 842, 2100, "2026-04-09", "2026-04-09", false, false, Compatibility.COMPATIBLE, "Matte carbon wrap with blue accents.", creatorId = "uuid-2", screenshotUrls = List(2) { "https://example.com/shot$it.jpg" }),
+        CommunitySkin("c3", "Crimson Ghost", "Ferrari 488 GTE", "2016_ferrari_488gte", "NovaMods", "ext_two", "Exterior - Slot 2", "dxt5", "13.x", 5_347_738, 1500, 3900, "2026-04-07", "2026-04-07", true, false, Compatibility.WRONG_FORMAT, "Deep red with ghosted stripes.", creatorId = "uuid-3", screenshotUrls = List(3) { "https://example.com/shot$it.jpg" })
     )
     fun community(id: String) = community.first { it.id == id }
     fun local(id: String) = library.first { it.id == id }

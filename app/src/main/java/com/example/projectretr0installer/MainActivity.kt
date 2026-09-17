@@ -63,6 +63,7 @@ import com.example.projectretr0installer.installer.*
 import com.example.projectretr0installer.data.skins.MusicApiClient
 import com.example.projectretr0installer.data.skins.SaveApiClient
 import com.example.projectretr0installer.data.skins.SkinInstallationIdentity
+import com.example.projectretr0installer.ui.skins.SkinAvatar
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.skins.CarSkinsTab
 import com.example.projectretr0installer.ui.skins.GamePackage
@@ -963,11 +964,12 @@ class MainActivity : ComponentActivity() {
             RetroCard {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Fingerprint, null, tint = RetroAccent, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Installation Identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
-                        Spacer(Modifier.weight(1f))
-                        Text(if (isServiceBound) "Secured" else "Local", color = if (isServiceBound) RetroSuccess else RetroTextDim, style = MaterialTheme.typography.labelSmall)
+                        SkinAvatar(creatorId = installationId.takeIf { it != "Loading..." }, name = "Me", size = 32.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Installation Identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                            Text(if (isServiceBound) "Secured" else "Local", color = if (isServiceBound) RetroSuccess else RetroTextDim, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                     
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
