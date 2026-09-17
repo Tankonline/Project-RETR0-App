@@ -260,6 +260,8 @@ private fun LazyListScope.SkinDetailsItems(
         Column(Modifier.weight(1f)) {
             Text(skin.title, color = RetroText, style = MaterialTheme.typography.headlineSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                SkinAvatar(creatorId = skin.creatorId, name = skin.creator, size = 18.dp)
+                Spacer(Modifier.width(6.dp))
                 Text("by ${skin.creator}", color = RetroTextDim)
                 if (skin.verified) { Spacer(Modifier.width(8.dp)); Icon(Icons.Filled.Verified, "Verified creator", tint = RetroGold, modifier = Modifier.size(18.dp)) }
             }
