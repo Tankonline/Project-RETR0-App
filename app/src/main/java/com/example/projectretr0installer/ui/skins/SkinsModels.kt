@@ -7,7 +7,7 @@ enum class SkinStatus { LOCAL, DOWNLOADED, ACTIVE }
 enum class DetectionConfidence { HIGH, LOW, UNKNOWN }
 enum class OpKind { APPLY, REVERT }
 
-data class CarSkin(val id: String, val title: String, val vehicle: String, val carId: String, val creator: String, val slot: SkinSlot, val format: String, val sizeMb: Double, val status: SkinStatus, val compatibility: Compatibility, val screenshotCount: Int = 0, val sha256: String = "a3f9c1…7e2b", val hasBackup: Boolean = true, val importedLabel: String = "Apr 12")
+data class CarSkin(val id: String, val title: String, val vehicle: String, val carId: String, val creator: String, val slot: SkinSlot, val format: String, val sizeMb: Double, val status: SkinStatus, val compatibility: Compatibility, val screenshotCount: Int = 0, val coverUrl: String? = null, val sha256: String = "a3f9c1…7e2b", val hasBackup: Boolean = true, val importedLabel: String = "Apr 12")
 data class CommunitySkin(
     val id: String,
     val title: String,

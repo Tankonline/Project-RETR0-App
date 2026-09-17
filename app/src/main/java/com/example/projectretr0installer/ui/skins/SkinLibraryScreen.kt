@@ -12,6 +12,7 @@ import androidx.compose.ui.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.projectretr0installer.data.skins.local.LocalSkinRepository
+import com.example.projectretr0installer.data.skins.local.SkinImageEntity
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.theme.*
 import java.text.DateFormat
@@ -34,13 +35,22 @@ fun SkinLibraryScreen(
     val repository = remember(context) { LocalSkinRepository(context) }
     val storedSkins by repository.observeSkins().collectAsState(initial = emptyList())
     val storedApplied by repository.observeApplied().collectAsState(initial = emptyList())
+    val localImages by produceState(initialValue = emptyMap<String, List<SkinImageEntity>>(), storedSkins) {
+        value = storedSkins.associate { skin -> skin.id to repository.images(skin.id) }
+    }
     val runtimeSkins = previewSkins ?: storedSkins.map { entity ->
         val active = storedApplied.any { it.skinId == entity.id }
+        val cover = localImages[entity.id]
+            ?.firstOrNull { it.role == SkinImageRole.COVER.name }
+            ?.path
+            ?.let { "file://$it" }
         CarSkin(
             entity.id, entity.title, entity.vehicle, entity.carDirectory, entity.creator,
             slotFromKey(entity.slotKey), entity.textureFormat, entity.binarySize / 1024.0 / 1024.0,
             if (active) SkinStatus.ACTIVE else SkinStatus.LOCAL,
             if (entity.targetPath != null) Compatibility.COMPATIBLE else Compatibility.TARGET_MISSING,
+            screenshotCount = if (cover == null) 0 else 1,
+            coverUrl = cover,
             sha256 = entity.binarySha256,
             hasBackup = false,
             importedLabel = DateFormat.getDateInstance().format(Date(entity.importedAt)),
