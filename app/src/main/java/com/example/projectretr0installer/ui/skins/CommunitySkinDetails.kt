@@ -238,13 +238,18 @@ private fun LazyListScope.SkinDetailsItems(
 }
 
 @Composable private fun ResponsiveHero(skin: CommunitySkin) {
-    val configuration = LocalConfiguration.current
-    val ratio = if (configuration.screenHeightDp < 520) 1.95f else 1.72f
+    val carouselUrls = buildList {
+        skin.coverUrl?.let(::add)
+        addAll(skin.screenshotUrls.filterNot { it == skin.coverUrl })
+    }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        // Cover/screenshot assets are always processed to exactly 16:9 (SkinImageProcessor);
+        // the hero container must match that ratio or ScreenshotCarousel's ContentScale.Crop
+        // will visibly re-crop the framing the uploader confirmed in the crop editor.
         ScreenshotCarousel(
-            urls = skin.screenshotUrls.ifEmpty { listOfNotNull(skin.coverUrl) },
+            urls = carouselUrls,
             modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
-            aspectRatio = ratio,
+            aspectRatio = 16f / 9f,
         )
     }
 }

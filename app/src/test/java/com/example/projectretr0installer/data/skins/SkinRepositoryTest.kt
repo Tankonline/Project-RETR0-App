@@ -26,5 +26,6 @@ class SkinRepositoryTest {
         sourceFilename = null, binarySize = 1024L * 1024L, binarySha256 = null,
         screenshotCount = 0, gameVersions = null, status = "approved", createdAt = "2026-09-06 10:00:00",
         updatedAt = null, likes = 0, downloads = 0, coverUrl = null, binaryUrl = null, detailsUrl = null,
+        shareUrl = null,
     )
 }
