@@ -63,6 +63,8 @@ import com.example.projectretr0installer.installer.*
 import com.example.projectretr0installer.data.skins.MusicApiClient
 import com.example.projectretr0installer.data.skins.SaveApiClient
 import com.example.projectretr0installer.data.skins.SkinInstallationIdentity
+import com.example.projectretr0installer.data.skins.SkinPFPStore
+import com.example.projectretr0installer.ui.skins.PFPEditorFlow
 import com.example.projectretr0installer.ui.skins.SkinAvatar
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.skins.CarSkinsTab
@@ -134,6 +136,8 @@ class MainActivity : ComponentActivity() {
     private var installationId by mutableStateOf("Loading...")
     private var showResetIdentityDialog by mutableStateOf(false)
     private val identity by lazy { SkinInstallationIdentity(this) }
+    private var customPfpFile by mutableStateOf<File?>(null)
+    private var showPfpEditor by mutableStateOf(false)
 
     private var isCommunityLoading by mutableStateOf(false)
     private var isLibraryLoading by mutableStateOf(false)
@@ -279,7 +283,8 @@ class MainActivity : ComponentActivity() {
                 updateShizukuStatus()
                 updateStorageStatus()
                 installationId = identity.installationId
-                
+                customPfpFile = SkinPFPStore.currentFile(this@MainActivity, installationId)
+
                 val prefs = getSharedPreferences("retr0_prefs", MODE_PRIVATE)
                 isSmartBackupEnabled = prefs.getBoolean("smart_backup", false)
                 lastBackupStatus = prefs.getString("last_backup_status", "Never") ?: "Never"
@@ -475,6 +480,17 @@ class MainActivity : ComponentActivity() {
 
         if (showResetIdentityDialog) {
             ResetIdentityDialog()
+        }
+
+        if (showPfpEditor) {
+            PFPEditorFlow(
+                onDismiss = { showPfpEditor = false },
+                onSaved = { file ->
+                    customPfpFile = file
+                    showPfpEditor = false
+                    Toast.makeText(this@MainActivity, "Profile picture updated", Toast.LENGTH_SHORT).show()
+                },
+            )
         }
 
         Scaffold(
@@ -964,7 +980,17 @@ class MainActivity : ComponentActivity() {
             RetroCard {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinAvatar(creatorId = installationId.takeIf { it != "Loading..." }, name = "Me", size = 32.dp)
+                        Box {
+                            SkinAvatar(creatorId = installationId.takeIf { it != "Loading..." }, name = "Me", size = 32.dp, localFile = customPfpFile)
+                            Box(
+                                Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .size(16.dp)
+                                    .background(RetroAccent, CircleShape)
+                                    .clickable { showPfpEditor = true },
+                                Alignment.Center,
+                            ) { Icon(Icons.Filled.Edit, "Change profile picture", tint = Color.White, modifier = Modifier.size(10.dp)) }
+                        }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Installation Identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
@@ -2816,8 +2842,11 @@ class MainActivity : ComponentActivity() {
                                     
                                     withContext(Dispatchers.Main) {
                                         // 2. Wipe local identity
+                                        val oldInstallationId = installationId
                                         identity.resetIdentity()
                                         installationId = identity.installationId
+                                        SkinPFPStore.clear(this@MainActivity, oldInstallationId)
+                                        customPfpFile = null
                                         showResetIdentityDialog = false
                                         Toast.makeText(this@MainActivity, "Identity Reset", Toast.LENGTH_SHORT).show()
                                         refreshCommunityHub()
