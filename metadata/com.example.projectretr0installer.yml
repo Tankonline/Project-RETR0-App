@@ -1,0 +1,35 @@
+Categories:
+  - Games
+  - System
+License: GPL-3.0-or-later
+AuthorName: Retrospect69
+AuthorEmail: retrospect69@proton.me
+SourceCode: https://github.com/Tankonline/Project-RETR0-App
+IssueTracker: https://github.com/Tankonline/Project-RETR0-App/issues
+
+AutoName: Project RETR0 installer
+Summary: User-authorized installer and community tools for supported RR3 packages
+Description: |-
+    Project RETR0 installer provides user-initiated RR3 asset installation,
+    backup/revert support, and Community Hub features. Privileged file
+    operations require the user to configure and grant Shizuku access.
+
+    The app does not self-update. App updates are distributed through the
+    selected repository. yt-dlp and FFmpeg are bundled and updated through
+    normal signed app releases.
+
+RepoType: git
+Repo: https://github.com/Tankonline/Project-RETR0-App.git
+
+Builds:
+  - versionName: '1.0.0'
+    versionCode: 1
+    commit: v1.0.0
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: None
+UpdateCheckMode: None
+CurrentVersion: '1.0.0'
+CurrentVersionCode: 1
