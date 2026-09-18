@@ -48,7 +48,7 @@ import com.example.projectretr0installer.ui.theme.*
         }
     }
     val suggestedTargets = (scan as? SmartScanResult.Candidates)?.entries.orEmpty()
-    val validation = selected?.let { SkinTargetValidator.validate(packageRoot, importedFileName, it) }; val target = validation?.getOrNull(); val canConfirm = validation?.isSuccess == true; val presentation = if (selected == null) ValidationPresentation("Select the matching livery to continue", ValidationSeverity.INFO) else validationPresentation(validation?.exceptionOrNull())
+    val validation = selected?.let { SkinTargetValidator.validate(packageRoot, importedFileName, it) }; val target = validation?.getOrNull(); val canConfirm = validation?.isSuccess == true; val presentation = if (selected == null) ValidationPresentation("Select the matching livery to continue", ValidationSeverity.INFO) else validationPresentation(validation?.exceptionOrNull(), importedFileName)
     fun up() { if (path != packageRoot) { path = path.substringBeforeLast('/').coerceAtLeastRoot(packageRoot); selected = null } else onClose() }
     BackHandler { up() }
     Scaffold(

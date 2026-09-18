@@ -458,17 +458,6 @@ class MainActivity : ComponentActivity() {
             SlotPickerForLibraryDialog(showSlotPickerForLibraryTrack!!)
         }
         
-        LaunchedEffect(Unit) {
-            lifecycleScope.launch {
-                // Silent update check once per hour
-                val now = System.currentTimeMillis()
-                if ((now - lastUpdateCheck) > 3600000L) {
-                    startBackgroundInstall("UPDATE")
-                    lastUpdateCheck = now
-                }
-            }
-        }
-        
         LaunchedEffect(installProgress.state) {
             if (installProgress.state == InstallState.SUCCESS) {
                 refreshSaveHub()
