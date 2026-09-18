@@ -3,7 +3,7 @@
 > **A modern Android asset manager for Real Racing 3 — install, restore, customise, and manage your game assets with user-authorized access.**
 
 [![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://www.android.com/)
-[![Language](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Language](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![UI](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/compose)
 [![Min SDK](https://img.shields.io/badge/min%20SDK-26-informational)](https://developer.android.com/about/versions/oreo)
 [![Target SDK](https://img.shields.io/badge/target%20SDK-35-informational)](https://developer.android.com/about/versions/15)
