@@ -13,3 +13,19 @@
 *.log
 deps.txt
 CLAUDE_CROP_EDITOR_PERFECTION_PROMPT.md
+
+# Signing files
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Local environment
+.env
+*.env
+local.properties
+
+# Gradle caches
+.gradle/
+build/
+app/build/

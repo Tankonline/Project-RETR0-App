@@ -84,4 +84,4 @@ jobs:
             app/build/outputs/apk/release/app-release.apk \
             app/build/outputs/apk/release/app-release.apk.sha256 \
             --title "Project RETR0 installer ${GITHUB_REF_NAME}" \
-            --notes-file app/build/outputs/apk/github/release/release-notes.md
+            --notes-file app/build/outputs/apk/release/release-notes.md
