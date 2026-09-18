@@ -31,7 +31,7 @@ jobs:
         run: |
           test "${GITHUB_REF_TYPE}" = "tag"
           test "${GITHUB_REF_NAME}" = "v$(./gradlew -q :app:properties | awk -F': ' '/^versionName:/{print $2; exit}')" || {
-            echo "Tag must match the Android versionName, for example v1.0.0." >&2
+            echo "Tag must match the Android versionName, for example v1.0.1." >&2
             exit 1
           }
 

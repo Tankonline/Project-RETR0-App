@@ -39,7 +39,7 @@ Configure these protected environment or repository secrets:
 - `RELEASE_KEY_ALIAS`: signing-key alias.
 - `RELEASE_KEY_PASSWORD`: signing-key password.
 
-The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag such as `v1.0.0`.
+The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag such as `v1.0.1`.
 
 ## Release procedure
 

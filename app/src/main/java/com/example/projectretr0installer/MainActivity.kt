@@ -566,7 +566,7 @@ class MainActivity : ComponentActivity() {
                     .border(1.dp, RetroBorder, RoundedCornerShape(20.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Box(Modifier.size(7.dp).background(RetroSuccess, CircleShape))
                 Spacer(Modifier.width(7.dp))
-                Text("v1.0.0 · Stable", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
+                Text("v1.0.1 · Stable", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
             }
             Spacer(modifier = Modifier.height(26.dp).navigationBarsPadding())
         }

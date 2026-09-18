@@ -2,6 +2,17 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.0.1] - 2026-09-18
+
+### Changed
+- Upgraded Android Gradle Plugin to 9.4.1 for improved build stability.
+- Upgraded Kotlin to 2.2.10.
+
+### Fixed
+- Corrected Gradle distribution checksum in wrapper configuration.
+- Fixed `gradlew` executable permissions for CI environments.
+- Synced IzzyOnDroid compatibility documentation with current build tools.
+
 ## [1.0.0] - 2026-09-18
 
 ### Added

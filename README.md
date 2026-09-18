@@ -527,8 +527,8 @@ compileSdk:    35
 minSdk:        26
 targetSdk:     35
 
-versionCode:   1
-versionName:   1.0.0-STABLE
+versionCode:   2
+versionName:   1.0.1-STABLE
 
 Java:          17
 Kotlin JVM:    17
@@ -1033,8 +1033,8 @@ Project RETR0 installer is an active development project.
 The current repository configuration identifies the application as:
 
 ```text
-Version: 1.0.0-STABLE
-Version code: 1
+Version: 1.0.1-STABLE
+Version code: 2
 ```
 
 The implementation and documentation may evolve as additional asset types, installation safeguards, community functionality, and compatibility improvements are introduced.
