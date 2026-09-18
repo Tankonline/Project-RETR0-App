@@ -57,7 +57,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.release_ref.outputs.tag }}
         run: |
-          test "${RELEASE_TAG}" = "v$(./gradlew -q :app:properties | awk -F': ' '/^versionName:/{print $2; exit}')" || {
+          VERSION_NAME=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "${VERSION_NAME}"
+          test "${RELEASE_TAG}" = "v${VERSION_NAME}" || {
             echo "Selected tag must match the Android versionName, for example v1.0.1." >&2
             exit 1
           }
