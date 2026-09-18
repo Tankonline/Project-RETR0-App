@@ -9,7 +9,7 @@ The app does not perform an in-app APK self-update. App updates are delivered th
 ## Build reproducibility
 
 - Build system: Gradle wrapper 9.7.1 with a pinned distribution SHA-256.
-- Android Gradle Plugin: 9.4.0.
+- Android Gradle Plugin: 9.4.1.
 - Kotlin/JVM target: Java 17.
 - Maven repositories: Google Maven and Maven Central only.
 - Direct dependency versions are pinned in `gradle/libs.versions.toml`.
