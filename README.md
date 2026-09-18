@@ -22,6 +22,7 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 ## Table of Contents
 
 - [Overview](#overview)
+- [Documentation](#documentation)
 - [Why Project RETR0 installer?](#why-project-retr0-installer)
 - [Features](#features)
 - [Supported RR3 Variants](#supported-rr3-variants)
@@ -47,6 +48,24 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 - [Legal Disclaimer](#legal-disclaimer)
 - [License](#license)
 - [Project Status](#project-status)
+
+---
+
+## Documentation
+
+For more detailed information, please refer to the following documents:
+
+- [**Changelog**](CHANGELOG.md) - History of changes.
+- [**License**](LICENSE) - GNU GPL v3 terms.
+- [**Security Policy**](SECURITY.md) - How to report vulnerabilities.
+- [**Privacy Policy**](PRIVACY.md) - How we handle your data.
+- [**Third-Party Licenses**](THIRD_PARTY_LICENSES.md) - Information about bundled components.
+- [**Contributing Guide**](CONTRIBUTING.md) - How to help develop the app.
+- [**Code of Conduct**](CODE_OF_CONDUCT.md) - Community standards.
+- [**Release Checklist**](RELEASE_CHECKLIST.md) - Steps for maintainers before every release.
+- [**Releasing Guidance**](docs/releasing.md) - Detailed release instructions.
+- [**IzzyOnDroid Compatibility**](docs/izzyondroid-compatibility.md) - Repository compliance audit.
+
 
 ---
 
