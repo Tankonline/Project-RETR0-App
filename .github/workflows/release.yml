@@ -1,0 +1,87 @@
+name: Publish GitHub APK
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@99e97bd00d25e4c71fbb4d7eaf43d4c5db9e4d22 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Validate version tag
+        shell: bash
+        run: |
+          test "${GITHUB_REF_TYPE}" = "tag"
+          test "${GITHUB_REF_NAME}" = "v$(./gradlew -q :app:properties | awk -F': ' '/^versionName:/{print $2; exit}')" || {
+            echo "Tag must match the Android versionName, for example v1.0.0." >&2
+            exit 1
+          }
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      - name: Decode release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          test -n "${RELEASE_KEYSTORE_BASE64}"
+          echo "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build signed release APK
+        env:
+          RELEASE_STORE_FILE: ${{ runner.temp }}/release.keystore
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Create checksum and release notes
+        id: release_assets
+        shell: bash
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK_PATH"
+          sha256sum "$APK_PATH" > app/build/outputs/apk/release/app-release.apk.sha256
+          cat > app/build/outputs/apk/release/release-notes.md <<EOF
+          ## Project RETR0 installer ${GITHUB_REF_NAME}
+
+          - Source commit: ${GITHUB_SHA}
+          - Distribution: one signed APK for GitHub and IzzyOnDroid
+          - Minimum Android version: Android 8.0 (API 26)
+          - RR3 packages: com.ea.games.r3_row and com.ea.games.r3_na
+          - Shizuku is required for privileged installation operations.
+          - Back up your game data before applying changes. Use the app's revert flow where available.
+          - Community Hub and profile-picture features use the documented remote service.
+
+          See [release guidance](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/releasing.md) and [privacy and community policy](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/privacy-and-community-policy.md).
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            app/build/outputs/apk/release/app-release.apk \
+            app/build/outputs/apk/release/app-release.apk.sha256 \
+            --title "Project RETR0 installer ${GITHUB_REF_NAME}" \
+            --notes-file app/build/outputs/apk/github/release/release-notes.md

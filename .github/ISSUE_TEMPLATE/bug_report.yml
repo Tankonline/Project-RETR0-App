@@ -1,0 +1,87 @@
+name: Bug Report
+description: Create a report to help us improve.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please fill out the details below.
+  - type: input
+    id: version
+    attributes:
+      label: App Version
+      placeholder: e.g., 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: android_version
+    attributes:
+      label: Android Version
+      placeholder: e.g., Android 14 (API 34)
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device Model
+      placeholder: e.g., Pixel 7
+    validations:
+      required: true
+  - type: dropdown
+    id: rr3_variant
+    attributes:
+      label: RR3 Variant
+      options:
+        - Global (com.ea.games.r3_row)
+        - North America (com.ea.games.r3_na)
+        - Both
+        - None/Not detected
+    validations:
+      required: true
+  - type: input
+    id: shizuku_status
+    attributes:
+      label: Shizuku Status
+      placeholder: e.g., Running (authorized), Not running, etc.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How can we make this bug happen again?
+      placeholder: |
+        1. Open the app
+        2. Click on ...
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      placeholder: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      placeholder: What actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Error Messages
+      description: Paste any relevant logs or stack traces here.
+      render: bash
+  - type: checkboxes
+    id: reproducible
+    attributes:
+      label: Reproducibility
+      options:
+        - label: Is this issue reproducible every time?
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots link here.
