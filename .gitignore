@@ -3,6 +3,7 @@
 /local.properties
 /.idea
 /.artifacts
+/.agents
 .DS_Store
 /build
 /captures
@@ -29,3 +30,6 @@ local.properties
 .gradle/
 build/
 app/build/
+**/build/
+**/externalNativeBuild/
+**/.cxx/

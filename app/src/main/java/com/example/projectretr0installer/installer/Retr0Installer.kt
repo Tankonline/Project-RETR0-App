@@ -649,7 +649,7 @@ class Retr0Installer(
             connection.doOutput = true
             connection.connectTimeout = 15000
             connection.readTimeout = 15000
-                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
 
@@ -691,7 +691,7 @@ class Retr0Installer(
             connection.doOutput = true
             connection.connectTimeout = 20000
             connection.readTimeout = 20000
-                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
 
