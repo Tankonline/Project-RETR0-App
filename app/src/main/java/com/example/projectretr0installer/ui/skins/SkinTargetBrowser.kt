@@ -32,10 +32,18 @@ sealed interface SmartScanResult {
 enum class ValidationSeverity { INFO, WARNING, ERROR, SUCCESS }
 data class ValidationPresentation(val message: String, val severity: ValidationSeverity)
 
-fun validationPresentation(error: Throwable?): ValidationPresentation = when {
+fun validationPresentation(error: Throwable?, importedFileName: String? = null): ValidationPresentation = when {
     error == null -> ValidationPresentation("Exact filename and livery target verified.", ValidationSeverity.SUCCESS)
-    error.message?.contains("exactly match") == true -> ValidationPresentation(error.message ?: "Filenames do not match.", ValidationSeverity.WARNING)
-    error.message?.contains("directly inside") == true -> ValidationPresentation("Open a vehicle's livery folder and choose the exact target file.", ValidationSeverity.WARNING)
+    error.message?.contains("exactly match") == true || error.message?.contains("must match") == true ->
+        ValidationPresentation(
+            "${error.message ?: "Filenames do not match."}${importedFileName?.let { " Expected: $it" }.orEmpty()}",
+            ValidationSeverity.WARNING,
+        )
+    error.message?.contains("directly inside") == true || error.message?.contains("vehicle livery folder") == true ->
+        ValidationPresentation(
+            "Open a vehicle's livery folder and choose the exact target file${importedFileName?.let { ": $it" }.orEmpty()}.",
+            ValidationSeverity.WARNING,
+        )
     error.message?.contains("symlink") == true -> ValidationPresentation("Symbolic links are blocked for safety.", ValidationSeverity.ERROR)
     error.message?.contains("escapes") == true || error.message?.contains("Unsupported") == true -> ValidationPresentation("This location is outside the selected RR3 package.", ValidationSeverity.ERROR)
     else -> ValidationPresentation(error.message ?: "Choose a valid RR3 .dds.z target.", ValidationSeverity.ERROR)
@@ -51,34 +59,27 @@ fun packageBreadcrumbs(root: String, path: String): List<Pair<String, String>> {
 }
 
 suspend fun smartMatch(source: SkinTargetBrowserSource, root: String, importedFileName: String, limits: SmartScanLimits = SmartScanLimits()): SmartScanResult {
-    val candidates = mutableListOf<SkinBrowserEntry>()
-    val foldersToScan = ArrayDeque<String>().apply { add(root) }
-    val importedTokens = SkinTargetValidator.searchTokens(importedFileName)
-    var directoriesScanned = 0
-
-    // Search the complete selected RR3 package, not a presumed vehicle-folder layout.
-    // This supports game-version-specific directory layouts and collects approximate
-    // matches that the user can choose from instead of silently failing.
-    while (foldersToScan.isNotEmpty() && directoriesScanned < limits.directories) {
-        val folder = foldersToScan.removeFirst()
-        val entries = when (val result = source.list(root, folder)) {
+    val vehiclesRoot = "$root/files/.depot/vehicles"
+    val vehicleDirectories = when (val result = source.list(root, vehiclesRoot)) {
+        is BrowserResult.Error -> return SmartScanResult.Error(result.message)
+        is BrowserResult.Success -> result.entries
+    }
+    val validMatches = mutableListOf<SkinBrowserEntry>()
+    for (vehicle in vehicleDirectories.asSequence().filter { it.isDirectory && !it.isSymbolicLink }.take(limits.directories)) {
+        val entries = when (val result = source.list(root, vehicle.path)) {
             is BrowserResult.Error -> continue
             is BrowserResult.Success -> result.entries
         }
-        directoriesScanned++
-        entries.filter { it.isDirectory && !it.isSymbolicLink }.forEach { foldersToScan.addLast(it.path) }
-        candidates += entries.asSequence()
-            .filter { it.isRegularFile && !it.isSymbolicLink && it.name.endsWith(".dds.z", ignoreCase = true) }
-            .map { entry -> entry to SkinTargetValidator.matchScore(importedTokens, importedFileName, entry.name) }
-            .filter { (_, score) -> score > 0 }
-            .sortedByDescending { (_, score) -> score }
+        entries.asSequence()
+            .filter { it.isRegularFile && !it.isSymbolicLink }
+            .filter { SkinTargetValidator.validate(root, importedFileName, it).isSuccess }
             .take(limits.entriesPerDirectory)
-            .map { (entry, _) -> entry }
+            .forEach(validMatches::add)
     }
 
-    val ranked = candidates
+    val ranked = validMatches
         .distinctBy { it.path }
-        .sortedByDescending { SkinTargetValidator.matchScore(importedTokens, importedFileName, it.name) }
+        .sortedByDescending { SkinTargetValidator.matchScore(SkinTargetValidator.searchTokens(importedFileName), importedFileName, it.name) }
         .take(limits.candidates)
     return when (ranked.size) {
         0 -> SmartScanResult.NotFound
@@ -180,7 +181,7 @@ object SkinTargetValidator {
         val candidateTokens = searchTokens(candidateName)
         val shared = importedTokens.count { it in candidateTokens }
         val exact = targetStem(candidateName).equals(targetStem(importedFileName), ignoreCase = true)
-        return shared * 10 + if (exact) 100 else 0 + if (candidateStem.contains("livery")) 1 else 0
+        return shared * 10 + (if (exact) 100 else 0) + (if (candidateStem.contains("livery")) 1 else 0)
     }
 
     private fun String.isSafeName() = isNotBlank() && this != "." && this != ".." && indexOf('\u0000') < 0 && '/' !in this && '\\' !in this

@@ -67,14 +67,9 @@ class Retr0Installer(
                 isDownloaderInit = true
                 Log.i(TAG, "YoutubeDL & FFmpeg initialized locally")
                 
-                // Attempt to update yt-dlp to the latest version
-                try {
-                    Log.i(TAG, "Updating yt-dlp...")
-                    com.yausername.youtubedl_android.YoutubeDL.getInstance().updateYoutubeDL(context)
-                    Log.i(TAG, "yt-dlp updated successfully")
-                } catch (updateEx: Exception) {
-                    Log.w(TAG, "Failed to update yt-dlp, using bundled version", updateEx)
-                }
+                // The bundled yt-dlp version is updated with normal signed app releases.
+                // Runtime executable updates are disabled so this APK stays reproducible.
+                Log.i(TAG, "Using bundled yt-dlp version")
                 
                 true
             } catch (e: Exception) {

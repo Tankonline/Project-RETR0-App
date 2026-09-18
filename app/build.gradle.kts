@@ -17,7 +17,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.0-STABLE"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -40,17 +40,30 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = providers.environmentVariable("RELEASE_STORE_FILE").orNull
+            storeFile = storeFilePath?.let(::file)
+            storePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
+            keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull
+            keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
+            buildConfigField("boolean", "ALLOW_APP_SELF_UPDATE", "false")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
-            isShrinkResources = false
+            buildConfigField("boolean", "ALLOW_APP_SELF_UPDATE", "false")
+            signingConfig = signingConfigs.findByName("release")
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -97,7 +110,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.room.runtime)
@@ -119,7 +132,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation("androidx.room:room-testing:2.8.4")
+    androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

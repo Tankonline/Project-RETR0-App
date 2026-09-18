@@ -2,9 +2,6 @@
 -keep class rikka.shizuku.** { *; }
 -keep interface rikka.shizuku.** { *; }
 
-# Project RETR0 Core
--keep class com.example.projectretr0installer.** { *; }
-
 # Project RETR0 AIDL
 -keep class com.example.projectretr0installer.IRetr0UserService { *; }
 -keep class com.example.projectretr0installer.IRetr0UserService$Stub { *; }
