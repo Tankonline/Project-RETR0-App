@@ -220,20 +220,6 @@ It should not be interpreted as a universal identity that automatically follows 
 
 Changing devices should therefore be treated as a separate installation context.
 
-## Community links
-
-The application supports deep links for supported Community Hub resources.
-
-Current application integration includes routes for:
-
-```text
-/v1/skins/
-/v1/saves/
-/v1/music/
-```
-
-This allows supported web URLs to open relevant application functionality where Android app-link verification and routing are configured correctly.
-
 ---
 
 # Music Import
@@ -332,15 +318,7 @@ The project uses **Room** for structured local persistence.
 
 ## Community functionality
 
-Community features require network communication with the configured Community Hub service.
-
-The current application build configuration identifies the Community API endpoint as:
-
-```text
-https://save-files.armaandeep08-ap.workers.dev
-```
-
-Community functionality should be considered separately from purely local asset installation.
+Community features are optional and are separate from purely local asset installation.
 
 ## Network permissions
 
@@ -694,16 +672,6 @@ The project declares:
 - Cronet API
 - Embedded Cronet
 - OkHttp-related Cronet integration dependency
-
-## Community API
-
-The current application configuration points community API traffic at:
-
-```text
-https://save-files.armaandeep08-ap.workers.dev
-```
-
-The application also contains deep-link handling for supported skin, save, and music API paths.
 
 ---
 
