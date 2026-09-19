@@ -25,7 +25,6 @@
     <!-- Progress States -->
     <string name="progress_complete">PROCESS COMPLETE</string>
     <string name="progress_failed">PROCESS FAILED</string>
-    <string name="progress_updating">INSTALLING APP UPDATE</string>
     <string name="progress_active">ACTIVE TASK</string>
     <string name="progress_active_parts">ACTIVE TASK (Part %1$d of %2$d)</string>
     <string name="progress_total">Total Progress: %1$s</string>

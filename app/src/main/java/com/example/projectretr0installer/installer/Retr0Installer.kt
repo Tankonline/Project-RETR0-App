@@ -1709,7 +1709,4 @@ class Retr0Installer(
         }
     }
 
-    /**
-     * Checks for app updates and installs them.
-     */
 }
