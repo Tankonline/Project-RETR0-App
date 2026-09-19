@@ -1020,7 +1020,13 @@ class Retr0Installer(
                 if (!initDownloader(context)) return@withContext null
             }
             val request = com.yausername.youtubedl_android.YoutubeDLRequest(youtubeUrl)
-            val info = com.yausername.youtubedl_android.YoutubeDL.getInstance().getInfo(request)
+            val authStore = YoutubeAuthStore(context)
+
+            val info = authStore.withCookieFile { cookieFile ->
+                request.addOption("--cookies", cookieFile.absolutePath)
+                com.yausername.youtubedl_android.YoutubeDL.getInstance().getInfo(request)
+            } ?: com.yausername.youtubedl_android.YoutubeDL.getInstance().getInfo(request)
+
             return@withContext YouTubeInfo(
                 title = info.title ?: "YouTube Audio",
                 thumbnailUrl = info.thumbnail,
@@ -1059,10 +1065,24 @@ class Retr0Installer(
             // Add options for speed and reliability
             request.addOption("--no-playlist")
             request.addOption("--no-mtime")
-            
+
+            val authStore = YoutubeAuthStore(context)
+
             Log.i(TAG, "Starting local yt-dlp execution for: $youtubeUrl")
-            
-            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request) { progress, eta, line ->
+
+            authStore.withCookieFile { cookieFile ->
+                request.addOption("--cookies", cookieFile.absolutePath)
+                com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request) { progress, eta, line ->
+                    updateProgress(
+                        state = InstallState.DOWNLOADING,
+                        step = "Local Conversion: $progress%",
+                        fileProgress = progress / 100f,
+                        overallProgress = progress / 100f,
+                        eta = if (eta > 0) "${eta}s" else "Converting...",
+                    )
+                    Log.v(TAG, "yt-dlp: $line")
+                }
+            } ?: com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request) { progress, eta, line ->
                 updateProgress(
                     state = InstallState.DOWNLOADING,
                     step = "Local Conversion: $progress%",
