@@ -1,5 +1,13 @@
 # Project RETR0 Release Checklist
 
+## v1.0.2 Release
+- [x] Version metadata updated to `versionName "1.0.2"` and `versionCode 3`.
+- [x] APK self-updater removal verified in current master.
+- [x] Debug unit tests passed.
+- [x] Debug APK assembly passed.
+- [x] Debug lint passed.
+- [ ] Release workflow and signed APK publication verified after pushing tag `v1.0.2`.
+
 ## Repository Cleanliness
 - [ ] Source tree clean (no `.apk`, `.zip`, `.log`, or temporary artifacts).
 - [ ] No IDE metadata (`.idea/`, `.iml`) in version control.

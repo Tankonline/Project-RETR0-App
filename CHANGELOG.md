@@ -2,6 +2,12 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.0.2] - 2026-09-19
+
+### Changed
+- Removed the obsolete in-app APK self-updater; app updates remain distributed through normal signed releases.
+- Updated the application version metadata for the v1.0.2 release.
+
 ## [1.0.1] - 2026-09-18
 
 ### Changed
