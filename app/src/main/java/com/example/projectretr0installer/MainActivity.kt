@@ -136,6 +136,7 @@ class MainActivity : ComponentActivity() {
     private var installationId by mutableStateOf("Loading...")
     private var showResetIdentityDialog by mutableStateOf(false)
     private val identity by lazy { SkinInstallationIdentity(this) }
+    private val youtubeAuthStore by lazy { YoutubeAuthStore(this) }
     private var customPfpFile by mutableStateOf<File?>(null)
     private var showPfpEditor by mutableStateOf(false)
 
@@ -152,6 +153,7 @@ class MainActivity : ComponentActivity() {
 
     // Music Import Workflow State
     private var showMusicImportDialog by mutableStateOf(false)
+    private var youtubeAuthConfigured by mutableStateOf(false)
     private var currentMusicImportType by mutableStateOf("YOUTUBE") // "YOUTUBE" or "LOCAL"
     private var musicImportYtUrl by mutableStateOf("")
     private var musicImportLocalUri by mutableStateOf<Uri?>(null)
@@ -286,6 +288,7 @@ class MainActivity : ComponentActivity() {
                 val prefs = getSharedPreferences("retr0_prefs", MODE_PRIVATE)
                 isSmartBackupEnabled = prefs.getBoolean("smart_backup", false)
                 lastBackupStatus = prefs.getString("last_backup_status", "Never") ?: "Never"
+                youtubeAuthConfigured = youtubeAuthStore.hasCookies()
                 
                 // Initialize local YouTube downloader engine
                 // Retr0Installer.initDownloader(this@MainActivity)
@@ -439,6 +442,31 @@ class MainActivity : ComponentActivity() {
         // Collect from the service if bound, otherwise fallback to a remembered state to prevent flickering
         val installProgress by (installService?.getProgressFlow() ?: remember { MutableStateFlow(InstallProgress()) }).collectAsState()
         var skinsFullScreen by remember { mutableStateOf(false) }
+
+        val youtubeCookiePicker = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            uri ?: return@rememberLauncherForActivityResult
+            lifecycleScope.launch(Dispatchers.IO) {
+                val result = youtubeAuthStore.importCookies(uri)
+                withContext(Dispatchers.Main) {
+                    result.onSuccess {
+                        youtubeAuthConfigured = true
+                        Toast.makeText(
+                            this@MainActivity,
+                            "YouTube authentication saved locally on this device.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }.onFailure { error ->
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Could not import YouTube cookies: ${error.message ?: "invalid file"}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+        }
 
         if (showMusicImportDialog) {
             MusicImportDialog()
@@ -1439,7 +1467,36 @@ class MainActivity : ComponentActivity() {
                 Text("Swap game soundtracks and build a library.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
             }
             
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RetroCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Lock, null, tint = RetroAccent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("YouTube authentication", style = MaterialTheme.typography.titleSmall, color = RetroText)
+                            Text(
+                                if (youtubeAuthConfigured) "Local cookies configured — never sent to Community Hub."
+                                else "Optional local cookies for yt-dlp when YouTube requires sign-in.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = RetroTextMuted,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton("Import cookies.txt", Modifier.weight(1f), icon = Icons.Filled.FileUpload) {
+                            youtubeCookiePicker.launch(arrayOf("text/plain", "text/*", "application/octet-stream"))
+                        }
+                        if (youtubeAuthConfigured) {
+                            SecondaryButton("Remove", Modifier.weight(0.45f), icon = Icons.Filled.Delete) {
+                                youtubeAuthStore.clearCookies()
+                                youtubeAuthConfigured = false
+                                Toast.makeText(this@MainActivity, "Local YouTube authentication removed.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+
                 RetroCard {
                     SegmentedTabs(listOf("Core","Extended","Library"), communityTabIndex) { communityTabIndex = it }
                     Spacer(Modifier.height(12.dp))
