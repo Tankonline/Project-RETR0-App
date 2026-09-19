@@ -30,6 +30,7 @@ data class SkinApiSkin(
     val detailsUrl: String?,
     val shareUrl: String?,
     val creatorId: String? = null,
+    val creatorAvatarUrl: String? = null,
     val isOwner: Boolean = false,
     val likedByMe: Boolean = false,
     val screenshots: List<SkinApiScreenshot> = emptyList(),
@@ -117,7 +118,8 @@ object SkinApiParser {
             value.optionalHttps("binaryUrl"), value.optionalHttps("detailsUrl"),
             value.optionalHttps("shareUrl").also { if (it == null && value.has("shareUrl")) Log.w("SKIN_API", "shareUrl parsing failed for skin ${value.optString("id")}") },
             value.optionalString("creator_id") ?: value.optionalString("installation_id"),
-            value.optBoolean("is_owner", false),
+        value.optionalHttps("creator_avatar_url"),
+        value.optBoolean("is_owner", false),
             value.optBoolean("liked_by_me", false), screenshots,
         )
     }

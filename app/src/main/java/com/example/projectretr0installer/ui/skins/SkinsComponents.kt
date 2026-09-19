@@ -56,7 +56,7 @@ import java.util.Locale
         }
     }
 }
-@Composable fun SkinAvatar(modifier: Modifier = Modifier, creatorId: String?, name: String, size: Dp = 24.dp, localFile: File? = null) {
+@Composable fun SkinAvatar(modifier: Modifier = Modifier, avatarUrl: String?, name: String, size: Dp = 24.dp, localFile: File? = null, localAvatarRevision: String? = null) {
     val fallback: @Composable () -> Unit = {
         Box(modifier.size(size).background(RetroAccentTint, CircleShape), Alignment.Center) {
             Text(name.take(1).uppercase(), color = RetroAccent, style = MaterialTheme.typography.labelSmall)
@@ -65,12 +65,13 @@ import java.util.Locale
     when {
         localFile != null && localFile.isFile -> {
             val context = LocalContext.current
-            // Keyed on lastModified so replacing the PFP at the same path busts Coil's memory
-            // cache instead of showing the previous image after an update.
-            val request = remember(localFile, localFile.lastModified()) {
+            // A content-derived revision changes for every persisted image replacement, even
+            // when the installation-keyed filename and filesystem timestamp are unchanged.
+            val revision = localAvatarRevision ?: "${localFile.length()}:${localFile.lastModified()}"
+            val request = remember(localFile, revision) {
                 ImageRequest.Builder(context)
                     .data(localFile)
-                    .memoryCacheKey("${localFile.absolutePath}:${localFile.lastModified()}")
+                    .memoryCacheKey("${localFile.absolutePath}:$revision")
                     .diskCachePolicy(CachePolicy.DISABLED)
                     .build()
             }
@@ -83,8 +84,8 @@ import java.util.Locale
                 loading = { fallback() },
             )
         }
-        creatorId != null -> SubcomposeAsyncImage(
-            model = "https://api.dicebear.com/7.x/identicon/webp?seed=$creatorId",
+        avatarUrl != null && avatarUrl.startsWith("https://") -> SubcomposeAsyncImage(
+            model = avatarUrl,
             contentDescription = "Avatar for $name",
             modifier = modifier.size(size).clip(CircleShape).background(RetroSurfaceAlt),
             contentScale = ContentScale.Crop,
@@ -179,7 +180,7 @@ fun LibrarySkinCard(
                 CardTitle(skin.title, "by ${skin.creator}")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (skin.verified) { BadgePill("Verified", Icons.Filled.Verified, RetroGold); Spacer(Modifier.width(8.dp)) }
-                    SkinAvatar(creatorId = skin.creatorId, name = skin.creator, size = 18.dp)
+                    SkinAvatar(avatarUrl = skin.creatorAvatarUrl, name = skin.creator, size = 18.dp)
                 }
             }
         }
@@ -192,7 +193,7 @@ fun LibrarySkinCard(
 }
 @Composable fun ActiveSkinCard(skin: CarSkin, onRevert: () -> Unit) { RetroCard { Row(verticalAlignment = Alignment.CenterVertically) { SkinCover(Modifier.size(76.dp)); Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { CardTitle(skin.title, "${skin.vehicle} · ${skin.slot.label}"); StatusChip(SkinStatus.ACTIVE) }; SecondaryButton(text = "Revert", modifier = Modifier.width(90.dp), onClick = onRevert) } } }
 @Composable private fun CardTitle(title: String, subtitle: String) { Text(title, color = RetroText, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(subtitle, color = RetroTextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-@Composable private fun Creator(name: String, creatorId: String? = null) { Row(verticalAlignment = Alignment.CenterVertically) { SkinAvatar(creatorId = creatorId, name = name); Spacer(Modifier.width(6.dp)); Text(name, color = RetroTextDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+@Composable private fun Creator(name: String, avatarUrl: String? = null) { Row(verticalAlignment = Alignment.CenterVertically) { SkinAvatar(avatarUrl = avatarUrl, name = name); Spacer(Modifier.width(6.dp)); Text(name, color = RetroTextDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
 @Composable private fun Metrics(likes: Int, downloads: Int, likedByMe: Boolean = false, onFav: (() -> Unit)? = null) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(

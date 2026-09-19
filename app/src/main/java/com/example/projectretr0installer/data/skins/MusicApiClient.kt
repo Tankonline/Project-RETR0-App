@@ -59,11 +59,13 @@ class MusicApiClient(
     }
 
     suspend fun uploadCover(musicId: String, input: InputStream, contentType: String): String? = withContext(Dispatchers.IO) {
+        val normalizedContentType = contentType.substringBefore(';').trim().lowercase()
+        require(normalizedContentType in SUPPORTED_COVER_TYPES) { "Unsupported artwork content type" }
         val bytes = input.use { it.readBytes() }
         require(bytes.isNotEmpty()) { "Artwork file is empty" }
         require(bytes.size <= MAX_COVER_BYTES) { "Artwork exceeds 500 KiB" }
         val url = musicCollectionUrl().newBuilder().addPathSegment(musicId).addPathSegment("cover").build()
-        val body = bytes.toRequestBody(contentType.toMediaType())
+        val body = bytes.toRequestBody(normalizedContentType.toMediaType())
         val response = try {
             executeSigned("PUT", url, body, SkinRequestCanonicalizer.sha256(bytes))
         } catch (error: SkinApiException) {
@@ -97,7 +99,9 @@ class MusicApiClient(
                         fileSize = item.getLong("file_size"),
                         createdAt = item.getString("created_at"),
                         targetTrack = item.getString("target_track"),
-                        coverUrl = item.optString("coverUrl").takeIf { it.isNotBlank() },
+                        coverUrl = coverUrl(item),
+                        uploaderAvatarUrl = item.optString("uploader_avatar_url")
+                            .takeIf(SaveApiClient::isSafeRemoteAvatarUrl),
                         likes = item.optInt("likes", 0),
                         downloads = item.optInt("downloads", 0),
                         isOwner = item.optBoolean("is_owner", false),
@@ -179,11 +183,18 @@ class MusicApiClient(
     private fun musicCollectionUrl(): HttpUrl = baseUrl.toHttpUrl().newBuilder().addPathSegments("v1/music").build()
     private fun v1(vararg segments: String): HttpUrl = baseUrl.toHttpUrl().newBuilder().addPathSegment("v1").apply { segments.forEach(::addPathSegment) }.build()
 
-    private companion object {
-        const val MAX_MUSIC_BYTES = 25L * 1024 * 1024
-        const val MAX_COVER_BYTES = 500 * 1024
-        val JSON = "application/json; charset=utf-8".toMediaType()
-        val EMPTY_BODY = ByteArray(0).toRequestBody(null)
+    private fun coverUrl(item: JSONObject): String? = musicCoverUrl(item)
+
+    internal companion object {
+        fun musicCoverUrl(item: JSONObject): String? =
+            item.optString("coverUrl").takeIf { it.isNotBlank() }
+                ?: item.optString("cover_url").takeIf { it.isNotBlank() }
+
+        private const val MAX_MUSIC_BYTES = 25L * 1024 * 1024
+        private const val MAX_COVER_BYTES = 500 * 1024
+        private val SUPPORTED_COVER_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+        private val JSON = "application/json; charset=utf-8".toMediaType()
+        private val EMPTY_BODY = ByteArray(0).toRequestBody(null)
     }
 }
 

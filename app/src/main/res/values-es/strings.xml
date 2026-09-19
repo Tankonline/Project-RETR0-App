@@ -78,6 +78,15 @@
     <string name="btn_restore_graphics">RESTAURAR GRÁFICOS ORIGINALES</string>
     <string name="btn_experimental_graphics">OTRAS OPCIONES (EXPERIMENTAL)</string>
     <string name="btn_backup">COPIA DE SEGURIDAD</string>
+    <string name="save_rename_title">Renombrar partida</string>
+    <string name="save_rename_description">Elige el nombre completo. La extensión .dat se añade automáticamente.</string>
+    <string name="save_rename_name">Nombre de la partida</string>
+    <string name="save_rename_cancel">Cancelar</string>
+    <string name="save_rename_action">Renombrar</string>
+    <string name="save_rename_invalid">El nombre contiene caracteres no válidos.</string>
+    <string name="save_rename_blank">Introduce un nombre válido.</string>
+    <string name="save_rename_unavailable">Ese nombre puede estar en uso.</string>
+    <string name="save_rename_disconnected">El servicio no está conectado.</string>
     <string name="btn_update_snapshot">ACTUALIZAR INSTANTÁNEA</string>
     <string name="btn_start_shizuku">INICIAR SHIZUKU</string>
     <string name="btn_request_shizuku">SOLICITAR PERMISO SHIZUKU</string>
@@ -132,6 +141,12 @@
     <string name="label_rs">Moneda R$</string>
     <string name="label_ms">Moneda M$</string>
     <string name="label_youtube_placeholder">Pega el enlace de YouTube aquí…</string>
+    <string name="youtube_auth_fallback_title">Alternativa de autenticación de YouTube</string>
+    <string name="youtube_auth_fallback_description">Primero se intentan las solicitudes anónimas. Las cookies permanecen cifradas en este dispositivo y nunca se suben.</string>
+    <string name="youtube_cookies_import">Importar cookies</string>
+    <string name="youtube_cookies_replace">Reemplazar cookies</string>
+    <string name="youtube_cookies_remove">Eliminar</string>
+    <string name="youtube_cookies_invalid">Archivo de cookies no válido.</string>
 
     <!-- Graphics Tiers -->
     <string name="tier_low">Bajo</string>

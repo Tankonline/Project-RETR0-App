@@ -2,7 +2,9 @@ package com.example.projectretr0installer.installer
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.projectretr0installer.BuildConfig
@@ -13,15 +15,22 @@ import com.example.projectretr0installer.data.skins.SkinInstallationIdentity
 import com.example.projectretr0installer.data.skins.SkinRequestCanonicalizer
 import com.example.projectretr0installer.data.skins.SkinApiException
 import com.example.projectretr0installer.installer.persistence.DownloadDatabase
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.URI
 import java.net.URL
+import java.security.MessageDigest
 import java.util.Locale
 
 /**
@@ -34,6 +43,8 @@ class Retr0Installer(
 
     companion object {
         private const val TAG = "RETR0_INSTALLER_LOG"
+        private const val AI_TAG = "RETR0_AI"
+        private const val MUSIC_LIBRARY_TAG = "RETR0_MUSIC_LIBRARY"
         private const val MANIFEST_URL = "https://pub-f87b4daf1b344ca39c9ba6de6812a777.r2.dev"
         private const val RR3_ROW = "/storage/emulated/0/Android/data/com.ea.games.r3_row"
         private const val RR3_NA = "/storage/emulated/0/Android/data/com.ea.games.r3_na"
@@ -50,7 +61,24 @@ class Retr0Installer(
         private const val BOOSTER_URL = COMMUNITY_API_URL
 
         private var isDownloaderInit = false
-        
+        private const val YOUTUBE_METADATA_TIMEOUT_MS = 45_000L
+        private const val YOUTUBE_DOWNLOAD_TIMEOUT_MS = 8 * 60_000L
+        private const val YOUTUBE_SOCKET_TIMEOUT_SECONDS = 20
+        private const val YOUTUBE_RETRIES = 2
+        private const val MAX_MUSIC_ARTWORK_DOWNLOAD_BYTES = 25L * 1024 * 1024
+        private val SUPPORTED_MUSIC_ARTWORK_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+
+        internal enum class YouTubeErrorCode(val userMessage: String) {
+            INVALID_URL("YT_E001 Invalid YouTube URL."),
+            INITIALIZATION_FAILED("YT_E002 Local downloader could not start."),
+            METADATA_TIMEOUT("YT_E003 Timed out while reading video details."),
+            METADATA_FAILED("YT_E004 Could not read video details."),
+            DOWNLOAD_TIMEOUT("YT_E005 Timed out while downloading or converting audio."),
+            DOWNLOAD_FAILED("YT_E006 Audio download or conversion failed."),
+            OUTPUT_MISSING("YT_E007 Audio conversion completed without an MP3 output."),
+            CANCELLED("YT_E008 YouTube processing was cancelled."),
+        }
+
         /**
          * Initializes the YouTubeDL and FFmpeg engines locally on the device.
          */
@@ -77,6 +105,7 @@ class Retr0Installer(
     private val downloader = FileDownloader()
     private val verifier = HashVerifier()
     private val manifestManager = ManifestManager(COMMUNITY_API_URL)
+    private val youtubeCookieStore by lazy { YouTubeCookieStore(context) }
 
     @Volatile
     private var globalCachedManifest: InstallManifest? = null
@@ -578,7 +607,23 @@ class Retr0Installer(
     }
 
     suspend fun renameProfile(profile: SaveProfile, newName: String): Boolean = withContext(Dispatchers.IO) {
-        service?.move(profile.path.absolutePath, "${profile.path.parent}/$newName.dat") ?: false
+        val s = service ?: return@withContext false
+        if (!s.ping()) return@withContext false
+
+        val normalizedName = newName.trim().removeSuffix(".dat").trim()
+        if (!isValidSaveProfileName(normalizedName) || normalizedName == profile.name) return@withContext false
+
+        val destinationPath = "$SAVE_HUB_PATH/$normalizedName.dat"
+        if (s.exists(destinationPath)) return@withContext false
+
+        s.move(profile.path.absolutePath, destinationPath)
+    }
+
+    private fun isValidSaveProfileName(name: String): Boolean {
+        if (name.isBlank() || name == "." || name == ".." || name.length > 120) return false
+        if (name.endsWith('.') || name.endsWith(' ')) return false
+        if (name.any { it.isISOControl() || it in "<>:\"/\\|?*" }) return false
+        return !name.contains("..")
     }
 
     /**
@@ -635,93 +680,238 @@ class Retr0Installer(
 
 
     /**
-     * Uses Cloudflare AI to analyze an error and provide a fix.
+     * Uses the AI service to analyze an error and provide a fix.
+     *
+     * Temporary diagnostics log authentication metadata only. Prompts, signatures, responses, and
+     * unrestricted server bodies are never logged.
      */
     suspend fun troubleshootError(errorMessage: String): String? = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("$COMMUNITY_API_URL/troubleshoot")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
-
-            val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
-            val jsonReq = org.json.JSONObject().apply {
-                put("error", errorMessage)
-                put("device", deviceModel)
-                put("type", "troubleshoot")
-            }
-
-            connection.outputStream.use { it.write(jsonReq.toString().toByteArray(Charsets.UTF_8)) }
-            
-            val respCode = connection.responseCode
-            Log.d(TAG, "Troubleshoot response code: $respCode")
-
-            if (respCode == 200) {
-                val resp = connection.inputStream.bufferedReader().use { it.readText() }
-                Log.d(TAG, "Troubleshoot response: $resp")
-                val jsonResp = org.json.JSONObject(resp)
-                return@withContext jsonResp.optString("response", "No response from AI")
-            } else {
-                val err = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
-                Log.e(TAG, "Troubleshoot error ($respCode): $err")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "AI Troubleshoot failed", e)
-        }
-        null
+        executeAiRequest(
+            mode = "troubleshoot",
+            message = errorMessage,
+            connectTimeoutMs = 15_000,
+            readTimeoutMs = 15_000,
+        )
     }
 
     /**
-     * Sends a conversation history to the Cloudflare AI Modding Assistant.
+     * Sends the latest user message to the AI Modding Assistant.
      */
     suspend fun chatWithAi(history: List<ChatMessage>): String? = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("$COMMUNITY_API_URL/troubleshoot")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = 20000
-            connection.readTimeout = 20000
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "RETR0-Installer/1.0")
-
-            val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
-            
-            // The Worker expects "error", "device", and "type"
-            // It does not support conversation history yet, so we send the latest user message.
-            val lastUserMsg = history.lastOrNull { it.isUser }?.content ?: ""
-
-            val jsonReq = org.json.JSONObject().apply {
-                put("error", lastUserMsg) 
-                put("device", deviceModel)
-                put("type", "general") 
-            }
-
-            Log.d(TAG, "Sending AI Chat request to: $url")
-            connection.outputStream.use { it.write(jsonReq.toString().toByteArray(Charsets.UTF_8)) }
-            
-            val respCode = connection.responseCode
-            Log.d(TAG, "AI Chat response code: $respCode")
-
-            if (respCode == 200) {
-                val resp = connection.inputStream.bufferedReader().use { it.readText() }
-                Log.d(TAG, "AI Chat response: $resp")
-                val jsonResp = org.json.JSONObject(resp)
-                return@withContext jsonResp.optString("response", "AI is silent.")
-            } else {
-                val errBody = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
-                Log.e(TAG, "AI Chat error ($respCode): $errBody")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "AI Chat exception: ${e.message}", e)
+        val startedAt = System.currentTimeMillis()
+        val lastUserMessage = history.lastOrNull { it.isUser }?.content
+        if (lastUserMessage.isNullOrBlank()) {
+            logAiFailure(AiErrorCode.INVALID_REQUEST, "chat", startedAt)
+            return@withContext null
         }
-        null
+        executeAiRequest(
+            mode = "chat",
+            message = lastUserMessage,
+            connectTimeoutMs = 20_000,
+            readTimeoutMs = 20_000,
+            historyCount = history.size,
+        )
+    }
+
+    private fun executeAiRequest(
+        mode: String,
+        message: String,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
+        historyCount: Int? = null,
+    ): String? {
+        val startedAt = System.currentTimeMillis()
+        val method = "POST"
+        val path = "/troubleshoot"
+        val historyMetadata = historyCount?.let { " historyCount=$it" }.orEmpty()
+        Log.i(AI_TAG, "RETR0_AI_REQUEST_STARTED mode=$mode method=$method path=$path elapsedMs=0$historyMetadata")
+
+        var connection: HttpURLConnection? = null
+        var diagnostic = AiRequestDiagnostic()
+        try {
+            val deviceModel = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})"
+            val jsonRequest = JSONObject().apply {
+                put("error", message)
+                put("device", deviceModel)
+                put("type", if (mode == "chat") "general" else "troubleshoot")
+            }
+            val bodyBytes = jsonRequest.toString().toByteArray(Charsets.UTF_8)
+            val bodySha256 = SkinRequestCanonicalizer.sha256(bodyBytes)
+            diagnostic = diagnostic.copy(bodyBytes = bodyBytes.size, bodySha256 = bodySha256)
+            Log.i(AI_TAG, "RETR0_AI_BODY_METADATA mode=$mode bodyBytes=${bodyBytes.size} bodySha256=$bodySha256")
+
+            val identity = try {
+                SkinInstallationIdentity(context).also {
+                    Log.i(AI_TAG, "RETR0_AI_IDENTITY_CREATED mode=$mode installationId=${it.installationId}")
+                }
+            } catch (error: Exception) {
+                Log.e(AI_TAG, "RETR0_AI_IDENTITY_FAILED mode=$mode errorType=${error.javaClass.simpleName} message=${safeAiExceptionMessage(error)}", error)
+                throw error
+            }
+            val signed = try {
+                identity.sign(method, path, bodySha256).also {
+                    diagnostic = diagnostic.copy(
+                        installationIdPresent = it.installationId.isNotBlank(),
+                        timestampPresent = it.timestamp.isNotBlank(),
+                        noncePresent = it.nonce.isNotBlank(),
+                        signaturePresent = it.signature.isNotBlank(),
+                    )
+                    Log.i(
+                        AI_TAG,
+                        "RETR0_AI_SIGNING_SUCCEEDED mode=$mode method=$method path=$path " +
+                            "installationId=${it.installationId} timestamp=${it.timestamp} " +
+                            "nonceLength=${it.nonce.length} signatureLength=${it.signature.length} " +
+                            "signatureNonEmpty=${it.signature.isNotEmpty()} bodySha256=$bodySha256",
+                    )
+                }
+            } catch (error: Exception) {
+                Log.e(AI_TAG, "RETR0_AI_SIGNING_FAILED mode=$mode method=$method path=$path errorType=${error.javaClass.simpleName} message=${safeAiExceptionMessage(error)}", error)
+                throw error
+            }
+
+            connection = (URL("$COMMUNITY_API_URL$path").openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                doOutput = true
+                connectTimeout = connectTimeoutMs
+                readTimeout = readTimeoutMs
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", "RETR0-Installer/1.0")
+                setRequestProperty("X-Installation-ID", signed.installationId)
+                setRequestProperty("X-Timestamp", signed.timestamp)
+                setRequestProperty("X-Nonce", signed.nonce)
+                setRequestProperty("X-Signature", signed.signature)
+            }
+            Log.i(
+                AI_TAG,
+                "RETR0_AI_AUTH_HEADERS mode=$mode " +
+                    "X-Installation-ID=${presence(signed.installationId)} " +
+                    "X-Timestamp=${presence(signed.timestamp)} X-Nonce=${presence(signed.nonce)} " +
+                    "X-Signature=${presence(signed.signature)}",
+            )
+            Log.i(
+                AI_TAG,
+                "RETR0_AI_CANONICAL_METADATA mode=$mode method=$method path=$path " +
+                    "installationId=${signed.installationId} timestamp=${signed.timestamp} " +
+                    "nonceLength=${signed.nonce.length} bodySha256=$bodySha256",
+            )
+            connection.outputStream.use { it.write(bodyBytes) }
+
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                val requestId = connection.getHeaderField("X-Request-ID")
+                val traceId = connection.getHeaderField("X-Trace-ID")
+                val workerVersion = connection.getHeaderField("X-Worker-Version")
+                val workerRevision = connection.getHeaderField("X-Worker-Revision")
+                val contentType = connection.contentType
+                val contentLength = connection.contentLengthLong.takeIf { it >= 0 }
+                diagnostic = diagnostic.copy(
+                    requestId = requestId,
+                    responseContentType = contentType,
+                )
+                val responseBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val safeResponseBody = safeAiDiagnosticResponseBody(responseBody)
+                Log.e(
+                    AI_TAG,
+                    "RETR0_AI_AUTH_RESPONSE mode=$mode status=$responseCode " +
+                        "elapsedMs=${System.currentTimeMillis() - startedAt} requestId=${safeLogValue(requestId)} " +
+                        "traceId=${safeLogValue(traceId)} workerVersion=${safeLogValue(workerVersion)} " +
+                        "workerRevision=${safeLogValue(workerRevision)} contentType=${safeLogValue(contentType)} " +
+                        "contentLength=${contentLength ?: "ABSENT"} responseBody=${safeResponseBody ?: "REDACTED_OR_EMPTY"}",
+                )
+                logAiFailure(AiErrorCode.HTTP_ERROR, mode, startedAt, httpStatus = responseCode, diagnostic = diagnostic)
+                return null
+            }
+
+            val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
+            val response = runCatching {
+                JSONObject(responseBody).optString("response").takeIf { it.isNotBlank() }
+            }.getOrElse {
+                logAiFailure(AiErrorCode.INVALID_RESPONSE, mode, startedAt, it, diagnostic = diagnostic)
+                return null
+            }
+            if (response == null) {
+                logAiFailure(AiErrorCode.EMPTY_RESPONSE, mode, startedAt, diagnostic = diagnostic)
+                return null
+            }
+            Log.i(AI_TAG, "RETR0_AI_REQUEST_SUCCEEDED mode=$mode elapsedMs=${System.currentTimeMillis() - startedAt}")
+            return response
+        } catch (error: SocketTimeoutException) {
+            logAiFailure(AiErrorCode.TIMEOUT, mode, startedAt, error, diagnostic = diagnostic)
+        } catch (error: IOException) {
+            logAiFailure(AiErrorCode.NETWORK, mode, startedAt, error, diagnostic = diagnostic)
+        } catch (error: Exception) {
+            logAiFailure(AiErrorCode.UNKNOWN, mode, startedAt, error, diagnostic = diagnostic)
+        } finally {
+            connection?.disconnect()
+        }
+        return null
+    }
+
+    private enum class AiErrorCode {
+        INVALID_REQUEST,
+        NETWORK,
+        TIMEOUT,
+        HTTP_ERROR,
+        INVALID_RESPONSE,
+        EMPTY_RESPONSE,
+        UNKNOWN,
+    }
+
+    private data class AiRequestDiagnostic(
+        val installationIdPresent: Boolean = false,
+        val timestampPresent: Boolean = false,
+        val noncePresent: Boolean = false,
+        val signaturePresent: Boolean = false,
+        val bodyBytes: Int? = null,
+        val bodySha256: String? = null,
+        val requestId: String? = null,
+        val responseContentType: String? = null,
+    )
+
+    private fun presence(value: String?): String = if (value.isNullOrBlank()) "ABSENT" else "PRESENT"
+
+    private fun safeLogValue(value: String?): String = value
+        ?.takeIf { it.isNotBlank() && it.length <= 160 && it.all { char -> char.code in 32..126 } }
+        ?: "ABSENT"
+
+    private fun safeAiExceptionMessage(error: Throwable): String = error.message
+        ?.takeIf { message ->
+            message.length <= 160 &&
+                !message.contains("signature", ignoreCase = true) &&
+                !message.contains("key", ignoreCase = true) &&
+                !message.contains("token", ignoreCase = true)
+        }
+        ?: "REDACTED_OR_EMPTY"
+
+    private fun safeAiDiagnosticResponseBody(body: String): String? {
+        val normalized = body.trim()
+        if (normalized.isEmpty() || normalized.length > 160) return null
+        val lower = normalized.lowercase()
+        val forbidden = listOf("signature", "token", "authorization", "cookie", "prompt", "response", "api_key", "auth_key")
+        if (forbidden.any(lower::contains)) return null
+        return normalized.takeIf { it.all { char -> char == '\n' || char == '\r' || char == '\t' || char.code in 32..126 } }
+    }
+
+    private fun logAiFailure(
+        code: AiErrorCode,
+        mode: String,
+        startedAt: Long,
+        error: Throwable? = null,
+        httpStatus: Int? = null,
+        diagnostic: AiRequestDiagnostic = AiRequestDiagnostic(),
+    ) {
+        val status = httpStatus?.let { " httpStatus=$it" }.orEmpty()
+        val errorType = error?.javaClass?.simpleName?.let { " errorType=$it" }.orEmpty()
+        Log.e(
+            AI_TAG,
+            "RETR0_AI_REQUEST_FAILED code=${code.name} mode=$mode elapsedMs=${System.currentTimeMillis() - startedAt}$status$errorType " +
+                "installationIdPresent=${diagnostic.installationIdPresent} " +
+                "timestampPresent=${diagnostic.timestampPresent} noncePresent=${diagnostic.noncePresent} " +
+                "signaturePresent=${diagnostic.signaturePresent} bodyBytes=${diagnostic.bodyBytes ?: "UNKNOWN"} " +
+                "bodySha256=${diagnostic.bodySha256 ?: "UNKNOWN"} requestId=${safeLogValue(diagnostic.requestId)} " +
+                "responseContentType=${safeLogValue(diagnostic.responseContentType)}",
+        )
     }
 
     /**
@@ -848,13 +1038,14 @@ class Retr0Installer(
         customName: String,
         metadata: MusicMetadata? = null,
         artworkUri: Uri? = null,
+        artworkUrl: String? = metadata?.artworkUrl,
     ): Boolean = withContext(Dispatchers.IO) {
         // 1. Apply locally while preserving the selected metadata.
         val applied = applyMusicMod(uri, trackFileName, metadata)
         if (!applied) return@withContext false
 
         // 2. Upload to Community.
-        uploadMusic(uri, uploaderName, customName, trackFileName, artworkUri)
+        uploadMusic(uri, uploaderName, customName, trackFileName, artworkUri, artworkUrl)
     }
 
     /**
@@ -866,6 +1057,7 @@ class Retr0Installer(
         customName: String,
         targetTrack: String,
         artworkUri: Uri? = null,
+        artworkUrl: String? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
@@ -916,11 +1108,8 @@ class Retr0Installer(
                 targetTrack = targetTrack,
             )
 
-            artworkUri?.let { artwork ->
-                val contentType = context.contentResolver.getType(artwork) ?: "image/jpeg"
-                context.contentResolver.openInputStream(artwork)?.use { input ->
-                    MusicApiClient(context).uploadCover(result.id, input, contentType)
-                } ?: Log.w("RETR0_UPLOAD", "Artwork picker URI could not be opened: $artwork")
+            if (artworkUri != null || !artworkUrl.isNullOrBlank()) {
+                uploadMusicArtwork(result.id, artworkUri, artworkUrl)
             }
 
             Log.i("RETR0_UPLOAD", "Uploaded music ${result.size} bytes as ${result.id}; requestId=${result.requestId}")
@@ -937,6 +1126,65 @@ class Retr0Installer(
             false
         } finally {
             File(context.cacheDir, "music_upload_tmp.mp3").delete()
+        }
+    }
+
+    private suspend fun uploadMusicArtwork(musicId: String, artworkUri: Uri?, artworkUrl: String?) {
+        val client = MusicApiClient(context)
+        val source = File.createTempFile("music_cover_source_", ".tmp", context.cacheDir)
+        var encoded: File? = null
+        var connection: HttpURLConnection? = null
+        try {
+            if (artworkUri != null) {
+                val contentType = context.contentResolver.getType(artworkUri)
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.lowercase(Locale.US)
+                require(contentType == null || contentType in SUPPORTED_MUSIC_ARTWORK_TYPES) { "Unsupported artwork content type" }
+                val input = context.contentResolver.openInputStream(artworkUri)
+                    ?: throw IOException("Selected artwork could not be opened")
+                input.use { source.outputStream().use(it::copyTo) }
+            } else {
+                val remoteUrl = artworkUrl?.takeIf { it.isNotBlank() } ?: return
+                val url = URL(remoteUrl)
+                require(url.protocol.equals("https", true) && url.host.isNotBlank()) { "Artwork URL must use HTTPS" }
+                connection = (url.openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    connectTimeout = 10_000
+                    readTimeout = 20_000
+                    setRequestProperty("Accept", "image/jpeg,image/png,image/webp")
+                }
+                val status = connection.responseCode
+                require(status in 200..299) { "Artwork download returned HTTP $status" }
+                val contentType = connection.contentType
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.lowercase(Locale.US)
+                require(contentType == null || contentType in SUPPORTED_MUSIC_ARTWORK_TYPES) { "Unsupported artwork content type" }
+                val declaredLength = connection.contentLengthLong
+                require(declaredLength < 0 || declaredLength <= MAX_MUSIC_ARTWORK_DOWNLOAD_BYTES) { "Artwork download is too large" }
+                connection.inputStream.use { input ->
+                    source.outputStream().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var total = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= MAX_MUSIC_ARTWORK_DOWNLOAD_BYTES) { "Artwork download is too large" }
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+            }
+
+            val processed = MusicArtworkProcessor.process(source, context.cacheDir)
+            encoded = processed.file
+            encoded.inputStream().use { client.uploadCover(musicId, it, processed.contentType) }
+        } finally {
+            connection?.disconnect()
+            source.delete()
+            encoded?.delete()
         }
     }
 
@@ -1012,22 +1260,49 @@ class Retr0Installer(
     }
 
     /**
-     * Fetches metadata for a YouTube video.
+     * Fetches metadata for a YouTube video with finite extractor/network waits.
      */
     suspend fun fetchYouTubeInfo(youtubeUrl: String): YouTubeInfo? = withContext(Dispatchers.IO) {
-        try {
-            if (!isDownloaderInit) {
-                if (!initDownloader(context)) return@withContext null
+        if (!isValidYouTubeUrl(youtubeUrl)) {
+            failYouTube(YouTubeErrorCode.INVALID_URL, "metadata", youtubeUrl)
+            return@withContext null
+        }
+        if (!isDownloaderInit && !initDownloader(context)) {
+            failYouTube(YouTubeErrorCode.INITIALIZATION_FAILED, "initialization", youtubeUrl)
+            return@withContext null
+        }
+        val startedAt = System.currentTimeMillis()
+        updateProgress(InstallState.PREPARING, "Reading YouTube video details...", eta = "Up to 45s")
+        logYouTube("METADATA_STARTED", "stage=metadata host=${youtubeHost(youtubeUrl)}")
+        return@withContext try {
+            val info = executeYouTubeWithAuthFallback(
+                youtubeUrl = youtubeUrl,
+                timeoutMs = YOUTUBE_METADATA_TIMEOUT_MS,
+                stage = YouTubeAuthFallback.Stage.METADATA,
+            ) { cookiesFile ->
+                YoutubeDLRequest(youtubeUrl).apply {
+                    addYouTubeNetworkOptions(this)
+                    addYouTubeExtractorOptions(this)
+                    addOption("--no-playlist")
+                    cookiesFile?.let { addOption("--cookies", it.absolutePath) }
+                }.let { request ->
+                    withTimeout(YOUTUBE_METADATA_TIMEOUT_MS) { YoutubeDL.getInstance().getInfo(request) }
+                }
             }
-            val request = com.yausername.youtubedl_android.YoutubeDLRequest(youtubeUrl)
-            val info = com.yausername.youtubedl_android.YoutubeDL.getInstance().getInfo(request)
-            return@withContext YouTubeInfo(
+            logYouTube("METADATA_SUCCEEDED", "stage=metadata elapsedMs=${System.currentTimeMillis() - startedAt}")
+            YouTubeInfo(
                 title = info.title ?: "YouTube Audio",
                 thumbnailUrl = info.thumbnail,
                 url = youtubeUrl,
             )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch YouTube info", e)
+        } catch (error: TimeoutCancellationException) {
+            failYouTube(YouTubeErrorCode.METADATA_TIMEOUT, "metadata", youtubeUrl, startedAt, error)
+            null
+        } catch (error: CancellationException) {
+            failYouTube(YouTubeErrorCode.CANCELLED, "metadata", youtubeUrl, startedAt, error)
+            throw error
+        } catch (error: Exception) {
+            failYouTube(YouTubeErrorCode.METADATA_FAILED, "metadata", youtubeUrl, startedAt, error)
             null
         }
     }
@@ -1037,60 +1312,164 @@ class Retr0Installer(
      * Returns the local File and info if successful, null otherwise.
      */
     suspend fun downloadYouTubeAudio(youtubeUrl: String): YouTubeDownloadResult? = withContext(Dispatchers.IO) {
+        val tempDir = File(context.externalCacheDir ?: context.cacheDir, "youtube_work")
         try {
-            if (!isDownloaderInit) {
-                if (!initDownloader(context)) return@withContext null
+            if (!isValidYouTubeUrl(youtubeUrl)) {
+                failYouTube(YouTubeErrorCode.INVALID_URL, "validation", youtubeUrl)
+                return@withContext null
+            }
+            updateProgress(InstallState.PREPARING, "Initializing local YouTube downloader...", eta = "Starting")
+            if (!isDownloaderInit && !initDownloader(context)) {
+                failYouTube(YouTubeErrorCode.INITIALIZATION_FAILED, "initialization", youtubeUrl)
+                return@withContext null
             }
 
-            updateProgress(InstallState.PREPARING, "Processing YouTube Link locally...")
-            
             val info = fetchYouTubeInfo(youtubeUrl) ?: return@withContext null
+            if (progress.value.state == InstallState.FAILED) return@withContext null
 
-            val tempDir = File(context.externalCacheDir ?: context.cacheDir, "youtube_work")
             if (tempDir.exists()) tempDir.deleteRecursively()
-            tempDir.mkdirs()
+            if (!tempDir.mkdirs() && !tempDir.isDirectory) {
+                failYouTube(YouTubeErrorCode.DOWNLOAD_FAILED, "workspace", youtubeUrl)
+                return@withContext null
+            }
 
-            val request = com.yausername.youtubedl_android.YoutubeDLRequest(youtubeUrl)
-            request.addOption("--extract-audio")
-            request.addOption("--audio-format", "mp3")
-            request.addOption("--audio-quality", "0") // Best quality (320kbps via FFmpeg)
-            request.addOption("-o", "${tempDir.absolutePath}/%(title)s.%(ext)s")
-            
-            // Add options for speed and reliability
-            request.addOption("--no-playlist")
-            request.addOption("--no-mtime")
-            
-            Log.i(TAG, "Starting local yt-dlp execution for: $youtubeUrl")
-            
-            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request) { progress, eta, line ->
-                updateProgress(
-                    state = InstallState.DOWNLOADING,
-                    step = "Local Conversion: $progress%",
-                    fileProgress = progress / 100f,
-                    overallProgress = progress / 100f,
-                    eta = if (eta > 0) "${eta}s" else "Converting...",
-                )
-                Log.v(TAG, "yt-dlp: $line")
+            val startedAt = System.currentTimeMillis()
+            updateProgress(InstallState.DOWNLOADING, "Downloading YouTube audio locally...", eta = "Up to 8 min")
+            logYouTube("DOWNLOAD_STARTED", "stage=download host=${youtubeHost(youtubeUrl)}")
+            executeYouTubeWithAuthFallback(
+                youtubeUrl = youtubeUrl,
+                timeoutMs = YOUTUBE_DOWNLOAD_TIMEOUT_MS,
+                stage = YouTubeAuthFallback.Stage.DOWNLOAD,
+            ) { cookiesFile ->
+                val request = YoutubeDLRequest(youtubeUrl).apply {
+                    addOption("--format", "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio")
+                    addOption("--extract-audio")
+                    addOption("--audio-format", "mp3")
+                    addOption("--audio-quality", "0")
+                    addOption("-o", "${tempDir.absolutePath}/%(title)s.%(ext)s")
+                    addOption("--no-playlist")
+                    addOption("--no-mtime")
+                    addYouTubeNetworkOptions(this)
+                    addYouTubeExtractorOptions(this)
+                    cookiesFile?.let { addOption("--cookies", it.absolutePath) }
+                }
+                withTimeout(YOUTUBE_DOWNLOAD_TIMEOUT_MS) {
+                    YoutubeDL.getInstance().execute(request) { progress, eta, line ->
+                        updateProgress(
+                            state = InstallState.DOWNLOADING,
+                            step = if (line.contains("ffmpeg", ignoreCase = true)) "Converting YouTube audio to MP3..." else "Downloading YouTube audio: $progress%",
+                            fileProgress = progress / 100f,
+                            overallProgress = progress / 100f,
+                            eta = if (eta > 0) "${eta}s" else "Working...",
+                        )
+                    }
+                }
             }
-            
-            val downloadedFile = tempDir.listFiles()?.find { it.extension == "mp3" }
-            if ((downloadedFile != null) && downloadedFile.exists()) {
-                // Move to a stable location
-                val finalFile = File(context.externalCacheDir ?: context.cacheDir, "youtube_download.mp3")
-                if (finalFile.exists()) finalFile.delete()
-                downloadedFile.renameTo(finalFile)
-                
-                tempDir.deleteRecursively()
-                return@withContext YouTubeDownloadResult(finalFile, info)
-            } else {
-                fail("Local conversion failed. No MP3 file generated.")
-                null
+
+            val downloadedFile = tempDir.listFiles()?.find { it.extension.equals("mp3", ignoreCase = true) && it.length() > 0 }
+            if (downloadedFile == null) {
+                failYouTube(YouTubeErrorCode.OUTPUT_MISSING, "output", youtubeUrl, startedAt)
+                return@withContext null
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Local YouTube conversion failed", e)
-            fail("YouTube Error (Local): ${e.message}")
+            val finalFile = File(context.externalCacheDir ?: context.cacheDir, "youtube_download.mp3")
+            if (finalFile.exists() && !finalFile.delete()) {
+                failYouTube(YouTubeErrorCode.DOWNLOAD_FAILED, "output_replace", youtubeUrl, startedAt)
+                return@withContext null
+            }
+            if (!downloadedFile.renameTo(finalFile) || !finalFile.isFile || finalFile.length() <= 0) {
+                failYouTube(YouTubeErrorCode.OUTPUT_MISSING, "output_move", youtubeUrl, startedAt)
+                return@withContext null
+            }
+            tempDir.deleteRecursively()
+            logYouTube("DOWNLOAD_SUCCEEDED", "stage=complete elapsedMs=${System.currentTimeMillis() - startedAt} bytes=${finalFile.length()}")
+            YouTubeDownloadResult(finalFile, info)
+        } catch (error: TimeoutCancellationException) {
+            failYouTube(YouTubeErrorCode.DOWNLOAD_TIMEOUT, "download", youtubeUrl, error = error)
             null
+        } catch (error: CancellationException) {
+            failYouTube(YouTubeErrorCode.CANCELLED, "download", youtubeUrl, error = error)
+            throw error
+        } catch (error: Exception) {
+            failYouTube(YouTubeErrorCode.DOWNLOAD_FAILED, "download", youtubeUrl, error = error)
+            null
+        } finally {
+            if (progress.value.state == InstallState.FAILED) tempDir.deleteRecursively()
         }
+    }
+
+    private suspend fun <T> executeYouTubeWithAuthFallback(
+        youtubeUrl: String,
+        timeoutMs: Long,
+        stage: YouTubeAuthFallback.Stage,
+        operation: suspend (File?) -> T,
+    ): T {
+        require(youtubeUrl.isNotBlank() && timeoutMs > 0)
+        val retryState = YouTubeAuthFallback.RetryState(stage)
+        var temporaryCookies: File? = null
+        try {
+            return try {
+                logYouTube("ATTEMPT", "stage=${stage.name.lowercase()} auth=anonymous")
+                operation(null)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                val hasCookies = youtubeCookieStore.hasCookies()
+                val classification = YouTubeAuthFallback.classify(stage, error)
+                val attempt = retryState.nextAttempt(hasCookies, classification)
+                logYouTube(
+                    "FALLBACK_CLASSIFIED",
+                    "stage=${stage.name.lowercase()} classification=${classification.name} cookiesConfigured=$hasCookies retryAuthenticated=${attempt == YouTubeAuthFallback.Attempt.AUTHENTICATED}",
+                )
+                if (attempt != YouTubeAuthFallback.Attempt.AUTHENTICATED) throw error
+                val cookies = youtubeCookieStore.readNetscapeCookies() ?: throw error
+                temporaryCookies = withContext(Dispatchers.IO) {
+                    File.createTempFile("retr0-youtube-", ".cookies.txt", context.cacheDir)
+                }
+                temporaryCookies!!.writeText(cookies)
+                logYouTube("ATTEMPT", "stage=${stage.name.lowercase()} auth=authenticated")
+                operation(temporaryCookies)
+            }
+        } finally {
+            temporaryCookies?.let { cookieFile ->
+                val deleted = runCatching { !cookieFile.exists() || cookieFile.delete() }.getOrDefault(false)
+                logYouTube("COOKIE_TEMP_CLEANUP", "stage=${stage.name.lowercase()} deleted=$deleted")
+            }
+        }
+    }
+
+    private fun addYouTubeNetworkOptions(request: YoutubeDLRequest) {
+        request.addOption("--socket-timeout", YOUTUBE_SOCKET_TIMEOUT_SECONDS.toString())
+        request.addOption("--retries", YOUTUBE_RETRIES.toString())
+        request.addOption("--fragment-retries", YOUTUBE_RETRIES.toString())
+    }
+
+    private fun addYouTubeExtractorOptions(request: YoutubeDLRequest) {
+        // Avoid clients whose media URLs require a PO token that this local Android app cannot supply.
+        request.addOption("--extractor-args", "youtube:player_client=android_vr,web_safari")
+    }
+
+    private fun isValidYouTubeUrl(rawUrl: String): Boolean = runCatching {
+        val url = URL(rawUrl.trim())
+        url.protocol == "https" && (url.host.equals("youtube.com", true) || url.host.endsWith(".youtube.com", true) || url.host.equals("youtu.be", true))
+    }.getOrDefault(false)
+
+    private fun youtubeHost(rawUrl: String): String = runCatching { URL(rawUrl).host }.getOrDefault("invalid")
+
+    private fun logYouTube(event: String, details: String) {
+        Log.i(TAG, "RETR0_YT_$event $details")
+    }
+
+    private fun failYouTube(
+        code: YouTubeErrorCode,
+        stage: String,
+        rawUrl: String,
+        startedAt: Long? = null,
+        error: Throwable? = null,
+    ) {
+        val elapsed = startedAt?.let { " elapsedMs=${System.currentTimeMillis() - it}" }.orEmpty()
+        val errorType = error?.javaClass?.simpleName?.let { " errorType=$it" }.orEmpty()
+        Log.e(TAG, "RETR0_YT_FAILED code=${code.name} stage=$stage host=${youtubeHost(rawUrl)}$elapsed$errorType", error)
+        fail("${code.userMessage} Check your connection or try another video.")
     }
 
     private fun copyRecursiveToPrivileged(localDir: File, privilegedDest: String): Int {
@@ -1565,40 +1944,41 @@ class Retr0Installer(
         val s = service ?: return@withContext emptyList()
         try {
             s.createDirectory(MUSIC_LIBRARY_PATH)
-            val libraryFiles = s.listFiles(MUSIC_LIBRARY_PATH) ?: emptyArray()
-            
-            val mp3Files = libraryFiles.filter { it.endsWith(".mp3", ignoreCase = true) }
+            val mp3Files = (s.listFiles(MUSIC_LIBRARY_PATH) ?: emptyArray())
+                .filter { it.endsWith(".mp3", ignoreCase = true) }
+                .filter { MusicLibrarySidecarCodec.sanitizeBaseName(it) + ".mp3" == it }
 
-            // Fetch metadata in parallel
             coroutineScope {
                 mp3Files.map { fileName ->
                     async {
                         val absolutePath = "$MUSIC_LIBRARY_PATH/$fileName"
                         val baseName = fileName.removeSuffix(".mp3")
-                        val artworkPath = "$MUSIC_LIBRARY_PATH/$baseName.jpg"
-                        
-                        var artworkUrl: String? = if (s.exists(artworkPath)) "file://$artworkPath" else null
-                        
-                        // Always try to fetch professional metadata for the names
-                        val meta = try {
-                            MetadataFetcher.fetchMetadata(baseName)
-                        } catch (_: Exception) { null }
-                        
-                        val trackName = meta?.get("trackName")
-                        val artistName = meta?.get("artistName")
-                        
-                        // Use iTunes art as primary if found, otherwise fallback to local .jpg
-                        if (meta?.get("artworkUrl") != null) {
-                            artworkUrl = meta["artworkUrl"]
+                        val sidecarPath = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.sidecarFileName(baseName)}"
+                        val artworkPath = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.artworkFileName(baseName)}"
+                        val legacyArtworkPath = "$MUSIC_LIBRARY_PATH/$baseName.jpg"
+                        val sidecar = MusicLibrarySidecarCodec.parse(s.readFile(sidecarPath))
+
+                        val fallbackMeta = if (sidecar == null) {
+                            runCatching { MetadataFetcher.fetchMetadata(baseName) }.getOrNull()
+                        } else null
+                        val resolved = MusicLibrarySidecarCodec.resolve(
+                            sidecar,
+                            fallbackMeta?.get("trackName"),
+                            fallbackMeta?.get("artistName"),
+                        )
+                        val localArtwork = when {
+                            s.exists(artworkPath) -> "file://$artworkPath"
+                            s.exists(legacyArtworkPath) -> "file://$legacyArtworkPath"
+                            else -> null
                         }
 
                         LibraryMusic(
                             fileName = fileName,
                             fileSize = s.getFileSize(absolutePath),
                             absolutePath = absolutePath,
-                            trackName = trackName,
-                            artistName = artistName,
-                            artworkUrl = artworkUrl
+                            trackName = resolved?.trackName,
+                            artistName = resolved?.artistName,
+                            artworkUrl = localArtwork ?: fallbackMeta?.get("artworkUrl"),
                         )
                     }
                 }.awaitAll()
@@ -1610,66 +1990,235 @@ class Retr0Installer(
     }
 
     /**
-     * Saves a music file to the permanent local library, including optional metadata/artwork.
+     * Saves a music file and its sidecars with temporary names before publishing them.
      */
     suspend fun saveToLibrary(
-        uri: Uri, 
-        customName: String, 
+        uri: Uri,
+        customName: String,
         thumbUrl: String? = null,
         metadata: MusicMetadata? = null,
+        artworkUri: Uri? = null,
+        artworkUrl: String? = metadata?.artworkUrl ?: thumbUrl,
     ): Boolean = withContext(Dispatchers.IO) {
-        val s = service ?: return@withContext false
+        val startedAt = SystemClock.elapsedRealtime()
+        val baseName = MusicLibrarySidecarCodec.sanitizeBaseName(customName)
+        val nameKey = libraryNameKey(baseName)
+        val uriScheme = uri.scheme?.lowercase(Locale.ROOT) ?: "none"
+        val hasMetadata = metadata != null
+        val hasArtworkRequest = artworkUri != null || !artworkUrl.isNullOrBlank()
+        var stage = "service"
+        var mp3Published = false
+        var sidecarPublished = false
+        var artworkPublished = false
+        var artworkCache: File? = null
+
+        fun event(code: String, result: Boolean, error: Throwable? = null, detail: String? = null) {
+            val message = buildString {
+                append("code=$code stage=$stage result=$result elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+                append(" uriScheme=$uriScheme nameKey=$nameKey nameLength=${baseName.length}")
+                append(" sourceCategory=music sourceExt=mp3 targetCategory=music_library targetExt=${detail ?: "none"}")
+                append(" hasMetadata=$hasMetadata hasArtworkRequest=$hasArtworkRequest")
+                append(" mp3Published=$mp3Published sidecarPublished=$sidecarPublished artworkPublished=$artworkPublished")
+                if (error != null) append(" exception=${error.javaClass.simpleName} message=${safeLibraryExceptionMessage(error)}")
+            }
+            if (result) Log.i(MUSIC_LIBRARY_TAG, message) else Log.e(MUSIC_LIBRARY_TAG, message)
+        }
+
+        fun failure(code: String, detail: String, error: Throwable? = null): Boolean {
+            event(code, false, error, detail)
+            fail("$code Local Music Library save failed at $stage.")
+            return false
+        }
+
+        val s = service ?: return@withContext failure("ML_E001", "service")
+        val mp3Path = "$MUSIC_LIBRARY_PATH/$baseName.mp3"
+        val sidecarPath = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.sidecarFileName(baseName)}"
+        val artworkPath = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.artworkFileName(baseName)}"
+        val token = System.nanoTime().toString()
+        val mp3Temp = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.stagingFileName("$baseName.mp3", token)}"
+        val sidecarTemp = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.stagingFileName(MusicLibrarySidecarCodec.sidecarFileName(baseName), token)}"
+        val artworkTemp = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.stagingFileName(MusicLibrarySidecarCodec.artworkFileName(baseName), token)}"
         try {
             updateProgress(InstallState.PREPARING, "Saving to Library...")
-            s.createDirectory(MUSIC_LIBRARY_PATH)
-            
-            val sanitizedName = customName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val baseFileName = sanitizedName.removeSuffix(".mp3")
-            val fileName = "$baseFileName.mp3"
-            val destPath = "$MUSIC_LIBRARY_PATH/$fileName"
+            stage = "mkdir"
+            if (!s.createDirectory(MUSIC_LIBRARY_PATH)) return@withContext failure("ML_E002", "directory")
 
-            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext false
-            if (s.importFile(pfd, destPath)) {
-                // Determine the best Artwork source
-                val finalArtUrl = metadata?.artworkUrl ?: thumbUrl
-                
-                if (finalArtUrl != null) {
-                    try {
-                        val artFile = File(context.cacheDir, "art_buffer.jpg")
-                        val artUrl = URL(finalArtUrl)
-                        artUrl.openStream().use { input ->
-                            artFile.outputStream().use { output -> input.copyTo(output) }
-                        }
-                        s.copyFile(artFile.absolutePath, "$MUSIC_LIBRARY_PATH/$baseFileName.jpg")
-                        artFile.delete()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to save artwork for $baseFileName", e)
-                    }
+            stage = "source_open"
+            val pfd = try {
+                context.contentResolver.openFileDescriptor(uri, "r")
+            } catch (error: Exception) {
+                return@withContext failure("ML_E003", "mp3", error)
+            } ?: return@withContext failure("ML_E003", "mp3")
+
+            stage = "mp3_stage"
+            if (!s.importFile(pfd, mp3Temp)) return@withContext failure("ML_E004", "mp3")
+
+            if (metadata != null) {
+                stage = "sidecar_serialize"
+                val bytes = try {
+                    MusicLibrarySidecarCodec.serialize(
+                        MusicLibrarySidecar(metadata.trackName, metadata.artistName),
+                    )
+                } catch (error: Exception) {
+                    return@withContext failure("ML_E005", "json", error)
                 }
-
-                updateProgress(InstallState.SUCCESS, "SAVED TO LIBRARY", fileName)
-                return@withContext true
+                stage = "sidecar_write"
+                if (!s.writeFile(sidecarTemp, bytes)) return@withContext failure("ML_E005", "json")
             }
-            false
-        } catch (e: Exception) {
-            fail("Library Save Error: ${e.message}")
-            false
+
+            if (hasArtworkRequest) {
+                stage = "artwork_acquire"
+                artworkCache = try {
+                    acquireLibraryArtwork(artworkUri, artworkUrl)
+                } catch (error: Exception) {
+                    return@withContext failure("ML_E006", "jpg", error)
+                }
+                if (artworkCache == null) return@withContext failure("ML_E006", "jpg")
+                stage = "artwork_stage"
+                if (!s.copyFile(artworkCache.absolutePath, artworkTemp)) return@withContext failure("ML_E006", "jpg")
+            }
+
+            stage = "mp3_publish"
+            if (!s.move(mp3Temp, mp3Path)) return@withContext failure("ML_E007", "mp3")
+            mp3Published = true
+            if (metadata != null) {
+                stage = "sidecar_publish"
+                if (!s.move(sidecarTemp, sidecarPath)) {
+                    s.delete(mp3Path)
+                    mp3Published = false
+                    return@withContext failure("ML_E008", "json")
+                }
+                sidecarPublished = true
+            }
+            if (artworkCache != null) {
+                stage = "artwork_publish"
+                if (!s.move(artworkTemp, artworkPath)) {
+                    s.delete(mp3Path)
+                    s.delete(sidecarPath)
+                    mp3Published = false
+                    sidecarPublished = false
+                    return@withContext failure("ML_E009", "jpg")
+                }
+                artworkPublished = true
+            } else {
+                stage = "stale_artwork_cleanup"
+                if (!s.delete(artworkPath)) event("ML_E010", false, detail = "jpg")
+            }
+            stage = "complete"
+            event("ML_OK", true, detail = "mp3")
+            updateProgress(InstallState.SUCCESS, "SAVED TO LIBRARY", "$baseName.mp3")
+            true
+        } catch (error: Exception) {
+            failure("ML_E011", "unknown", error)
+        } finally {
+            stage = "cleanup"
+            listOf(mp3Temp to "mp3", sidecarTemp to "json", artworkTemp to "jpg").forEach { (path, extension) ->
+                try {
+                    if (!s.delete(path)) event("ML_E010", false, detail = extension)
+                } catch (error: Exception) {
+                    event("ML_E010", false, error, extension)
+                }
+            }
+            artworkCache?.let { cache ->
+                if (cache.exists() && !cache.delete()) event("ML_E010", false, detail = "jpg_cache")
+            }
         }
     }
 
+    private fun libraryNameKey(baseName: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(baseName.toByteArray(Charsets.UTF_8))
+        return digest.take(6).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun safeLibraryExceptionMessage(error: Throwable): String = error.message
+        ?.takeIf { message ->
+            message.length <= 120 &&
+                !message.contains('/') &&
+                !message.contains('\\') &&
+                !message.contains("content:", ignoreCase = true) &&
+                message.all { character -> character.code in 32..126 }
+        }
+        ?: "REDACTED_OR_EMPTY"
+
+    private fun acquireLibraryArtwork(artworkUri: Uri?, artworkUrl: String?): File? {
+        if (artworkUri == null && artworkUrl.isNullOrBlank()) return null
+        val output = File.createTempFile("library_artwork_", ".jpg", context.cacheDir)
+        return try {
+            val localError = artworkUri?.let { uri ->
+                try {
+                    openLibraryArtworkUri(uri).use { source ->
+                        output.outputStream().use(source::copyTo)
+                    }
+                    null
+                } catch (error: Exception) {
+                    error
+                }
+            }
+
+            if (artworkUri == null || localError != null) {
+                val remoteUrl = artworkUrl?.takeIf { it.isNotBlank() }
+                    ?: throw localError ?: IOException("Artwork source could not be opened")
+                try {
+                    openRemoteLibraryArtwork(remoteUrl).use { source ->
+                        output.outputStream().use(source::copyTo)
+                    }
+                } catch (remoteError: Exception) {
+                    localError?.let(remoteError::addSuppressed)
+                    throw remoteError
+                }
+            }
+
+            output.takeIf { it.length() > 0L } ?: error("Artwork was empty")
+        } catch (error: Exception) {
+            output.delete()
+            throw error
+        }
+    }
+
+    private fun openLibraryArtworkUri(uri: Uri) = when (
+        LibraryArtworkSourcePolicy.candidates(URI(uri.toString()), null).firstOrNull()
+    ) {
+        LibraryArtworkSource.CONTENT -> context.contentResolver.openInputStream(uri)
+            ?: throw IOException("Selected artwork could not be opened")
+        LibraryArtworkSource.FILE -> {
+            val path = uri.path ?: throw IOException("Selected artwork path was invalid")
+            val file = try {
+                File(path).canonicalFile
+            } catch (_: IOException) {
+                throw IOException("Selected artwork path was invalid")
+            }
+            require(file.isAbsolute && file.exists() && file.isFile && file.canRead()) {
+                "Selected artwork file was not readable"
+            }
+            file.inputStream()
+        }
+        else -> throw IOException("Unsupported artwork URI scheme")
+    }
+
+    private fun openRemoteLibraryArtwork(artworkUrl: String) = URL(artworkUrl).let { url ->
+        require(
+            LibraryArtworkSourcePolicy.candidates(null, artworkUrl) ==
+                listOf(LibraryArtworkSource.REMOTE_HTTPS)
+        ) { "Artwork URL must use HTTPS" }
+        url.openConnection().apply {
+            connectTimeout = 10_000
+            readTimeout = 20_000
+        }.getInputStream()
+    }
+
     /**
-     * Deletes a track from the local music library.
+     * Deletes a track and all local sidecars from the music library.
      */
     suspend fun deleteLibraryMusic(fileName: String): Boolean = withContext(Dispatchers.IO) {
         val s = service ?: return@withContext false
+        val safeBase = MusicLibrarySidecarCodec.sanitizeBaseName(fileName)
+        if ("$safeBase.mp3" != fileName) return@withContext false
         try {
-            val path = "$MUSIC_LIBRARY_PATH/$fileName"
-            if (s.delete(path)) {
-                Log.i(TAG, "Deleted from library: $fileName")
-                true
-            } else {
-                false
-            }
+            val deleted = s.delete("$MUSIC_LIBRARY_PATH/$fileName")
+            s.delete("$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.sidecarFileName(safeBase)}")
+            s.delete("$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.artworkFileName(safeBase)}")
+            s.delete("$MUSIC_LIBRARY_PATH/$safeBase.jpg")
+            deleted
         } catch (e: Exception) {
             Log.e(TAG, "Delete from library failed", e)
             false

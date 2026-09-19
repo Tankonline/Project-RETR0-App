@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -136,7 +137,7 @@ class MainActivity : ComponentActivity() {
     private var installationId by mutableStateOf("Loading...")
     private var showResetIdentityDialog by mutableStateOf(false)
     private val identity by lazy { SkinInstallationIdentity(this) }
-    private var customPfpFile by mutableStateOf<File?>(null)
+    private var customPfp by mutableStateOf<SkinPFPStore.LocalAvatar?>(null)
     private var showPfpEditor by mutableStateOf(false)
 
     private var isCommunityLoading by mutableStateOf(false)
@@ -149,6 +150,9 @@ class MainActivity : ComponentActivity() {
     // Save Upload State
     private var showSaveUploadDialog by mutableStateOf(false)
     private var profileToUpload by mutableStateOf<SaveProfile?>(null)
+    private var profileToRename by mutableStateOf<SaveProfile?>(null)
+    private var renameProfileName by mutableStateOf("")
+    private var renameProfileError by mutableStateOf<String?>(null)
 
     // Music Import Workflow State
     private var showMusicImportDialog by mutableStateOf(false)
@@ -160,6 +164,8 @@ class MainActivity : ComponentActivity() {
     private var musicImportResults by mutableStateOf<List<MusicMetadata>>(emptyList())
     private var isMusicSearching by mutableStateOf(false)
     private var selectedMetadata by mutableStateOf<MusicMetadata?>(null)
+    private var youtubeCookiesConfigured by mutableStateOf(false)
+    private val youtubeCookieStore by lazy { YouTubeCookieStore(this) }
 
     // Slot Swapping State
     private var showLibraryPickerForSlot by mutableStateOf<String?>(null) // game slot being swapped
@@ -281,7 +287,7 @@ class MainActivity : ComponentActivity() {
                 updateShizukuStatus()
                 updateStorageStatus()
                 installationId = identity.installationId
-                customPfpFile = SkinPFPStore.currentFile(this@MainActivity, installationId)
+                customPfp = SkinPFPStore.current(this@MainActivity, installationId)
 
                 val prefs = getSharedPreferences("retr0_prefs", MODE_PRIVATE)
                 isSmartBackupEnabled = prefs.getBoolean("smart_backup", false)
@@ -448,6 +454,10 @@ class MainActivity : ComponentActivity() {
             SaveUploadDialog()
         }
 
+        if (profileToRename != null) {
+            RenameSaveDialog()
+        }
+
         if (showLibraryPickerForSlot != null) {
             LibraryPickerForSlotDialog(showLibraryPickerForSlot!!)
         }
@@ -472,11 +482,21 @@ class MainActivity : ComponentActivity() {
         if (showPfpEditor) {
             PFPEditorFlow(
                 onDismiss = { showPfpEditor = false },
-                onSaved = { file ->
-                    customPfpFile = file
+                onSaved = { localAvatar ->
+                    customPfp = localAvatar
                     showPfpEditor = false
                     Toast.makeText(this@MainActivity, "Profile picture updated", Toast.LENGTH_SHORT).show()
-                },
+                    lifecycleScope.launch {
+                        val uploaded = withContext(Dispatchers.IO) {
+                            SaveApiClient(this@MainActivity).uploadAvatar(localAvatar.file)
+                        }
+                        if (uploaded) {
+                            refreshCommunityHub()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Saved locally; Community Hub sync failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             )
         }
 
@@ -942,17 +962,16 @@ class MainActivity : ComponentActivity() {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionHeader("Diagnostics", Icons.Filled.Troubleshoot)
                 val diags = listOf(
-                    "Directory access" to { runRemoteCall { it.testRR3Access() } }, 
+                    "Directory access" to { runRemoteCall { it.testRR3Access() } },
                     "Write access (legacy)" to { runRemoteCall { it.testRR3Write() } },
-                    "Generate logs" to { generateLogs() }
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     diags.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                             row.forEach { (label, action) -> SecondaryButton(label, modifier = Modifier.weight(1f)) { action() } }
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
+                    SecondaryButton("Generate logs", modifier = Modifier.fillMaxWidth()) { generateLogs() }
                     SecondaryButton("Show device ID", modifier = Modifier.fillMaxWidth()) { 
                         @Suppress("HardwareIds")
                         val id = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
@@ -967,7 +986,7 @@ class MainActivity : ComponentActivity() {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box {
-                            SkinAvatar(creatorId = installationId.takeIf { it != "Loading..." }, name = "Me", size = 32.dp, localFile = customPfpFile)
+                            SkinAvatar(avatarUrl = null, name = "Me", size = 32.dp, localFile = customPfp?.file, localAvatarRevision = customPfp?.revision)
                             Box(
                                 Modifier
                                     .align(Alignment.BottomEnd)
@@ -1194,9 +1213,19 @@ class MainActivity : ComponentActivity() {
                             save = save,
                             onGet = { startBackgroundInstall("DOWNLOAD_COMMUNITY", saveId = save.id, customName = save.customName) },
                             onFav = {
-                                lifecycleScope.launch(Dispatchers.IO) {
-                                    if (SaveApiClient(this@MainActivity).setLike(save.id, !save.likedByMe)) {
-                                        withContext(Dispatchers.Main) { refreshCommunityHub() }
+                                val liked = !save.likedByMe
+                                communitySaves = communitySaves.map {
+                                    if (it.id == save.id) it.copy(likedByMe = liked, likes = (it.likes + if (liked) 1 else -1).coerceAtLeast(0)) else it
+                                }
+                                lifecycleScope.launch {
+                                    val success = withContext(Dispatchers.IO) {
+                                        SaveApiClient(this@MainActivity).setLike(save.id, liked)
+                                    }
+                                    if (!success) {
+                                        communitySaves = communitySaves.map {
+                                            if (it.id == save.id) it.copy(likedByMe = !liked, likes = (it.likes + if (liked) -1 else 1).coerceAtLeast(0)) else it
+                                        }
+                                        Toast.makeText(this@MainActivity, "Unable to update like", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             },
@@ -1289,9 +1318,11 @@ class MainActivity : ComponentActivity() {
     fun SaveCard(save: CommunitySave, onGet: () -> Unit, onFav: () -> Unit, onDelete: (() -> Unit)? = null, onShare: () -> Unit = {}) {
         RetroCard {
             Row(verticalAlignment = Alignment.Top) {
-                Box(Modifier.size(38.dp).background(RetroAccentTint, RoundedCornerShape(11.dp)), Alignment.Center) {
-                    Icon(Icons.Filled.Person, null, tint = RetroAccent)
-                }
+                SkinAvatar(
+                    avatarUrl = save.uploaderAvatarUrl,
+                    name = save.uploaderName,
+                    size = 38.dp,
+                )
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1303,12 +1334,35 @@ class MainActivity : ComponentActivity() {
                     }
                     Text("by ${save.uploaderName} · ${StorageUtils.formatSize(save.fileSize)}", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
                 }
-                IconButton(onClick = onShare) { Icon(Icons.Filled.Share, null, tint = RetroAccent) }
-                if (save.isOwner && onDelete != null) {
-                    IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, null, tint = RetroDanger) }
-                } else {
-                    Icon(if (save.likedByMe) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, null,
-                        tint = if (save.likedByMe) RetroDanger else RetroTextMuted, modifier = Modifier.clickable(onClick = onFav))
+                Row(
+                    modifier = Modifier.wrapContentWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = onShare,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(Icons.Filled.Share, contentDescription = "Share save", tint = RetroAccent)
+                    }
+                    if (save.isOwner && onDelete != null) {
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete save", tint = RetroDanger)
+                        }
+                    }
+                    IconButton(
+                        onClick = onFav,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            if (save.likedByMe) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = if (save.likedByMe) "Unlike save" else "Like save",
+                            tint = if (save.likedByMe) RetroDanger else RetroTextMuted,
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -1377,13 +1431,17 @@ class MainActivity : ComponentActivity() {
                             BadgePill("Mine", Icons.Filled.Person, RetroAccent)
                         }
                     }
-                    Text(
-                        music.uploaderName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = RetroTextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SkinAvatar(avatarUrl = music.uploaderAvatarUrl, name = music.uploaderName, size = 20.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            music.uploaderName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = RetroTextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
                         "Replaces: ${music.targetTrack}",
                         style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
@@ -1654,11 +1712,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onRename = {
-                                    // Show rename dialog (logic omitted for brevity but function is now "used")
-                                    lifecycleScope.launch {
-                                        val currentService = service ?: return@launch
-                                        Retr0Installer(this@MainActivity, currentService).renameProfile(profile, profile.name + "_renamed")
-                                        refreshSaveHub()
+                                    if (isUiIdle) {
+                                        profileToRename = profile
+                                        renameProfileName = profile.name
+                                        renameProfileError = null
                                     }
                                 }, 
                                 onDelete = { if (isUiIdle) lifecycleScope.launch { val currentService = service ?: return@launch; Retr0Installer(this@MainActivity, currentService).deleteProfile(profile); refreshSaveHub() } }
@@ -1673,6 +1730,68 @@ class MainActivity : ComponentActivity() {
                         if (isUiIdle) startBackgroundInstall("BACKUP", profileName = "Snapshot ${saveProfiles.size + 1}") 
                     }
                     SecondaryButton("Update snapshot", modifier = Modifier.weight(1f)) { /* update */ }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun RenameSaveDialog() {
+        val profile = profileToRename ?: return
+        Dialog(onDismissRequest = {
+            profileToRename = null
+            renameProfileError = null
+        }) {
+            RetroCard(Modifier.fillMaxWidth().wrapContentHeight()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(R.string.save_rename_title), style = MaterialTheme.typography.titleMedium, color = RetroText)
+                    Text(stringResource(R.string.save_rename_description), color = RetroTextMuted)
+                    OutlinedTextField(
+                        value = renameProfileName,
+                        onValueChange = {
+                            renameProfileName = it
+                            renameProfileError = null
+                        },
+                        label = { Text(stringResource(R.string.save_rename_name)) },
+                        singleLine = true,
+                        isError = renameProfileError != null,
+                        supportingText = renameProfileError?.let { error -> { Text(error) } },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {
+                            profileToRename = null
+                            renameProfileError = null
+                        }) {
+                            Text(stringResource(R.string.save_rename_cancel), color = RetroTextMuted)
+                        }
+                        TextButton(onClick = {
+                            val requestedName = renameProfileName.trim().removeSuffix(".dat").trim()
+                            if (requestedName.isBlank() || requestedName == "." || requestedName == "..") {
+                                renameProfileError = getString(R.string.save_rename_blank)
+                            } else if (requestedName.any { it.isISOControl() || it in "<>:\"/\\|?*" } || requestedName.contains("..") || requestedName.endsWith('.') || requestedName.endsWith(' ')) {
+                                renameProfileError = getString(R.string.save_rename_invalid)
+                            } else {
+                                lifecycleScope.launch {
+                                    val currentService = service
+                                    if (currentService == null) {
+                                        renameProfileError = getString(R.string.save_rename_disconnected)
+                                        return@launch
+                                    }
+                                    val renamed = Retr0Installer(this@MainActivity, currentService).renameProfile(profile, requestedName)
+                                    if (renamed) {
+                                        profileToRename = null
+                                        renameProfileError = null
+                                        refreshSaveHub()
+                                    } else {
+                                        renameProfileError = getString(R.string.save_rename_unavailable)
+                                    }
+                                }
+                            }
+                        }) {
+                            Text(stringResource(R.string.save_rename_action), color = RetroAccent)
+                        }
+                    }
                 }
             }
         }
@@ -1922,6 +2041,7 @@ class MainActivity : ComponentActivity() {
         shareHub: Boolean = false,
         artworkUrl: String? = null,
         artworkUri: Uri? = null,
+        artistName: String? = null,
     ) {
         if (actionType == "RESET_PROGRESS") {
             val intent = Intent(this, Retr0InstallService::class.java).apply { action = "RESET_PROGRESS" }
@@ -1947,6 +2067,7 @@ class MainActivity : ComponentActivity() {
                 putExtra("YOUTUBE_URL", youtubeUrl)
                 putExtra("ARTWORK_URL", artworkUrl)
                 putExtra("ARTWORK_URI", artworkUri?.toString())
+                putExtra("ARTIST_NAME", artistName)
                 putExtra("SHARE_HUB", shareHub)
                 
                 manualLevel?.toIntOrNull()?.let { putExtra("MANUAL_LEVEL", it) }
@@ -2447,12 +2568,50 @@ class MainActivity : ComponentActivity() {
         var uploaderName by remember { mutableStateOf("Retr0") }
         var shareOnHub by remember { mutableStateOf(false) }
         var targetTrackSlot by remember { mutableStateOf("Garage_Music.mp3") }
-        var currentStep by remember { mutableIntStateOf(0) } // 0: Search, 1: Selection, 2: Confirmation
+        var currentStep by remember { mutableIntStateOf(0) } // 0: Search, 1: Selection, 2: Confirmation, 3: Manual metadata
+        var manualTrackName by remember { mutableStateOf("") }
+        var manualArtistName by remember { mutableStateOf("") }
+        var noMatchesFound by remember { mutableStateOf(false) }
+        var isManualMetadata by remember { mutableStateOf(false) }
+
+        fun enterManualMetadata() {
+            selectedMetadata = null
+            musicImportArtworkUri = null
+            manualTrackName = musicImportSearchQuery.trim()
+            manualArtistName = ""
+            noMatchesFound = false
+            isManualMetadata = true
+            currentStep = 3
+        }
+
+        fun closeDialog() {
+            musicImportArtworkUri = null
+            musicImportSearchQuery = ""
+            musicImportResults = emptyList()
+            selectedMetadata = null
+            isMusicSearching = false
+            showMusicImportDialog = false
+        }
+
         val artworkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             musicImportArtworkUri = uri
         }
+        val cookiesPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri ?: return@rememberLauncherForActivityResult
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                        youtubeCookieStore.saveNetscapeCookies(reader.readText())
+                    } ?: error("Unable to open cookies file")
+                }.onSuccess {
+                    withContext(Dispatchers.Main) { youtubeCookiesConfigured = true }
+                }.onFailure {
+                    withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Invalid cookies file.", Toast.LENGTH_SHORT).show() }
+                }
+            }
+        }
 
-        Dialog(onDismissRequest = { showMusicImportDialog = false }) {
+        Dialog(onDismissRequest = { closeDialog() }) {
             RetroCard(
                 Modifier
                     .fillMaxWidth()
@@ -2470,13 +2629,16 @@ class MainActivity : ComponentActivity() {
                         style = MaterialTheme.typography.titleLarge,
                         color = RetroText
                     )
-                    
+
                     when (currentStep) {
                         0 -> {
                             Text("What is this song called?", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
                             RetroSearchField(
                                 value = musicImportSearchQuery,
-                                onValueChange = { musicImportSearchQuery = it },
+                                onValueChange = {
+                                    musicImportSearchQuery = it
+                                    noMatchesFound = false
+                                },
                                 placeholder = "Enter song name…",
                                 icon = Icons.Filled.MusicNote
                             )
@@ -2486,13 +2648,15 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 if (!isMusicSearching && musicImportSearchQuery.isNotBlank()) {
                                     isMusicSearching = true
+                                    noMatchesFound = false
                                     lifecycleScope.launch {
                                         try {
                                             musicImportResults = MetadataFetcher.searchMetadata(musicImportSearchQuery)
                                             if (musicImportResults.isNotEmpty()) {
+                                                selectedMetadata = null
                                                 currentStep = 1
                                             } else {
-                                                Toast.makeText(this@MainActivity, "No matches found. Try a different name.", Toast.LENGTH_SHORT).show()
+                                                noMatchesFound = true
                                             }
                                         } catch (e: Exception) {
                                             Toast.makeText(this@MainActivity, "Search failed: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -2501,6 +2665,12 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 }
+                            }
+                            if (noMatchesFound) {
+                                Text("No matches found. Try another name or enter the details manually.", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                            }
+                            TextButton(onClick = { enterManualMetadata() }) {
+                                Text(if (noMatchesFound) "Enter details manually" else "Can’t find your song? Enter details manually")
                             }
                         }
                         1 -> {
@@ -2535,15 +2705,57 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                            TextButton(onClick = { enterManualMetadata() }) { Text("None of these? Enter details manually") }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlineButton("Search Again", Modifier.weight(1f)) { currentStep = 0 }
+                                OutlineButton("Search Again", Modifier.weight(1f)) {
+                                    selectedMetadata = null
+                                    currentStep = 0
+                                }
                                 PrimaryButton("Confirm Match", Modifier.weight(1f)) {
-                                    if (selectedMetadata != null) currentStep = 2
+                                    if (selectedMetadata != null) {
+                                        isManualMetadata = false
+                                        currentStep = 2
+                                    }
+                                }
+                            }
+                        }
+                        3 -> {
+                            Text("Enter song details", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
+                            RetroSearchField(value = manualTrackName, onValueChange = { manualTrackName = it }, placeholder = "Track name (required)…", icon = Icons.Filled.MusicNote)
+                            if (manualTrackName.isBlank()) {
+                                Text("Track name is required.", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                            }
+                            RetroSearchField(value = manualArtistName, onValueChange = { manualArtistName = it }, placeholder = "Artist (required)…", icon = Icons.Filled.Person)
+                            if (manualArtistName.isBlank()) {
+                                Text("Artist is required.", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                            }
+                            Text("Custom artwork (required)", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                            OutlineButton(if (musicImportArtworkUri == null) "Choose image" else "Replace image") { artworkPicker.launch("image/*") }
+                            Text(
+                                if (musicImportArtworkUri == null) "Select local artwork to continue." else "Using selected local artwork.",
+                                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                                color = RetroTextMuted,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlineButton("Back to Search", Modifier.weight(1f)) {
+                                    musicImportArtworkUri = null
+                                    isManualMetadata = false
+                                    currentStep = 0
+                                }
+                                PrimaryButton("Continue", Modifier.weight(1f)) {
+                                    if (manualTrackName.isNotBlank() && manualArtistName.isNotBlank() && musicImportArtworkUri != null) {
+                                        selectedMetadata = MusicMetadata(
+                                            trackName = manualTrackName.trim(),
+                                            artistName = manualArtistName.trim(),
+                                            artworkUrl = null,
+                                        )
+                                        currentStep = 2
+                                    }
                                 }
                             }
                         }
                         2 -> {
-                            val meta = selectedMetadata!!
+                            val meta = selectedMetadata ?: return@Column
                             val selectedArtwork = musicImportArtworkUri ?: meta.artworkUrl
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 AsyncImage(
@@ -2561,15 +2773,30 @@ class MainActivity : ComponentActivity() {
 
                             HorizontalDivider(color = RetroBorder)
 
+                            if (currentMusicImportType == "YOUTUBE") {
+                                Text("YouTube authentication fallback", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                                Text("Anonymous attempts are always tried first. Cookies stay encrypted on this device and are never uploaded.", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlineButton("${if (youtubeCookiesConfigured) "Replace" else "Import"} cookies", Modifier.weight(1f)) { cookiesPicker.launch(arrayOf("text/*", "application/octet-stream")) }
+                                    if (youtubeCookiesConfigured) {
+                                        TextButton(onClick = { youtubeCookieStore.remove(); youtubeCookiesConfigured = false }) { Text("Remove") }
+                                    }
+                                }
+                            }
+
                             Text("Artwork", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlineButton("Choose image", Modifier.weight(1f)) { artworkPicker.launch("image/*") }
-                                if (musicImportArtworkUri != null) {
-                                    TextButton(onClick = { musicImportArtworkUri = null }) { Text("Use YouTube") }
+                                if (!isManualMetadata && musicImportArtworkUri != null) {
+                                    TextButton(onClick = { musicImportArtworkUri = null }) { Text("Use matched") }
                                 }
                             }
                             Text(
-                                if (musicImportArtworkUri != null) "Using selected local artwork." else "Using the matched YouTube artwork when available.",
+                                when {
+                                    musicImportArtworkUri != null -> "Using selected local artwork."
+                                    isManualMetadata -> "Custom artwork is required."
+                                    else -> "Using the matched artwork when available."
+                                },
                                 style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
                                 color = RetroTextMuted,
                             )
@@ -2582,7 +2809,7 @@ class MainActivity : ComponentActivity() {
                             if (shareOnHub) {
                                 RetroSearchField(value = uploaderName, onValueChange = { uploaderName = it }, placeholder = "Your name…", icon = Icons.Filled.Person)
                             }
-                            
+
                             Text("Target game track slot:", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
                             val coreSlots = listOf(
                                 "Menu_Music.mp3" to "Main Menu",
@@ -2599,42 +2826,31 @@ class MainActivity : ComponentActivity() {
                                 "Ryan_Kurt_Connected.mp3" to "Connected",
                                 "Ryan_Kurt_Red_Green.mp3" to "Red Green"
                             )
-                            
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("CORE", style = MaterialTheme.typography.labelSmall, color = RetroAccent, modifier = Modifier.padding(top = 4.dp))
                                 coreSlots.chunked(2).forEach { row ->
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         row.forEach { (file, title) ->
-                                            RetroChip(
-                                                text = title,
-                                                selected = targetTrackSlot == file,
-                                                modifier = Modifier.weight(1f),
-                                                onClick = { targetTrackSlot = file }
-                                            )
+                                            RetroChip(text = title, selected = targetTrackSlot == file, modifier = Modifier.weight(1f), onClick = { targetTrackSlot = file })
                                         }
                                         if (row.size == 1) Spacer(Modifier.weight(1f))
                                     }
                                 }
-                                
+
                                 Text("EXTENDED", style = MaterialTheme.typography.labelSmall, color = RetroAccent, modifier = Modifier.padding(top = 8.dp))
                                 extendedSlots.chunked(2).forEach { row ->
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         row.forEach { (file, title) ->
-                                            RetroChip(
-                                                text = title,
-                                                selected = targetTrackSlot == file,
-                                                modifier = Modifier.weight(1f),
-                                                onClick = { targetTrackSlot = file }
-                                            )
+                                            RetroChip(text = title, selected = targetTrackSlot == file, modifier = Modifier.weight(1f), onClick = { targetTrackSlot = file })
                                         }
                                         if (row.size == 1) Spacer(Modifier.weight(1f))
                                     }
                                 }
                             }
-                            
+
                             PrimaryButton("Apply Profile & Process") {
+                                if (isManualMetadata && musicImportArtworkUri == null) return@PrimaryButton
                                 if (currentMusicImportType == "YOUTUBE") {
                                     startBackgroundInstall(
                                         "YOUTUBE_TO_LIBRARY",
@@ -2644,7 +2860,8 @@ class MainActivity : ComponentActivity() {
                                         targetTrack = targetTrackSlot,
                                         shareHub = shareOnHub,
                                         artworkUrl = meta.artworkUrl,
-                                        artworkUri = musicImportArtworkUri
+                                        artworkUri = musicImportArtworkUri,
+                                        artistName = meta.artistName,
                                     )
                                 } else {
                                     startBackgroundInstall(
@@ -2652,14 +2869,14 @@ class MainActivity : ComponentActivity() {
                                         uri = musicImportLocalUri,
                                         customName = meta.trackName,
                                         uploaderName = uploaderName,
-                                        trackFileName = targetTrackSlot, // This is the 'target' in the game
-                                        targetTrack = targetTrackSlot,   // Duplicated for the shared uploader logic
+                                        trackFileName = targetTrackSlot,
+                                        targetTrack = targetTrackSlot,
                                         shareHub = shareOnHub,
                                         artworkUrl = meta.artworkUrl,
                                         artworkUri = musicImportArtworkUri
                                     )
                                 }
-                                showMusicImportDialog = false
+                                closeDialog()
                             }
                         }
                     }
@@ -2831,7 +3048,7 @@ class MainActivity : ComponentActivity() {
                                         identity.resetIdentity()
                                         installationId = identity.installationId
                                         SkinPFPStore.clear(this@MainActivity, oldInstallationId)
-                                        customPfpFile = null
+                                        customPfp = null
                                         showResetIdentityDialog = false
                                         Toast.makeText(this@MainActivity, "Identity Reset", Toast.LENGTH_SHORT).show()
                                         refreshCommunityHub()

@@ -94,6 +94,8 @@ class SaveApiClient(
                         isOwner = item.optBoolean("is_owner", false),
                         likedByMe = item.optBoolean("liked_by_me", false),
                         shareUrl = item.optString("shareUrl").takeIf { it.isNotBlank() },
+                        uploaderAvatarUrl = item.optString("uploader_avatar_url")
+                            .takeIf(::isSafeRemoteAvatarUrl),
                     )
                 )
             }
@@ -142,6 +144,47 @@ class SaveApiClient(
         }
     }
 
+    suspend fun uploadAvatar(file: File): Boolean = withContext(Dispatchers.IO) {
+        require(file.isFile && file.length() > 0) { "Avatar file is empty or missing" }
+        require(file.length() <= MAX_AVATAR_BYTES) { "Avatar image exceeds 200 KiB" }
+        val url = v1("installations", "avatar")
+        val hash = fileSha256(file)
+        val contentType = when (file.extension.lowercase()) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "webp" -> "image/webp"
+            else -> return@withContext false
+        }
+        try {
+            JSONObject(executeSigned("PUT", url, ExactSaveFileRequestBody(file, contentType.toMediaType()), hash))
+                .optBoolean("success", false)
+        } catch (error: SkinApiException) {
+            if (error.errorCode != "unknown_installation") {
+                Log.e("SaveApiClient", "Avatar upload failed", error)
+                false
+            } else {
+                runCatching {
+                    registerInstallation()
+                    JSONObject(executeSigned("PUT", url, ExactSaveFileRequestBody(file, contentType.toMediaType()), hash))
+                        .optBoolean("success", false)
+                }.onFailure { Log.e("SaveApiClient", "Avatar upload retry failed", it) }.getOrDefault(false)
+            }
+        } catch (error: Exception) {
+            Log.e("SaveApiClient", "Avatar upload failed", error)
+            false
+        }
+    }
+
+    suspend fun deleteAvatar(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            JSONObject(executeSigned("DELETE", v1("installations", "avatar"), EMPTY_BODY, SkinRequestCanonicalizer.sha256(ByteArray(0))))
+                .optBoolean("success", false)
+        } catch (e: Exception) {
+            Log.e("SaveApiClient", "Avatar deletion failed", e)
+            false
+        }
+    }
+
     private fun registerInstallation() = registerInstallationIfNeeded()
 
     private fun executeUpload(url: HttpUrl, file: File, hash: String): SaveUploadResponse {
@@ -164,7 +207,19 @@ class SaveApiClient(
             .header("X-Signature", signed.signature)
             .build()
         try {
+            val startedAt = System.currentTimeMillis()
             client.newCall(request).execute().use { response ->
+                Log.i(
+                    AUTH_DIAGNOSTIC_TAG,
+                    "SIGNED_REQUEST method=$method path=${url.encodedPath} status=${response.code} " +
+                        "requestId=${response.header("X-Request-ID") ?: "ABSENT"} " +
+                        "contentType=${response.header("Content-Type") ?: "ABSENT"} " +
+                        "elapsedMs=${System.currentTimeMillis() - startedAt} " +
+                        "installationIdPresent=${request.header("X-Installation-ID") != null} " +
+                        "timestampPresent=${request.header("X-Timestamp") != null} " +
+                        "noncePresent=${request.header("X-Nonce") != null} " +
+                        "signaturePresent=${request.header("X-Signature") != null}",
+                )
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     val error = SkinApiParser.parseError(text)
@@ -182,8 +237,17 @@ class SaveApiClient(
     private fun savesCollectionUrl(): HttpUrl = baseUrl.toHttpUrl().newBuilder().addPathSegments("v1/saves").build()
     private fun v1(vararg segments: String): HttpUrl = baseUrl.toHttpUrl().newBuilder().addPathSegment("v1").apply { segments.forEach(::addPathSegment) }.build()
 
-    private companion object {
+    companion object {
+        private const val AUTH_DIAGNOSTIC_TAG = "RETR0_AUTH_DIAG"
+
+        fun isSafeRemoteAvatarUrl(value: String): Boolean = runCatching {
+            val remote = value.toHttpUrl()
+            val community = BuildConfig.COMMUNITY_API_BASE_URL.toHttpUrl()
+            remote.scheme == "https" && remote.host == community.host && remote.port == community.port
+        }.getOrDefault(false)
+
         const val MAX_SAVE_BYTES = 25L * 1024 * 1024
+        const val MAX_AVATAR_BYTES = 200L * 1024
         val JSON = "application/json; charset=utf-8".toMediaType()
         val EMPTY_BODY = ByteArray(0).toRequestBody(null)
     }
@@ -191,8 +255,8 @@ class SaveApiClient(
 
 data class SaveUploadResponse(val id: String, val size: Long, val sha256: String, val requestId: String?)
 
-private class ExactSaveFileRequestBody(private val file: File) : RequestBody() {
-    override fun contentType(): MediaType = "application/octet-stream".toMediaType()
+private class ExactSaveFileRequestBody(private val file: File, private val mediaType: MediaType = "application/octet-stream".toMediaType()) : RequestBody() {
+    override fun contentType(): MediaType = mediaType
     override fun contentLength(): Long = file.length()
     override fun writeTo(sink: BufferedSink) = FileInputStream(file).use { input ->
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)

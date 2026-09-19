@@ -48,7 +48,7 @@ import com.example.projectretr0installer.ui.theme.RetroCover
 import com.example.projectretr0installer.ui.theme.RetroDanger
 import com.example.projectretr0installer.ui.theme.RetroTextMuted
 import kotlinx.coroutines.launch
-import java.io.File
+import com.example.projectretr0installer.data.skins.SkinPFPStore.LocalAvatar
 import kotlin.math.roundToInt
 
 private const val PFP_EDITOR_LOG_TAG = "SkinPFPEditor"
@@ -63,7 +63,7 @@ private const val PFP_CROP_LOG_TAG = "SkinImageCrop"
  * editor open -- it tears itself down via [onDismiss] or [onSaved] once the flow completes.
  */
 @Composable
-fun PFPEditorFlow(onDismiss: () -> Unit, onSaved: (File) -> Unit) {
+fun PFPEditorFlow(onDismiss: () -> Unit, onSaved: (LocalAvatar) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cache = remember(context) { SkinImportCache(context, sessionId = "pfp-edit") }

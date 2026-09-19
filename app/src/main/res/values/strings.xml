@@ -78,6 +78,15 @@
     <string name="btn_restore_graphics">RESTORE ORIGINAL GRAPHICS</string>
     <string name="btn_experimental_graphics">OTHER GRAPHICS OPTIONS (EXPERIMENTAL)</string>
     <string name="btn_backup">BACKUP CHARACTER DATA</string>
+    <string name="save_rename_title">Rename save</string>
+    <string name="save_rename_description">Choose the complete save name. The .dat extension is added automatically.</string>
+    <string name="save_rename_name">Save name</string>
+    <string name="save_rename_cancel">Cancel</string>
+    <string name="save_rename_action">Rename</string>
+    <string name="save_rename_invalid">Name contains invalid characters.</string>
+    <string name="save_rename_blank">Enter a valid save name.</string>
+    <string name="save_rename_unavailable">That name may already be in use.</string>
+    <string name="save_rename_disconnected">Service is not connected.</string>
     <string name="btn_update_snapshot">UPDATE EXISTING SNAPSHOT</string>
     <string name="btn_start_shizuku">START SHIZUKU</string>
     <string name="btn_request_shizuku">REQUEST SHIZUKU PERMISSION</string>
@@ -132,6 +141,12 @@
     <string name="label_rs">R$ Currency</string>
     <string name="label_ms">M$ Currency</string>
     <string name="label_youtube_placeholder">Paste YouTube URL here…</string>
+    <string name="youtube_auth_fallback_title">YouTube authentication fallback</string>
+    <string name="youtube_auth_fallback_description">Anonymous attempts always run first. Cookies stay encrypted on this device and are never uploaded.</string>
+    <string name="youtube_cookies_import">Import cookies</string>
+    <string name="youtube_cookies_replace">Replace cookies</string>
+    <string name="youtube_cookies_remove">Remove</string>
+    <string name="youtube_cookies_invalid">Invalid cookies file.</string>
 
     <!-- Graphics Tiers -->
     <string name="tier_low">Low</string>

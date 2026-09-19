@@ -86,6 +86,8 @@ data class CommunitySave(
     val isOwner: Boolean = false,
     val likedByMe: Boolean = false,
     val shareUrl: String? = null,
+    /** Public uploader avatar URL returned by the Community Hub, if available. */
+    val uploaderAvatarUrl: String? = null,
 ) {
     val formattedSize: String get() = StorageUtils.formatSize(fileSize)
 }
@@ -106,6 +108,8 @@ data class CommunityMusic(
     val likedByMe: Boolean = false,
     val shareUrl: String? = null,
     val coverUrl: String? = null,
+    /** Public uploader avatar URL returned by the Community Hub, if available. */
+    val uploaderAvatarUrl: String? = null,
 )
 
 /**

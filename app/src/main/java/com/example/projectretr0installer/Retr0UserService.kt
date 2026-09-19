@@ -1,6 +1,7 @@
 package com.example.projectretr0installer
 
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import java.io.FileInputStream
@@ -50,6 +51,7 @@ class Retr0UserService : IRetr0UserService.Stub() {
 
     private companion object {
         private const val TAG = "RETR0_INSTALLER_SVC"
+        private const val MUSIC_LIBRARY_TAG = "RETR0_MUSIC_LIBRARY"
         
         private val ALLOWED_ROOTS = listOf(
             "/storage/emulated/0/Android/data/com.ea.games.r3_row",
@@ -174,29 +176,30 @@ class Retr0UserService : IRetr0UserService.Stub() {
     }
 
     override fun move(source: String, destination: String): Boolean {
-        if (!isPathAllowed(source) || !isPathAllowed(destination)) {
-            Log.e(TAG, "Blocked unauthorized move: $source -> $destination")
+        val startedAt = SystemClock.elapsedRealtime()
+        val sourceAllowed = isPathAllowed(source)
+        val destinationAllowed = isPathAllowed(destination)
+        if (!sourceAllowed || !destinationAllowed) {
+            Log.e(MUSIC_LIBRARY_TAG, "code=ML_USVC_MOVE_BLOCKED stage=path_validation result=false sourceAllowed=$sourceAllowed targetAllowed=$destinationAllowed sourceExt=${safeExtension(source)} targetExt=${safeExtension(destination)} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             return false
         }
         return try {
             val srcFile = File(source)
             val dstFile = File(destination)
-
-            if (!srcFile.exists()) return false
-
-            // Ensure parent directory exists
-            dstFile.parentFile?.mkdirs()
-
-            srcFile.renameTo(dstFile)
-        } catch (e: Exception) {
-            Log.e(TAG, "move failed: $source -> $destination", e)
+            val result = srcFile.exists() && dstFile.parentFile?.mkdirsOrExists() != false && srcFile.renameTo(dstFile)
+            Log.i(MUSIC_LIBRARY_TAG, "code=ML_USVC_MOVE stage=move result=$result sourceExt=${safeExtension(source)} targetExt=${safeExtension(destination)} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            result
+        } catch (error: Exception) {
+            Log.e(MUSIC_LIBRARY_TAG, "code=ML_USVC_MOVE_EXCEPTION stage=move result=false sourceExt=${safeExtension(source)} targetExt=${safeExtension(destination)} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} exception=${error.javaClass.simpleName} message=${safeServiceMessage(error)}")
             false
         }
     }
 
     override fun importFile(pfd: ParcelFileDescriptor, destination: String): Boolean {
-        if (!isPathAllowed(destination)) {
-            Log.e(TAG, "Blocked unauthorized import destination: $destination")
+        val startedAt = SystemClock.elapsedRealtime()
+        val allowed = isPathAllowed(destination)
+        if (!allowed) {
+            Log.e(MUSIC_LIBRARY_TAG, "code=ML_USVC_IMPORT_BLOCKED stage=path_validation result=false targetAllowed=false targetExt=${safeExtension(destination)} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             return false
         }
         return try {
@@ -210,12 +213,14 @@ class Retr0UserService : IRetr0UserService.Stub() {
                     output.fd.sync()
                 }
             }
-            if (!tempFile.renameTo(dstFile)) {
+            val result = if (!tempFile.renameTo(dstFile)) {
                 tempFile.delete()
                 false
             } else true
-        } catch (e: Exception) {
-            Log.e(TAG, "importFile failed: $destination", e)
+            Log.i(MUSIC_LIBRARY_TAG, "code=ML_USVC_IMPORT stage=import result=$result targetExt=${safeExtension(destination)} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            result
+        } catch (error: Exception) {
+            Log.e(MUSIC_LIBRARY_TAG, "code=ML_USVC_IMPORT_EXCEPTION stage=import result=false targetExt=${safeExtension(destination)} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} exception=${error.javaClass.simpleName} message=${safeServiceMessage(error)}")
             false
         }
     }
@@ -393,21 +398,40 @@ class Retr0UserService : IRetr0UserService.Stub() {
     }
 
     override fun writeFile(path: String, data: ByteArray): Boolean {
-        if (!isPathAllowed(path)) {
-            Log.e(TAG, "Blocked unauthorized writeFile: $path")
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val allowed = isPathAllowed(path)
+        if (!allowed) {
+            Log.e(MUSIC_LIBRARY_TAG, "code=ML_USVC_WRITE_BLOCKED stage=path_validation result=false targetAllowed=false targetExt=${safeExtension(path)} byteCount=${data.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             return false
         }
         return try {
             val file = File(path)
-            // Ensure parent directory exists
-            file.parentFile?.mkdirs()
-            file.writeBytes(data)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "writeFile failed: $path", e)
+            val parentReady = file.parentFile?.mkdirsOrExists() != false
+            if (parentReady) file.writeBytes(data)
+            Log.i(MUSIC_LIBRARY_TAG, "code=ML_USVC_WRITE stage=write result=$parentReady targetExt=${safeExtension(path)} byteCount=${data.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            parentReady
+        } catch (error: Exception) {
+            Log.e(MUSIC_LIBRARY_TAG, "code=ML_USVC_WRITE_EXCEPTION stage=write result=false targetExt=${safeExtension(path)} byteCount=${data.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} exception=${error.javaClass.simpleName} message=${safeServiceMessage(error)}")
             false
         }
     }
+
+    private fun File.mkdirsOrExists(): Boolean = isDirectory || mkdirs()
+
+    private fun safeExtension(path: String): String {
+        val name = path.substringAfterLast('/').substringBeforeLast('.', missingDelimiterValue = "")
+        return path.substringAfterLast('.', missingDelimiterValue = "none")
+            .takeIf { name.isNotEmpty() && it.length in 1..12 && it.all(Char::isLetterOrDigit) }
+            ?.lowercase()
+            ?: "none"
+    }
+
+    private fun safeServiceMessage(error: Throwable): String = error.message
+        ?.takeIf { message ->
+            message.length <= 120 && !message.contains('/') && !message.contains('\\') &&
+                message.all { character -> character.code in 32..126 }
+        }
+        ?: "REDACTED_OR_EMPTY"
 
     override fun testRR3Access(): String {
         val rowPath = "/storage/emulated/0/Android/data/com.ea.games.r3_row"

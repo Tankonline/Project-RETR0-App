@@ -28,6 +28,7 @@ data class CommunitySkin(
     val compatibility: Compatibility,
     val description: String,
     val creatorId: String? = null,
+    val creatorAvatarUrl: String? = null,
     val coverUrl: String? = null,
     val screenshotUrls: List<String> = emptyList(),
     val sourceFilename: String? = null,

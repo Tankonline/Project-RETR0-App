@@ -49,7 +49,7 @@ open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) 
         gameVersions = api.gameVersions.orEmpty(), binarySizeBytes = api.binarySize, likes = api.likes, downloads = api.downloads,
         createdAt = api.createdAt, updatedAt = api.updatedAt, verified = false, featured = false,
         compatibility = Compatibility.GAME_NOT_DETECTED, description = api.description.orEmpty(),
-        creatorId = api.creatorId, coverUrl = api.coverUrl,
+        creatorId = api.creatorId, creatorAvatarUrl = api.creatorAvatarUrl, coverUrl = api.coverUrl,
         screenshotUrls = api.screenshots.map { it.url }, sourceFilename = api.sourceFilename, binaryUrl = api.binaryUrl,
         detailsUrl = api.detailsUrl, shareUrl = api.shareUrl,
         binarySha256 = api.binarySha256, status = api.status, isOwner = api.isOwner, likedByMe = api.likedByMe,
