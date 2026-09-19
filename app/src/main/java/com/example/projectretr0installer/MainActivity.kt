@@ -930,7 +930,7 @@ class MainActivity : ComponentActivity() {
             }
 
             // Music Hub
-            MusicHubSection(musicPicker)
+            MusicHubSection(musicPicker, youtubeCookiePicker)
 
             // Graphics Hub
             GraphicsHubSection(isUiIdle)
@@ -1457,7 +1457,10 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun MusicHubSection(musicPicker: androidx.activity.result.ActivityResultLauncher<String>) {
+    fun MusicHubSection(
+        musicPicker: androidx.activity.result.ActivityResultLauncher<String>,
+        youtubeCookiePicker: androidx.activity.result.ActivityResultLauncher<Array<String>>,
+    ) {
         var communityTabIndex by remember { mutableIntStateOf(0) }
         var ytUrl by remember { mutableStateOf("") }
 
