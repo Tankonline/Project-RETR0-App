@@ -70,7 +70,6 @@
     <string name="btn_repair">REPARAR ERRORES / CIERRES</string>
     <string name="btn_test_access">PROBAR ACCESO A DIRECTORIO</string>
     <string name="btn_test_write">PROBAR ESCRITURA (LEGACY)</string>
-    <string name="btn_check_updates">BUSCAR ACTUALIZACIONES</string>
     <string name="btn_show_id">MOSTRAR ID DE DISPOSITIVO</string>
     <string name="btn_import_character">IMPORTAR CHARACTER.2.DAT</string>
     <string name="btn_import_doc">IMPORTAR CARPETA .DOC</string>

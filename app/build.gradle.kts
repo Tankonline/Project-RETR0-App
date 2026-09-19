@@ -55,13 +55,11 @@ android {
             isMinifyEnabled = false
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
-            buildConfigField("boolean", "ALLOW_APP_SELF_UPDATE", "false")
         }
         release {
             isMinifyEnabled = true
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
-            buildConfigField("boolean", "ALLOW_APP_SELF_UPDATE", "false")
             signingConfig = signingConfigs.findByName("release")
             isShrinkResources = true
             proguardFiles(

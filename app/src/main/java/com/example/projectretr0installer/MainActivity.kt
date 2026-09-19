@@ -173,7 +173,6 @@ class MainActivity : ComponentActivity() {
     private var currentChatInput by mutableStateOf("")
     private var isAiChatThinking by mutableStateOf(false)
     
-    private var lastUpdateCheck = 0L
     private var shizukuMonitorJob: Job? = null
 
     private val installServiceConnection = object : ServiceConnection {
@@ -275,9 +274,8 @@ class MainActivity : ComponentActivity() {
         }
 
         lifecycleScope.launch {
-            // Background readiness: Pre-fetch manifest immediately
+            // Pre-fetch the shared RR3 installation manifest for faster content installation.
             Retr0Installer(this@MainActivity).preFetchManifest()
-            
             isSystemStatusLoading = true
             withContext(Dispatchers.IO) {
                 updateShizukuStatus()
@@ -946,7 +944,6 @@ class MainActivity : ComponentActivity() {
                 val diags = listOf(
                     "Directory access" to { runRemoteCall { it.testRR3Access() } }, 
                     "Write access (legacy)" to { runRemoteCall { it.testRR3Write() } },
-                    "Check for updates" to { startBackgroundInstall("CHECK_UPDATE") }, 
                     "Generate logs" to { generateLogs() }
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -1032,7 +1029,6 @@ class MainActivity : ComponentActivity() {
             val title = when (progress.state) {
                 InstallState.SUCCESS -> "COMPLETE"
                 InstallState.FAILED -> "FAILED"
-                InstallState.UPDATE -> "UPDATING"
                 else -> if (progress.totalFiles > 1) "PART ${progress.completedFiles + 1} OF ${progress.totalFiles}" else "INSTALLING"
             }
             Text(title, style = MaterialTheme.typography.titleLarge, color = if (progress.state == InstallState.SUCCESS) RetroSuccess else if (progress.state == InstallState.FAILED) RetroDanger else RetroAccent)

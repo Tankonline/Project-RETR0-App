@@ -35,7 +35,6 @@ class Retr0Installer(
     companion object {
         private const val TAG = "RETR0_INSTALLER_LOG"
         private const val MANIFEST_URL = "https://pub-f87b4daf1b344ca39c9ba6de6812a777.r2.dev"
-        
         private const val RR3_ROW = "/storage/emulated/0/Android/data/com.ea.games.r3_row"
         private const val RR3_NA = "/storage/emulated/0/Android/data/com.ea.games.r3_na"
         
@@ -52,10 +51,6 @@ class Retr0Installer(
 
         private var isDownloaderInit = false
         
-        // Static cache to ensure pre-fetched manifest is available to all instances
-        @Volatile
-        private var globalCachedManifest: InstallManifest? = null
-
         /**
          * Initializes the YouTubeDL and FFmpeg engines locally on the device.
          */
@@ -82,24 +77,25 @@ class Retr0Installer(
     private val downloader = FileDownloader()
     private val verifier = HashVerifier()
     private val manifestManager = ManifestManager(COMMUNITY_API_URL)
+
+    @Volatile
+    private var globalCachedManifest: InstallManifest? = null
     private val sonicInstaller by lazy { SonicInstaller(context, service!!) }
     private val downloadDb by lazy { DownloadDatabase.getDatabase(context) }
     
     private val _progress = MutableStateFlow(InstallProgress())
     val progress: StateFlow<InstallProgress> = _progress.asStateFlow()
 
-    /**
-     * Pre-fetches the manifest in the background to ensure 'Checking for updates' is instant.
-     */
+    /** Pre-fetches the shared RR3 installation manifest for faster content installation. */
     suspend fun preFetchManifest() {
         try {
             globalCachedManifest = manifestManager.fetchManifest()
-            Log.i(TAG, "Manifest pre-fetched successfully (Version: ${globalCachedManifest?.version})")
+            Log.i(TAG, "RR3 installation manifest pre-fetched")
         } catch (e: Exception) {
-            Log.e(TAG, "Manifest pre-fetch failed", e)
+            Log.e(TAG, "RR3 installation manifest pre-fetch failed", e)
         }
     }
-    
+
     private var activeRr3Path: String? = null
 
     private fun getRr3Path(): String {
@@ -1716,60 +1712,4 @@ class Retr0Installer(
     /**
      * Checks for app updates and installs them.
      */
-    suspend fun autoUpdate(isManual: Boolean = false): Boolean {
-        val s = service ?: return false
-        try {
-            if (isManual) updateProgress(InstallState.FETCHING_MANIFEST, "Checking for app updates...")
-            val manifest = manifestManager.fetchManifest() ?: return false
-            
-            val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            
-            // Simple version comparison: trigger update if manifest version differs from local
-            if (manifest.version != currentVersion) {
-                Log.i(TAG, "Update found! Current: $currentVersion, New: ${manifest.version}")
-                
-                val apkFile = manifest.files.find { it.type == "apk" } ?: run {
-                    Log.e(TAG, "No APK file found in manifest for update")
-                    return false
-                }
-
-                updateProgress(InstallState.DOWNLOADING, "New update found: V${manifest.version}", apkFile.name)
-                
-                val tempApk = File(context.externalCacheDir, "update.apk")
-                if (tempApk.exists()) tempApk.delete()
-
-                Log.i(TAG, "Downloading update APK from: ${apkFile.url}")
-                
-                if (downloader.download(apkFile.url.replace(MANIFEST_URL, BOOSTER_URL), tempApk, apkFile.size) { current, total, _ ->
-                    updateProgress(
-                        state = InstallState.DOWNLOADING, 
-                        step = "Downloading Update V${manifest.version}...", 
-                        currentFile = apkFile.name, 
-                        fileProgress = current.toFloat() / total,
-                        overallProgress = current.toFloat() / total,
-                        eta = "Processing",
-                    )
-                }) {
-                    updateProgress(InstallState.UPDATE, "Installing update and restarting...", apkFile.name)
-                    Log.i(TAG, "Download complete. Passing to privileged service for installation...")
-                    
-                    if (s.installPackage(tempApk.absolutePath)) {
-                        updateProgress(InstallState.SUCCESS, "UPDATE INSTALLED")
-                        return true
-                    } else {
-                        fail("Installation failed. Check Shizuku permissions.")
-                    }
-                } else {
-                    val error = downloader.lastError
-                    fail("Update download failed: $error")
-                }
-            } else {
-                if (isManual) updateProgress(InstallState.SUCCESS, "APP IS UP TO DATE")
-                Log.i(TAG, "App is already at the latest version (V$currentVersion)")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Auto-update failed", e)
-        }
-        return false
-    }
 }

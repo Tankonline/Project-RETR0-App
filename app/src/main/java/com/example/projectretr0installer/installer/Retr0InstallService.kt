@@ -271,12 +271,6 @@ class Retr0InstallService : Service() {
                             installer?.downloadCommunitySave(save)
                         }
                     }
-                    "UPDATE" -> {
-                        installer?.autoUpdate(isManual = false)
-                    }
-                    "CHECK_UPDATE" -> {
-                        installer?.autoUpdate(isManual = true)
-                    }
                     "MUSIC_MOD" -> {
                         if ((uri != null) && (customName != null) && (targetTrack != null)) {
                             val meta = artworkUrl?.let { MusicMetadata(customName, uploaderName ?: "Anonymous", it) }

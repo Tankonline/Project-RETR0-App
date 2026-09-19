@@ -22,8 +22,6 @@ interface IRetr0UserService {
 
     boolean exportFile(String source, in ParcelFileDescriptor pfd) = 17;
 
-    boolean installPackage(String apkPath) = 19;
-
     long getFileSize(String path) = 8;
 
     long getLastModified(String path) = 18;

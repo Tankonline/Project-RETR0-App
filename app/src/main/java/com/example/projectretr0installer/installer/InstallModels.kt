@@ -11,7 +11,6 @@ enum class InstallState {
     VERIFYING,
     EXTRACTING,
     INSTALLING,
-    UPDATE,
     SUCCESS,
     FAILED,
     CANCELLED,
