@@ -150,6 +150,10 @@ class MainActivity : ComponentActivity() {
     // Save Upload State
     private var showSaveUploadDialog by mutableStateOf(false)
     private var profileToUpload by mutableStateOf<SaveProfile?>(null)
+
+    // Library Music Upload State
+    private var showLibraryMusicUploadDialog by mutableStateOf(false)
+    private var libraryMusicToUpload by mutableStateOf<LibraryMusic?>(null)
     private var profileToRename by mutableStateOf<SaveProfile?>(null)
     private var renameProfileName by mutableStateOf("")
     private var renameProfileError by mutableStateOf<String?>(null)
@@ -452,6 +456,10 @@ class MainActivity : ComponentActivity() {
 
         if (showSaveUploadDialog) {
             SaveUploadDialog()
+        }
+
+        if (showLibraryMusicUploadDialog) {
+            LibraryMusicUploadDialog()
         }
 
         if (profileToRename != null) {
@@ -1622,6 +1630,18 @@ class MainActivity : ComponentActivity() {
                 Text(music.trackName ?: music.fileName, style = MaterialTheme.typography.bodyLarge, color = RetroText)
                 Text(music.artistName ?: "Unknown Artist", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
             }
+            Icon(
+                Icons.Filled.CloudUpload,
+                contentDescription = "Upload ${music.trackName ?: music.fileName} to Community",
+                tint = RetroAccent,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable {
+                        libraryMusicToUpload = music
+                        showLibraryMusicUploadDialog = true
+                    }
+            )
+            Spacer(Modifier.width(12.dp))
             Icon(
                 Icons.Filled.Delete,
                 null,
@@ -2878,6 +2898,66 @@ class MainActivity : ComponentActivity() {
                                 }
                                 closeDialog()
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun LibraryMusicUploadDialog() {
+        val music = libraryMusicToUpload ?: return
+        var uploaderName by remember { mutableStateOf("Retr0") }
+        val displayName = music.trackName ?: music.fileName.removeSuffix(".mp3")
+
+        Dialog(onDismissRequest = { showLibraryMusicUploadDialog = false }) {
+            RetroCard(Modifier.fillMaxWidth().wrapContentHeight().imePadding()) {
+                Column(
+                    modifier = Modifier.padding(18.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(42.dp).background(RetroAccentTint, RoundedCornerShape(12.dp)), Alignment.Center) {
+                            Icon(Icons.Filled.CloudUpload, null, tint = RetroAccent)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Share Music", style = MaterialTheme.typography.titleLarge, color = RetroText)
+                            Text(displayName, style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                        }
+                    }
+                    HorizontalDivider(color = RetroBorder)
+                    Text("Artist: ${music.artistName ?: "Unknown Artist"}", color = RetroTextSoft, style = MaterialTheme.typography.bodyMedium)
+                    Text("File: ${music.fileName}", color = RetroTextMuted, style = MaterialTheme.typography.labelSmall)
+                    Text("Artwork: ${if (music.artworkUrl != null) "Available" else "None"}", color = RetroTextMuted, style = MaterialTheme.typography.labelSmall)
+                    OutlinedTextField(
+                        value = uploaderName,
+                        onValueChange = { uploaderName = it },
+                        label = { Text("Display Name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Person, null, tint = RetroAccent) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = RetroText,
+                            unfocusedTextColor = RetroText,
+                            focusedBorderColor = RetroAccent,
+                            unfocusedBorderColor = RetroBorder,
+                            focusedLabelColor = RetroAccent,
+                            unfocusedLabelColor = RetroTextMuted,
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SecondaryButton("Cancel", Modifier.weight(1f)) { showLibraryMusicUploadDialog = false }
+                        PrimaryButton("Upload Now", Modifier.weight(1f), enabled = uploaderName.isNotBlank()) {
+                            startBackgroundInstall(
+                                actionType = "UPLOAD_LIBRARY_MUSIC",
+                                trackFileName = music.fileName,
+                                customName = displayName,
+                                uploaderName = uploaderName,
+                            )
+                            showLibraryMusicUploadDialog = false
                         }
                     }
                 }

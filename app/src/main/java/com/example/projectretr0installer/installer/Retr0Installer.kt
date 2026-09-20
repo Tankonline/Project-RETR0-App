@@ -1942,6 +1942,14 @@ class Retr0Installer(
      */
     suspend fun getLibraryMusic(): List<LibraryMusic> = withContext(Dispatchers.IO) {
         val s = service ?: return@withContext emptyList()
+        // Coil runs in the app process and cannot read the Shizuku user-service's
+        // privileged public-storage files. Export covers into app cache first.
+        val artworkCacheDir = File(context.cacheDir, "music_artwork").apply { mkdirs() }
+        artworkCacheDir.listFiles()?.forEach { file ->
+            if (file.isFile && System.currentTimeMillis() - file.lastModified() > 7L * 24L * 60L * 60L * 1000L) {
+                file.delete()
+            }
+        }
         try {
             s.createDirectory(MUSIC_LIBRARY_PATH)
             val mp3Files = (s.listFiles(MUSIC_LIBRARY_PATH) ?: emptyArray())
@@ -1966,10 +1974,28 @@ class Retr0Installer(
                             fallbackMeta?.get("trackName"),
                             fallbackMeta?.get("artistName"),
                         )
-                        val localArtwork = when {
-                            s.exists(artworkPath) -> "file://$artworkPath"
-                            s.exists(legacyArtworkPath) -> "file://$legacyArtworkPath"
+                        val localArtworkSource = when {
+                            s.exists(artworkPath) -> artworkPath
+                            s.exists(legacyArtworkPath) -> legacyArtworkPath
                             else -> null
+                        }
+                        val localArtwork = localArtworkSource?.let { sourcePath ->
+                            val cacheFile = File(artworkCacheDir, "${MusicLibrarySidecarCodec.sanitizeBaseName(baseName)}.jpg")
+                            val exported = runCatching {
+                                ParcelFileDescriptor.open(
+                                    cacheFile,
+                                    ParcelFileDescriptor.MODE_CREATE or
+                                        ParcelFileDescriptor.MODE_TRUNCATE or
+                                        ParcelFileDescriptor.MODE_WRITE_ONLY,
+                                ).use { descriptor -> s.exportFile(sourcePath, descriptor) }
+                            }.getOrDefault(false)
+                            if (exported && cacheFile.isFile && cacheFile.length() > 0L) {
+                                cacheFile.setLastModified(System.currentTimeMillis())
+                                cacheFile.toURI().toString()
+                            } else {
+                                cacheFile.delete()
+                                null
+                            }
                         }
 
                         LibraryMusic(
@@ -2075,7 +2101,12 @@ class Retr0Installer(
                 }
                 if (artworkCache == null) return@withContext failure("ML_E006", "jpg")
                 stage = "artwork_stage"
-                if (!s.copyFile(artworkCache.absolutePath, artworkTemp)) return@withContext failure("ML_E006", "jpg")
+                val artworkPfd = try {
+                    ParcelFileDescriptor.open(artworkCache, ParcelFileDescriptor.MODE_READ_ONLY)
+                } catch (error: Exception) {
+                    return@withContext failure("ML_E006", "jpg", error)
+                }
+                if (!artworkPfd.use { s.importFile(it, artworkTemp) }) return@withContext failure("ML_E006", "jpg")
             }
 
             stage = "mp3_publish"
@@ -2204,6 +2235,74 @@ class Retr0Installer(
             connectTimeout = 10_000
             readTimeout = 20_000
         }.getInputStream()
+    }
+
+    /**
+     * Uploads a finalized local-library track without reading the original transient URI.
+     * The privileged service exports the finalized MP3 and artwork sidecar into app cache;
+     * the persistent library is never modified or deleted on upload failure.
+     */
+    suspend fun uploadMusicFromLibrary(
+        libraryFileName: String,
+        uploaderName: String,
+        customName: String,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val s = service ?: run { fail("Not connected."); return@withContext false }
+        val safeBase = MusicLibrarySidecarCodec.sanitizeBaseName(libraryFileName.removeSuffix(".mp3"))
+        if ("$safeBase.mp3" != libraryFileName) {
+            fail("Invalid library music filename.")
+            return@withContext false
+        }
+        val libraryMp3Path = "$MUSIC_LIBRARY_PATH/$libraryFileName"
+        val libraryArtworkPath = "$MUSIC_LIBRARY_PATH/${MusicLibrarySidecarCodec.artworkFileName(safeBase)}"
+        val legacyArtworkPath = "$MUSIC_LIBRARY_PATH/$safeBase.jpg"
+        val mp3Cache = File(context.cacheDir, "library_music_upload_$safeBase.mp3")
+        val artworkCache = File(context.cacheDir, "library_music_upload_$safeBase.jpg")
+        try {
+            updateProgress(InstallState.PREPARING, "Preparing library music upload...")
+            if (!s.exists(libraryMp3Path)) {
+                fail("Library music file not found.")
+                return@withContext false
+            }
+            fun export(path: String, destination: File): Boolean {
+                ParcelFileDescriptor.open(
+                    destination,
+                    ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_WRITE_ONLY,
+                ).use { descriptor -> return s.exportFile(path, descriptor) }
+            }
+            if (!export(libraryMp3Path, mp3Cache) || !mp3Cache.isFile || mp3Cache.length() == 0L) {
+                fail("Could not prepare library music file for upload.")
+                return@withContext false
+            }
+            val result = MusicApiClient(context).upload(
+                file = mp3Cache,
+                musicName = customName,
+                uploaderName = uploaderName,
+                targetTrack = libraryFileName,
+            )
+            val artworkPath = when {
+                s.exists(libraryArtworkPath) -> libraryArtworkPath
+                s.exists(legacyArtworkPath) -> legacyArtworkPath
+                else -> null
+            }
+            if (artworkPath != null && export(artworkPath, artworkCache) && artworkCache.isFile && artworkCache.length() > 0L) {
+                uploadMusicArtwork(result.id, Uri.fromFile(artworkCache), null)
+            }
+            Log.i("RETR0_UPLOAD", "Uploaded finalized library music ${result.size} bytes as ${result.id}; requestId=${result.requestId}")
+            updateProgress(InstallState.SUCCESS, "MUSIC SHARED SUCCESSFULLY")
+            true
+        } catch (e: SkinApiException) {
+            val requestSuffix = e.requestId?.let { " Request ID: $it." }.orEmpty()
+            fail("Upload failed${e.statusCode?.let { " (HTTP $it)" }.orEmpty()}: ${e.message}.$requestSuffix")
+            false
+        } catch (e: Exception) {
+            Log.e("RETR0_UPLOAD", "Finalized library music upload failed", e)
+            fail("Upload error: ${e.message}")
+            false
+        } finally {
+            mp3Cache.delete()
+            artworkCache.delete()
+        }
     }
 
     /**

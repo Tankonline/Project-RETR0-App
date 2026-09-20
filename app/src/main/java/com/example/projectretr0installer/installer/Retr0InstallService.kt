@@ -292,23 +292,15 @@ class Retr0InstallService : Service() {
                                 artworkUrl = artworkUrl,
                             ) == true
                             Log.i(MUSIC_LIBRARY_TAG, "code=ML_SVC001 stage=music_mod_local_save result=$librarySaved task=MUSIC_MOD uploadRequested=$shareHub")
-                            if (!librarySaved && shareHub && uploaderName != null) {
-                                Log.w(MUSIC_LIBRARY_TAG, "code=ML_SVC002 stage=local_upload_divergence result=continuing task=MUSIC_MOD localSaved=false uploadContinuing=true")
+                            if (shareHub && uploaderName != null && !librarySaved) {
+                                Log.w(MUSIC_LIBRARY_TAG, "code=ML_SVC002 stage=local_upload_divergence result=skipped task=MUSIC_MOD localSaved=false uploadSkipped=true")
                             }
 
-                            if (shareHub && (uploaderName != null)) {
-                                installer?.applyAndUploadMusic(
-                                    uri,
-                                    targetTrack,
-                                    uploaderName,
-                                    customName,
-                                    metadata = meta,
-                                    artworkUri = artworkUri,
-                                    artworkUrl = artworkUrl,
-                                )
-                            } else {
-                                installer?.applyMusicMod(uri, targetTrack, metadata = meta)
+                            val applySucceeded = installer?.applyMusicMod(uri, targetTrack, metadata = meta) == true
+                            if (shareHub && uploaderName != null && librarySaved) {
+                                installer?.uploadMusic(uri, uploaderName, customName, targetTrack, artworkUri, artworkUrl)
                             }
+                            Log.i(MUSIC_LIBRARY_TAG, "code=ML_SVC003 stage=music_mod_outcome result=reported localSaved=$librarySaved gameApplied=$applySucceeded uploadAttempted=${shareHub && uploaderName != null && librarySaved}")
                         }
                     }
                     "MUSIC_RESTORE" -> {
@@ -338,6 +330,11 @@ class Retr0InstallService : Service() {
                     "UPLOAD_MUSIC" -> {
                         if ((uri != null) && (uploaderName != null) && (customName != null) && (targetTrack != null)) {
                             installer?.uploadMusic(uri, uploaderName, customName, targetTrack)
+                        }
+                    }
+                    "UPLOAD_LIBRARY_MUSIC" -> {
+                        if ((trackFileName != null) && (uploaderName != null) && (customName != null)) {
+                            installer?.uploadMusicFromLibrary(trackFileName, uploaderName, customName)
                         }
                     }
                     "APPLY_AND_UPLOAD_MUSIC" -> {
@@ -396,25 +393,25 @@ class Retr0InstallService : Service() {
                                 ) == true
                                 Log.i(MUSIC_LIBRARY_TAG, "code=ML_SVC001 stage=youtube_local_save result=$librarySaved task=$taskType uploadRequested=$shareHub")
                                 if (!librarySaved && shareHub && uploaderName != null && targetTrack != null) {
-                                    Log.w(MUSIC_LIBRARY_TAG, "code=ML_SVC002 stage=local_upload_divergence result=continuing task=$taskType localSaved=false uploadContinuing=true")
+                                    Log.w(MUSIC_LIBRARY_TAG, "code=ML_SVC002 stage=local_upload_divergence result=skipped task=$taskType localSaved=false uploadSkipped=true")
                                 }
                                 
-                                // 2. Apply to game slot if targetTrack is provided
+                                // 2. Apply to game slot independently, then report the local/upload outcomes.
+                                var gameApplied = false
                                 if (targetTrack != null) {
-                                    if (shareHub && uploaderName != null) {
-                                        installer?.applyAndUploadMusic(
+                                    gameApplied = installer?.applyMusicMod(mp3Uri, targetTrack, metadata = meta) == true
+                                    if (shareHub && uploaderName != null && librarySaved) {
+                                        installer?.uploadMusic(
                                             mp3Uri,
-                                            targetTrack,
                                             uploaderName,
                                             finalTitle,
-                                            metadata = meta,
+                                            targetTrack,
                                             artworkUri = artworkUri,
                                             artworkUrl = artworkUrl ?: result.info.thumbnailUrl,
                                         )
-                                    } else {
-                                        installer?.applyMusicMod(mp3Uri, targetTrack, metadata = meta)
                                     }
                                 }
+                                Log.i(MUSIC_LIBRARY_TAG, "code=ML_SVC003 stage=youtube_outcome result=reported localSaved=$librarySaved gameApplied=$gameApplied uploadAttempted=${shareHub && uploaderName != null && targetTrack != null && librarySaved}")
                                 result.file.delete()
                                 Log.i(TAG, "RETR0_YT_SERVICE_SUCCEEDED task=$taskType bytes=${result.file.length()}")
                             }
