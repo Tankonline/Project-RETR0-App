@@ -36,7 +36,7 @@ class SkinTransactionCoordinator(
                 require(originalHash.matches(SHA256)) { "Unable to verify original target" }
                 val existingBackup = local.backupForTarget(target)
                 val backup = existingBackup ?: createBackup(service, skin.id, target, originalHash)
-                require(service.sha256File(backup.backupPath).equals(backup.sha256, true)) { "Original backup is missing or corrupt" }
+                require(service.sha256File(backup.backupPath).equals(other = backup.sha256, ignoreCase = true)) { "Original backup is missing or corrupt" }
                 update(operationId, skin.id, "APPLY", "BACKUP_VERIFIED", 45, "Original backup verified")
                 update(operationId, skin.id, "APPLY", "SWAPPING", 70, "Replacing target")
                 val input = ParcelFileDescriptor.open(File(skin.binaryPath), ParcelFileDescriptor.MODE_READ_ONLY)

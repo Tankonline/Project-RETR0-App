@@ -20,11 +20,13 @@ class SkinDownloadManager(
 
     suspend fun download(skin: CommunityDownload, onProgress: (Int) -> Unit = {}): LocalSkinEntity = withContext(Dispatchers.IO) {
         require(skin.url.startsWith("https://")) { "Only HTTPS downloads are allowed" }
-        require(skin.size in 1..VerifiedFilePromoter.MAX_BINARY_BYTES) { "Invalid skin download size" }
+        require(skin.size in (1..VerifiedFilePromoter.MAX_BINARY_BYTES)) { "Invalid skin download size" }
         require(skin.sha256.matches(Regex("[0-9a-fA-F]{64}"))) { "Invalid skin SHA-256" }
         val id = UUID.randomUUID().toString()
         val directory = File(filesRoot, id).apply { mkdirs() }
-        val destination = File(directory, skin.sourceFilename)
+        val safeFilename = skin.sourceFilename.substringAfterLast('/').substringAfterLast('\\')
+        require(safeFilename == skin.sourceFilename && safeFilename.isNotBlank() && safeFilename != "." && safeFilename != "..") { "Invalid skin filename" }
+        val destination = File(directory, safeFilename)
         try {
             client.newCall(Request.Builder().url(skin.url).get().build()).execute().use { response ->
                 require(response.isSuccessful) { "Skin download failed with HTTP ${response.code}" }
@@ -57,4 +59,6 @@ data class CommunityDownload(
     val url: String,
     val size: Long,
     val sha256: String,
+    val companionUrl: String? = null,
+    val companionFilename: String? = null,
 )

@@ -30,7 +30,7 @@ class LocalSkinRepository private constructor(
             val verified = VerifiedFilePromoter.promote(stream, File(skinDir, canonicalFilename), request.source.size, request.source.sha256)
             var screenshotPosition = 0
             val imageEntities = request.images.mapIndexed { index, image ->
-                onProgress(25 + ((index + 1) * 35 / request.images.size.coerceAtLeast(1)), "Saving images")
+                onProgress(25 + (((index + 1) * 35) / request.images.size.coerceAtLeast(1)), "Saving images")
                 val position = when (image.role) {
                     SkinImageRole.COVER -> 0
                     SkinImageRole.SCREENSHOT -> ++screenshotPosition

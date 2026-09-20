@@ -10,6 +10,7 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
@@ -331,6 +332,69 @@ class Retr0UserService : IRetr0UserService.Stub() {
         if (!isPathAllowed(path)) return null
         val file = File(path)
         return if (file.exists() && file.isDirectory) file.list() else null
+    }
+
+    override fun scanSkinTargets(packageRoot: String, vehiclesRoot: String, importedFileName: String, maxDirectories: Int, maxEntriesPerDirectory: Int): Array<String> {
+        val startedAt = SystemClock.elapsedRealtime()
+        Log.i(TAG, "code=SMART_MATCH_SERVICE_ROOT_VALIDATION event=START root=$packageRoot")
+        val boundedDirectories = maxDirectories.coerceIn(0, 2_000)
+        val boundedEntries = maxEntriesPerDirectory.coerceIn(0, 50_000)
+        if (packageRoot !in setOf("/storage/emulated/0/Android/data/com.ea.games.r3_row", "/storage/emulated/0/Android/data/com.ea.games.r3_na")) {
+            Log.e(TAG, "code=INVALID_ROOT event=SMART_MATCH_SERVICE_ROOT_VALIDATION")
+            return emptyArray()
+        }
+        val rootFile = File(packageRoot)
+        if (!rootFile.exists()) { Log.e(TAG, "code=MISSING_ROOT event=SMART_MATCH_SERVICE_ROOT_VALIDATION"); return emptyArray() }
+        if (!rootFile.isDirectory || !rootFile.canRead()) { Log.e(TAG, "code=INVALID_ROOT event=SMART_MATCH_SERVICE_ROOT_VALIDATION"); return emptyArray() }
+        if (vehiclesRoot != "$packageRoot/files/.depot/vehicles" || importedFileName.isBlank() || !isSafeSkinName(importedFileName)) {
+            Log.e(TAG, "code=VALIDATION_REJECTED event=SMART_MATCH_SERVICE_INPUT")
+            return emptyArray()
+        }
+        return runCatching {
+            val root = File(packageRoot).canonicalFile.toPath()
+            val vehicles = File(vehiclesRoot).canonicalFile
+            if (!vehicles.exists()) { Log.e(TAG, "code=MISSING_ROOT event=SMART_MATCH_SCAN_ROOT"); return@runCatching emptyArray() }
+            if (!vehicles.isDirectory || !vehicles.canRead() || Files.isSymbolicLink(vehicles.toPath())) { Log.e(TAG, "code=INVALID_ROOT event=SMART_MATCH_SCAN_ROOT"); return@runCatching emptyArray() }
+            val result = ArrayList<String>()
+            val queue = ArrayDeque<Pair<File, Int>>()
+            queue.add(vehicles to 0)
+            var directories = 0
+            var inspectedFiles = 0
+            while (queue.isNotEmpty() && directories < boundedDirectories) {
+                val (directory, depth) = queue.removeFirst()
+                if (Files.isSymbolicLink(directory.toPath()) || !directory.isDirectory) continue
+                directories++
+                directory.listFiles().orEmpty().asSequence()
+                    .filter { !Files.isSymbolicLink(it.toPath()) }
+                    .forEach { child ->
+                        if (child.isDirectory && depth < 8) {
+                            queue.addLast(child to (depth + 1))
+                        } else if (child.isFile && child.name.endsWith(".dds.z", true) && result.size < boundedEntries) {
+                            inspectedFiles++
+                            val canonical = child.canonicalFile.toPath()
+                            if (canonical.startsWith(root) && isSkinLiveryPath(root, canonical.toString())) {
+                                result += "F\t${child.length()}\t${canonical.toString()}"
+                            }
+                        }
+                    }
+            }
+            Log.i(TAG, "code=SMART_MATCH_TRAVERSAL event=COUNTS resultCount=${result.size} directories=$directories files=$inspectedFiles entryLimit=$boundedEntries elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            result.toTypedArray()
+        }.getOrElse {
+            Log.e(TAG, "code=TRANSPORT_FAILURE event=SMART_MATCH_SCAN_EXCEPTION elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", it)
+            emptyArray()
+        }
+    }
+
+    private fun isSafeSkinName(name: String): Boolean = name.length <= 255 && name.endsWith(".dds.z", true) &&
+        name.none { it == '/' || it == '\\' || it == '\u0000' } && name != "." && name != ".."
+
+    private fun isSkinLiveryPath(root: Path, path: String): Boolean {
+        val relative = runCatching { root.relativize(File(path).canonicalFile.toPath()).toString().replace('\\', '/') }.getOrNull() ?: return false
+        val segments = relative.split('/').filter(String::isNotBlank)
+        return segments.size >= 6 && segments[0] == "files" && segments[1] == ".depot" &&
+            segments[2] == "vehicles" && segments[3].isNotBlank() &&
+            segments[segments.lastIndex - 1].equals("livery", ignoreCase = true)
     }
 
     override fun listDirectoryEntries(packageRoot: String, path: String): Array<String> {

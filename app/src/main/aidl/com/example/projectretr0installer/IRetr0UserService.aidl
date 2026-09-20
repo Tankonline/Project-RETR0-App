@@ -50,6 +50,8 @@ interface IRetr0UserService {
 
     String[] listDirectoryEntries(String packageRoot, String path) = 25;
 
+    String[] scanSkinTargets(String packageRoot, String vehiclesRoot, String importedFileName, int maxDirectories, int maxEntriesPerDirectory) = 30;
+
     String sha256File(String path) = 26;
 
     boolean createImmutableSkinBackup(String targetPath, String backupPath, String expectedSha256) = 27;
