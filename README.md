@@ -43,6 +43,7 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 - [Development Guidelines](#development-guidelines)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
+- [Known Issues](#known-issues)
 - [Contributing](#contributing)
 - [Attribution](#attribution)
 - [Legal Disclaimer](#legal-disclaimer)
@@ -527,8 +528,8 @@ compileSdk:    35
 minSdk:        26
 targetSdk:     35
 
-versionCode:   3
-versionName:   1.0.2-STABLE
+versionCode:   4
+versionName:   1.0.3
 
 Java:          17
 Kotlin JVM:    17
@@ -882,6 +883,63 @@ Check:
 
 ---
 
+---
+
+# Known Issues
+
+The following issues are currently known in the **v1.0.3** release. They do not all prevent normal use of the installer, but they are being tracked for future fixes.
+
+## YouTube audio extraction reliability
+
+YouTube importing can fail for some videos or current YouTube delivery configurations.
+
+The current implementation uses yt-dlp through the bundled Android integration. Some YouTube formats/clients can require additional anti-bot/Proof-of-Origin (PO) token handling, and yt-dlp may report errors such as:
+
+```text
+Requested format is not available.
+```
+
+or warnings about an Android client requiring a GVS PO Token.
+
+**Impact:** YouTube-based music imports are not guaranteed to work for every URL at the moment.
+
+**Workaround:** Use another supported audio source/import workflow where available. Do not assume that a failure means the rest of the installer is broken.
+
+**Status:** Known issue under investigation. The installer currently retains its authenticated-cookie fallback for eligible YouTube authentication failures, but this does not guarantee successful extraction when YouTube's current client/format requirements cannot be satisfied.
+
+## Native library strip warnings during release builds
+
+Release builds can emit messages similar to:
+
+```text
+The file was not recognized as a valid object file
+Unable to strip the following libraries, packaging them as they are: libffmpeg.zip.so, libpython.zip.so.
+```
+
+These files are bundled native/runtime payloads used by the media-processing stack. Android Gradle packaging continues by including them without symbol stripping.
+
+**Impact:** No known runtime failure has been established from these warnings. The v1.0.3 production release successfully built, signed, and packaged with these messages present.
+
+**Status:** Known build warning; not currently treated as a release blocker.
+
+## Android manifest build warnings
+
+The release build currently emits warnings concerning the legacy `package` attribute in the source manifest and manifest merge `tools:replace` entries for the Shizuku provider and `org.apache.http.legacy`.
+
+**Impact:** The v1.0.3 release build completes successfully. These warnings are not currently known to prevent installation or normal operation.
+
+**Status:** Cleanup opportunity for a future maintenance release rather than a current release blocker.
+
+## Compatibility can vary by Android/device configuration
+
+Some operations depend on the Android version, device manufacturer, storage behaviour, Shizuku availability, and the installed RR3 package variant.
+
+**Impact:** A workflow that works on one supported device may still require additional troubleshooting on another device.
+
+**Status:** Ongoing compatibility testing.
+
+> **Reporting a new issue:** When reporting a problem, include the app version, Android version, RR3 package variant, the operation being attempted, and the relevant non-sensitive error message. Never include API keys, passwords, signing material, authentication cookies, or other secrets in an issue report.
+
 # Contributing
 
 Contributions are welcome.
@@ -1033,8 +1091,8 @@ Project RETR0 installer is an active development project.
 The current repository configuration identifies the application as:
 
 ```text
-Version: 1.0.2-STABLE
-Version code: 3
+Version: 1.0.3
+Version code: 4
 ```
 
 The implementation and documentation may evolve as additional asset types, installation safeguards, community functionality, and compatibility improvements are introduced.
