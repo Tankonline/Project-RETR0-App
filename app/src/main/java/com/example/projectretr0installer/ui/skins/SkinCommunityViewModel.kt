@@ -51,7 +51,7 @@ class SkinCommunityViewModel(
             CommunityDownload(skin.id, skin.title, skin.creator, skin.vehicle, skin.carId, skin.slotKey, skin.format,
                 requireNotNull(skin.sourceFilename) { "Missing source filename" }, "unknown",
                 requireNotNull(skin.binaryUrl) { "Missing binary URL" }, skin.binarySizeBytes,
-                requireNotNull(skin.binarySha256) { "Missing binary hash" }), onProgress,
+                requireNotNull(skin.binarySha256) { "Missing binary hash" }, skin.coverUrl, skin.screenshotUrls), onProgress,
         ).id
     }
 

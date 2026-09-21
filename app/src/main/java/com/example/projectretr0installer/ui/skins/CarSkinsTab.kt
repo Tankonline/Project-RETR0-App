@@ -83,6 +83,8 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
                 repository,
                 galleryCache,
                 communityViewModel = communityViewModel,
+                service = service,
+                isServiceConnected = isServiceConnected,
             )
         }
     }

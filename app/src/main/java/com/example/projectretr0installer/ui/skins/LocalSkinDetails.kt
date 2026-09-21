@@ -8,13 +8,17 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import android.util.Log
+import android.content.Intent
+import androidx.core.net.toUri
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.projectretr0installer.data.skins.local.LocalSkinEntity
 import com.example.projectretr0installer.data.skins.local.LocalSkinRepository
+import com.example.projectretr0installer.data.skins.manifest.SkinManifestStore
 import com.example.projectretr0installer.data.skins.local.SkinBackupEntity
+import com.example.projectretr0installer.data.skins.manifest.SkinManifest
 import com.example.projectretr0installer.ui.components.*
 import com.example.projectretr0installer.ui.theme.*
 import kotlinx.coroutines.launch
@@ -31,40 +35,43 @@ import java.util.Date
     var backups by remember(id) { mutableStateOf(emptyList<SkinBackupEntity>()) }
     var dialog by remember { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    var editing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    var manifest by remember(id) { mutableStateOf<SkinManifest?>(null) }
     LaunchedEffect(id) {
-        skin = repository.skin(id)
+        val loadedSkin = repository.skin(id)
+        skin = loadedSkin
+        val packageRoot = loadedSkin?.let { File(it.binaryPath).parentFile }
+        manifest = packageRoot?.let { SkinManifestStore.read(it) }
         Log.i("LOCAL_SCREENSHOT_LOAD_START", "skinId=$id")
         val images = repository.images(id)
         val screenshotEntities = images
             .filter { it.role == SkinImageRole.SCREENSHOT.name }
             .sortedBy { it.position }
         val coverEntity = images.firstOrNull { it.role == SkinImageRole.COVER.name }
-        val carouselImages = buildList {
-            coverEntity?.let(::add)
-            addAll(screenshotEntities)
+        
+        val carouselUris = buildList {
+            manifest?.let { m ->
+                val root = packageRoot!!
+                m.cover?.let { add("file://${root.resolve(it.path).absolutePath}") }
+                m.screenshots.forEach { add("file://${root.resolve(it.path).absolutePath}") }
+            } ?: run {
+                coverEntity?.let { add("file://${File(it.path).absolutePath}") }
+                screenshotEntities.forEach { add("file://${File(it.path).absolutePath}") }
+            }
         }
+        
         Log.i(
             "LOCAL_SCREENSHOT_DB_RESULT",
-            "skinId=$id images=${images.size} screenshots=${screenshotEntities.size} cover=${coverEntity != null}",
+            "skinId=$id images=${images.size} screenshots=${screenshotEntities.size} cover=${coverEntity != null} manifest=${manifest != null}",
         )
-        coverPath = coverEntity?.path
-        screenshots = carouselImages.mapNotNull { image ->
-            val file = File(image.path)
+        coverPath = manifest?.cover?.let { packageRoot?.resolve(it.path)?.absolutePath } ?: coverEntity?.path
+        screenshots = carouselUris.filter { uri ->
+            val file = File(uri.substringAfter("file://"))
             if (!file.isFile || !file.canRead() || file.length() == 0L) {
-                Log.e(
-                    "LOCAL_SCREENSHOT_FILE_MISSING",
-                    "skinId=$id position=${image.position} path=${image.path} exists=${file.exists()} readable=${file.canRead()} bytes=${file.length()}",
-                )
-                null
-            } else {
-                val uri = "file://${file.absolutePath}"
-                Log.i(
-                    "LOCAL_SCREENSHOT_LOAD_SUCCESS",
-                    "skinId=$id position=${image.position} path=${file.absolutePath} bytes=${file.length()} uri=$uri",
-                )
-                uri
-            }
+                Log.e("LOCAL_SCREENSHOT_FILE_MISSING", "skinId=$id path=${file.absolutePath}")
+                false
+            } else true
         }
         coverPath?.let { path ->
             val file = File(path)
@@ -97,7 +104,23 @@ import java.util.Date
         ))
         PrimaryButton("Apply", icon = Icons.Filled.CheckCircle) { dialog = "apply" }
         if (backup != null) OutlineButton("Revert to original") { dialog = "revert" } else RetroCard { Text("Revert unavailable", color = RetroGold); Text("A verified immutable backup will be created before the first apply.", color = RetroTextMuted, style = MaterialTheme.typography.bodySmall) }
-        SecondaryButton("Export", Modifier.fillMaxWidth(), Icons.Filled.IosShare) {}; SecondaryButton("Edit metadata", Modifier.fillMaxWidth(), Icons.Filled.Edit) {}; DangerButton("Delete skin", icon = Icons.Filled.Delete) { dialog = "delete" }; Spacer(Modifier.height(12.dp))
+        SecondaryButton("Export", Modifier.fillMaxWidth(), Icons.Filled.IosShare) {
+            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(Intent.EXTRA_STREAM, current.binaryPath.toUri())
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, "Export skin mod"))
+        }
+        SecondaryButton("Edit metadata", Modifier.fillMaxWidth(), Icons.Filled.Edit) { editing = true }
+        if (editing) MetadataEditor(current, onCancel = { editing = false }) { updated ->
+            scope.launch {
+                repository.updateMetadata(id, updated.title, updated.creator, updated.vehicle, updated.carDirectory, updated.slotKey, updated.textureFormat)
+                skin = repository.skin(id)
+                editing = false
+            }
+        }
+        DangerButton("Delete skin", icon = Icons.Filled.Delete) { dialog = "delete" }
+        Spacer(Modifier.height(12.dp))
     }
     dialog?.let { action ->
         DestructiveConfirmationDialog(
@@ -126,5 +149,30 @@ import java.util.Date
             title = { Text("Delete skin") },
             text = { Text(message) },
         )
+    }
+}
+
+data class EditableSkinMetadata(
+    val title: String,
+    val creator: String,
+    val vehicle: String,
+    val carDirectory: String,
+    val slotKey: String,
+    val textureFormat: String,
+)
+
+@Composable
+private fun MetadataEditor(skin: LocalSkinEntity, onCancel: () -> Unit, onSave: (EditableSkinMetadata) -> Unit) {
+    var title by remember(skin.id) { mutableStateOf(skin.title) }
+    var creator by remember(skin.id) { mutableStateOf(skin.creator) }
+    var vehicle by remember(skin.id) { mutableStateOf(skin.vehicle) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(title, { title = it }, label = { Text("Title") })
+        OutlinedTextField(creator, { creator = it }, label = { Text("Creator") })
+        OutlinedTextField(vehicle, { vehicle = it }, label = { Text("Vehicle") })
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            Button(onClick = { onSave(EditableSkinMetadata(title, creator, vehicle, skin.carDirectory, skin.slotKey, skin.textureFormat)) }) { Text("Save") }
+        }
     }
 }

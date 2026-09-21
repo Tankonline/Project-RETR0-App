@@ -1,6 +1,7 @@
 package com.example.projectretr0installer.data.skins
 
 import android.content.Context
+import android.util.Log
 import com.example.projectretr0installer.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,6 +28,7 @@ interface SkinDataSource {
     suspend fun createDraft(draft: SkinDraft, idempotencyKey: String): SkinDraftResponse = unsupported()
     suspend fun uploadBinary(id: String, file: File): SkinMutationResponse = unsupported()
     suspend fun uploadCover(id: String, file: File, contentType: String): SkinMutationResponse = unsupported()
+    suspend fun uploadManifest(id: String, manifest: String): SkinMutationResponse = unsupported()
     suspend fun uploadScreenshot(id: String, position: Int, file: File, contentType: String, caption: String = ""): SkinMutationResponse = unsupported()
     suspend fun publish(id: String): SkinMutationResponse = unsupported()
     suspend fun setLike(id: String, liked: Boolean): SkinMutationResponse = unsupported()
@@ -77,6 +79,11 @@ class SkinApiClient(
 
     override suspend fun uploadBinary(id: String, file: File): SkinMutationResponse = uploadFile(skinUrl(id, "binary"), file, "application/octet-stream")
     override suspend fun uploadCover(id: String, file: File, contentType: String): SkinMutationResponse = uploadFile(skinUrl(id, "cover"), file, contentType)
+    override suspend fun uploadManifest(id: String, manifest: String): SkinMutationResponse = io {
+        val bytes = manifest.toByteArray()
+        Log.i("SKIN_API", "manifest_upload_start skinId=$id bytes=${bytes.size}")
+        executeSigned("PUT", manifestUrl(id), bytes.toRequestBody(JSON), SkinRequestCanonicalizer.sha256(bytes), parser = SkinApiParser::parseMutation)
+    }
     override suspend fun uploadScreenshot(id: String, position: Int, file: File, contentType: String, caption: String): SkinMutationResponse {
         require(position in 1..4) { "Screenshot position must be 1-4" }
         val url = skinUrl(id, "screenshots", position.toString()).newBuilder().apply { if (caption.isNotBlank()) addQueryParameter("caption", caption) }.build()
@@ -128,6 +135,14 @@ class SkinApiClient(
     private fun skinUrl(id: String, vararg segments: String): HttpUrl {
         require(UUID.matches(id)) { "Skin ID must be a UUID" }
         return v1("skins", id.lowercase(), *segments)
+    }
+
+    /** The deployed skin manifest route is outside the /v1 API namespace. */
+    private fun manifestUrl(id: String): HttpUrl {
+        require(UUID.matches(id)) { "Skin ID must be a UUID" }
+        return baseUrl.toHttpUrl().newBuilder()
+            .addPathSegments("skins/${id.lowercase()}/manifest")
+            .build()
     }
     private fun encodedPathAndQuery(url: HttpUrl) = url.encodedPath + (url.encodedQuery?.let { "?$it" } ?: "")
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }

@@ -18,6 +18,9 @@ data class SkinApiSkin(
     val sourceFilename: String?,
     val binarySize: Long,
     val binarySha256: String?,
+    val manifestUrl: String? = null,
+    val manifestSha256: String? = null,
+    val manifestSize: Long? = null,
     val screenshotCount: Int,
     val gameVersions: String?,
     val status: String?,
@@ -104,15 +107,31 @@ object SkinApiParser {
     }.getOrNull()
 
     private fun parseSkin(value: JSONObject): SkinApiSkin {
-        val screenshotValues = value.optJSONArray("screenshots") ?: JSONArray()
-        val screenshots = screenshotValues.mapObjectsIndexed { index, item ->
-            val order = when { item.has("position") -> item.optInt("position"); item.has("order") -> item.optInt("order"); else -> index }
-            SkinApiScreenshot(item.requireHttps("url"), order, item.optionalString("caption"))
+        val screenshotValues = value.optJSONArray("screenshots")
+            ?: value.optJSONArray("screenshotUrls")
+            ?: value.optJSONArray("screenshot_urls")
+            ?: value.optJSONArray("images")
+            ?: JSONArray()
+        val screenshots = (0 until screenshotValues.length()).mapNotNull { index ->
+            val item = screenshotValues.opt(index)
+            when (item) {
+                is JSONObject -> {
+                    val url = item.optionalHttps("url") ?: item.optionalHttps("imageUrl") ?: item.optionalHttps("image_url") ?: item.optionalHttps("src") ?: item.optionalHttps("srcUrl")
+                    url?.let {
+                        val order = when { item.has("position") -> item.optInt("position"); item.has("order") -> item.optInt("order"); else -> index }
+                        SkinApiScreenshot(it, order, item.optionalString("caption"))
+                    }
+                }
+                is String -> runCatching { requireHttpsValue(item) }.getOrNull()?.let { SkinApiScreenshot(it, index) }
+                else -> null
+            }
         }.sortedBy { it.order }
         return SkinApiSkin(
             value.requireString("id"), value.requireString("title"), value.requireString("creatorName"), value.optionalString("description"),
             value.requireString("carDirectory"), value.requireString("slotKey"), value.requireString("textureFormat"), value.optionalString("sourceFilename"),
-            value.requireLong("binarySize").also { require(it >= 0) }, value.optionalString("binarySha256"), value.optInt("screenshotCount", screenshots.size).coerceAtLeast(0),
+            value.requireLong("binarySize").also { require(it >= 0) }, value.optionalString("binarySha256"),
+            value.optionalHttps("manifestUrl"), value.optionalString("manifestSha256"), value.optionalLong("manifestSize"),
+            value.optInt("screenshotCount", screenshots.size).coerceAtLeast(0),
             value.optionalString("gameVersions"), value.optionalString("status"), value.optionalString("createdAt"), value.optionalString("updatedAt"),
             value.optInt("likes", 0).coerceAtLeast(0), value.optInt("downloads", 0).coerceAtLeast(0), value.optionalHttps("coverUrl"),
             value.optionalHttps("binaryUrl"), value.optionalHttps("detailsUrl"),
@@ -130,6 +149,7 @@ object SkinApiParser {
         return runCatching { getLong(name) }.getOrElse { throw IllegalArgumentException("$name must be numeric", it) }
     }
     private fun JSONObject.optionalString(name: String): String? = if (!has(name) || isNull(name)) null else optString(name).trim().takeIf(String::isNotEmpty)
+    private fun JSONObject.optionalLong(name: String): Long? = if (!has(name) || isNull(name)) null else optLong(name)
     private fun JSONObject.optionalBoolean(name: String): Boolean? = if (!has(name) || isNull(name)) null else getBoolean(name)
     private fun JSONObject.optionalInt(name: String): Int? = if (!has(name) || isNull(name)) null else getInt(name)
     private fun JSONObject.optionalHttps(name: String): String? = optionalString(name)?.let(::requireHttpsValue)

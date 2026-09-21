@@ -33,20 +33,21 @@ import com.example.projectretr0installer.ui.theme.*
 import java.io.File
 import java.util.Locale
 
-@Composable fun SkinCover(modifier: Modifier = Modifier, @DrawableRes art: Int? = null, imageUrl: String? = null) {
+@Composable fun SkinCover(modifier: Modifier = Modifier, @DrawableRes art: Int? = null, imageUrl: String? = null, imageUrls: List<String> = emptyList()) {
     val placeholder: @Composable () -> Unit = { Icon(Icons.Filled.DirectionsCar, "Car artwork placeholder", tint = Color.White.copy(.10f), modifier = Modifier.size(48.dp)) }
+    val resolvedImageUrl = imageUrl ?: imageUrls.firstOrNull()
     Box(modifier.clip(RoundedCornerShape(12.dp)).background(RetroCover), contentAlignment = Alignment.Center) {
         when {
-            imageUrl != null -> SubcomposeAsyncImage(
-                model = imageUrl,
+            resolvedImageUrl != null -> SubcomposeAsyncImage(
+                model = resolvedImageUrl,
                 contentDescription = "Skin artwork",
                 contentScale = ContentScale.Crop,
                 loading = {
-                    Log.d("SKIN_IMAGE_LOADING", "url=$imageUrl")
+                    Log.d("SKIN_IMAGE_LOADING", "url=$resolvedImageUrl")
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { placeholder() }
                 },
                 error = {
-                    Log.e("SKIN_IMAGE_DECODE_FAILED", "url=$imageUrl")
+                    Log.e("SKIN_IMAGE_DECODE_FAILED", "url=$resolvedImageUrl")
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { placeholder() }
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -96,14 +97,14 @@ import java.util.Locale
     }
 }
 @Composable fun CompatibilityBadge(c: Compatibility, modifier: Modifier = Modifier) {
-    val pair = when (c) { Compatibility.COMPATIBLE -> Icons.Filled.Check to RetroSuccess; Compatibility.WRONG_FORMAT -> Icons.Filled.WarningAmber to RetroGold; else -> Icons.Filled.HelpOutline to RetroTextMuted }
+    val pair = when (c) { Compatibility.COMPATIBLE -> Icons.Filled.Check to RetroSuccess; Compatibility.WRONG_FORMAT -> Icons.Filled.WarningAmber to RetroGold; Compatibility.VERIFICATION_UNAVAILABLE -> Icons.Filled.CloudOff to RetroGold; else -> Icons.Filled.HelpOutline to RetroTextMuted }
     BadgePill(c.label, pair.first, pair.second, modifier)
 }
 @Composable fun StatusChip(s: SkinStatus, modifier: Modifier = Modifier) { if (s != SkinStatus.LOCAL) BadgePill(if (s == SkinStatus.ACTIVE) "Active" else "Downloaded", if (s == SkinStatus.ACTIVE) Icons.Filled.CheckCircle else Icons.Filled.Download, if (s == SkinStatus.ACTIVE) RetroSuccess else RetroAccent, modifier) }
 @Composable fun GalleryCard(skin: CommunitySkin, onClick: () -> Unit, onFav: (() -> Unit)? = null, onDelete: (() -> Unit)? = null, modifier: Modifier = Modifier) {
     RetroCard(modifier.clickable(onClick = onClick)) {
         Box {
-            SkinCover(Modifier.fillMaxWidth().aspectRatio(1.35f), imageUrl = skin.coverUrl)
+            SkinCover(Modifier.fillMaxWidth().aspectRatio(1.35f), imageUrl = skin.coverUrl, imageUrls = skin.screenshotUrls)
             Row(Modifier.align(Alignment.TopEnd).padding(7.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (skin.isOwner) BadgePill("Mine", Icons.Filled.Person, RetroAccent)
                 CompatibilityBadge(skin.compatibility)
@@ -166,7 +167,7 @@ fun LibrarySkinCard(
 @Composable fun FeaturedSkinCard(skin: CommunitySkin, onGet: () -> Unit, onClick: () -> Unit, onFav: (() -> Unit)? = null, onDelete: (() -> Unit)? = null) {
     RetroCard(Modifier.clickable(onClick = onClick)) {
         Box {
-            SkinCover(Modifier.fillMaxWidth().aspectRatio(1.7f), imageUrl = skin.coverUrl)
+            SkinCover(Modifier.fillMaxWidth().aspectRatio(1.7f), imageUrl = skin.coverUrl, imageUrls = skin.screenshotUrls)
             Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 BadgePill("Featured", Icons.Filled.Star, RetroGold)
                 if (skin.isOwner) BadgePill("Mine", Icons.Filled.Person, RetroAccent)

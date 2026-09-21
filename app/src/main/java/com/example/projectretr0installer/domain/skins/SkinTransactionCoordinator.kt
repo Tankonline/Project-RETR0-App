@@ -3,6 +3,7 @@ package com.example.projectretr0installer.domain.skins
 import android.os.ParcelFileDescriptor
 import com.example.projectretr0installer.IRetr0UserService
 import com.example.projectretr0installer.data.skins.local.AppliedSkinEntity
+import com.example.projectretr0installer.data.skins.local.LocalSkinEntity
 import com.example.projectretr0installer.data.skins.local.LocalSkinRepository
 import com.example.projectretr0installer.data.skins.local.SkinBackupEntity
 import com.example.projectretr0installer.data.skins.local.SkinOperationEntity
@@ -22,7 +23,8 @@ class SkinTransactionCoordinator(
 
     suspend fun apply(localSkinId: String, service: IRetr0UserService): Result<String> = runCatching {
         val skin = requireNotNull(local.skin(localSkinId)) { "Local skin not found" }
-        val target = requireNotNull(skin.targetPath) { "Choose an RR3 target before applying" }
+        val initialTarget = requireNotNull(skin.targetPath) { "Choose an RR3 target before applying" }
+        val target = resolveTarget(service, skin, initialTarget)
         locks.getOrPut(target) { Mutex() }.withLock {
             val operationId = UUID.randomUUID().toString()
             update(operationId, skin.id, "APPLY", "CREATED", 0, "Preparing")
@@ -47,6 +49,20 @@ class SkinTransactionCoordinator(
                 operationId
             }
         }
+    }
+
+    suspend fun restoreAll(service: IRetr0UserService): Result<Int> = runCatching {
+        val backups = local.backups()
+        var restored = 0
+        backups.forEach { backup ->
+            val target = backup.targetPath
+            if (!service.exists(target)) return@forEach
+            if (service.restoreSkinBackup(backup.backupPath, target, backup.sha256) && service.sha256File(target).equals(backup.sha256, true)) {
+                local.clearApplied(target)
+                restored++
+            }
+        }
+        restored
     }
 
     suspend fun revert(localSkinId: String, service: IRetr0UserService): Result<String> = runCatching {
@@ -87,6 +103,17 @@ class SkinTransactionCoordinator(
                 else -> update(operation.id, skin.id, operation.kind, "ROLLBACK_FAILED", operation.progress, "Manual recovery required")
             }
         }
+    }
+
+    private fun resolveTarget(service: IRetr0UserService, skin: LocalSkinEntity, target: String): String {
+        if (service.exists(target)) return target
+        val packageRoot = "/storage/emulated/0/Android/data/${skin.gamePackage}"
+        val vehiclesRoot = "$packageRoot/files/.depot/vehicles"
+        val candidates = service.scanSkinTargets(packageRoot, vehiclesRoot, skin.sourceFilename, 250, 2_000)
+            .mapNotNull { raw -> raw.split('\t', limit = 3).takeIf { it.size == 3 }?.getOrNull(2) }
+            .filter { it.contains("/vehicles/${skin.carDirectory}/", ignoreCase = true) }
+        require(candidates.size == 1) { if (candidates.isEmpty()) "RR3 target no longer exists and could not be rediscovered" else "Multiple RR3 targets match this skin" }
+        return candidates.single()
     }
 
     private suspend fun createBackup(service: IRetr0UserService, skinId: String, target: String, originalHash: String): SkinBackupEntity {

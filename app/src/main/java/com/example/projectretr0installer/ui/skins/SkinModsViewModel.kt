@@ -20,5 +20,6 @@ class SkinModsViewModel(
 
     suspend fun apply(id: String, service: IRetr0UserService) = transactions.apply(id, service)
     suspend fun revert(id: String, service: IRetr0UserService) = transactions.revert(id, service)
+    suspend fun restoreAll(service: IRetr0UserService) = transactions.restoreAll(service)
     suspend fun recover(service: IRetr0UserService) = transactions.recover(service)
 }

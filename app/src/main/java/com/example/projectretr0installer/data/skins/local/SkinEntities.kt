@@ -20,6 +20,7 @@ data class LocalSkinEntity(
     val binarySize: Long,
     val binarySha256: String,
     val targetPath: String?,
+    val targetRelativePath: String? = null,
     val gamePackage: String,
     val importedAt: Long,
 )

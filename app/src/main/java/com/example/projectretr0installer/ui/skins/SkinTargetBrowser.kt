@@ -239,7 +239,7 @@ class ShizukuSkinTargetBrowserSource(private val service: IRetr0UserService?) : 
         )
         runCatching {
             Log.i(SMART_MATCH_TAG, "event=AIDL_INVOCATION operation=bulk_scan")
-            val encoded = privileged.scanSkinTargets(packageRoot, "$packageRoot/files/.depot/vehicles", importedFileName, limits.directories, limits.entriesPerDirectory)
+            val encoded = privileged.scanSkinTargets(packageRoot, "$packageRoot/files/.depot/vehicles", importedFileName, limits.directories.coerceAtMost(250), limits.entriesPerDirectory.coerceAtMost(2_000))
             var malformed = 0
             var invalidType = 0
             var invalidSize = 0
@@ -337,6 +337,7 @@ object SkinTargetValidator {
     }
 
     fun targetStem(name: String): String = name.removeSuffix(".dds.z").substringBeforeLast('.')
+        .replace(Regex("\\(\\d+\\)"), "")
 
     data class FilenameProfile(
         val year: String?,
@@ -352,7 +353,7 @@ object SkinTargetValidator {
         .filter { it.length >= 2 && it !in setOf("dds", "ext", "int", "one", "two") }.toSet()
 
     fun filenameProfile(name: String): FilenameProfile {
-        val tokens = targetStem(name).lowercase(Locale.ROOT).split('_').filter(String::isNotBlank)
+        val tokens = name.removeSuffix(".dds.z").substringBeforeLast('.').lowercase(Locale.ROOT).split('_').filter(String::isNotBlank)
         val year = tokens.firstOrNull { it.matches(Regex("20\\d{2}")) }
         val manufacturer = tokens.getOrNull(1)
         val slotIndex = tokens.indexOfFirst { it in setOf("ext", "int") }

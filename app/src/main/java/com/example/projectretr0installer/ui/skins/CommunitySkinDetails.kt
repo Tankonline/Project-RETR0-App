@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.projectretr0installer.IRetr0UserService
 import com.example.projectretr0installer.data.skins.SkinApiException
 import com.example.projectretr0installer.data.skins.SkinDownloadManager
 import com.example.projectretr0installer.data.skins.SkinReportReason
@@ -37,9 +38,12 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
     previewState: DetailsState? = null,
     previewTechnicalExpanded: Boolean = false,
     communityViewModel: SkinCommunityViewModel? = null,
+    service: IRetr0UserService? = null,
+    isServiceConnected: Boolean = false,
 ) {
     val context = LocalContext.current
     val runtimeRepository = repository ?: remember(context) { SkinRepository(context) }
+    val compatibilitySource = remember(service) { ShizukuSkinTargetBrowserSource(if (isServiceConnected) service else null) }
     val runtimeViewModel = communityViewModel ?: remember(context, runtimeRepository) {
         SkinCommunityViewModel(runtimeRepository, SkinDownloadManager(context))
     }
@@ -51,12 +55,43 @@ enum class DetailsState { LOADING, CONTENT, ERROR, NOT_FOUND }
     var skin by remember(previewSkin) { mutableStateOf(previewSkin) }
     var loadError by remember(id) { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
+    produceState<CommunitySkin?>(initialValue = null, skin, isServiceConnected, service) {
+        val loaded = skin ?: return@produceState
+        value = loaded
+        if (!isServiceConnected || service == null) return@produceState
+        val source = ShizukuSkinTargetBrowserSource(service)
+        val packageRoot = SkinTargetValidator.ROW_ROOT
+        val filename = loaded.sourceFilename ?: return@produceState
+        value = when (val result = source.bulkExactScan(packageRoot, filename, SmartScanLimits())) {
+            is BrowserResult.Success -> loaded.copy(compatibility = if (result.entries.any { it.path.contains("/vehicles/${loaded.carId}/", true) }) Compatibility.COMPATIBLE else Compatibility.TARGET_MISSING)
+            is BrowserResult.Error -> loaded.copy(compatibility = if (result.diagnostic?.code == SmartMatchErrorCode.SERVICE_UNAVAILABLE || result.diagnostic?.code == SmartMatchErrorCode.TRANSPORT_FAILURE) Compatibility.VERIFICATION_UNAVAILABLE else Compatibility.TARGET_MISSING)
+        }
+    }
     LaunchedEffect(id, retry, previewState) {
         if (previewState != null || previewSkin != null) return@LaunchedEffect
         state = DetailsState.LOADING
         loadError = null
         runCatching { runtimeRepository.details(id) }
-            .onSuccess { skin = it; state = DetailsState.CONTENT }
+            .onSuccess { loaded ->
+                skin = loaded
+                state = DetailsState.CONTENT
+                if (isServiceConnected && service != null) {
+                    val root = SkinTargetValidator.root(GamePackage.ROW)
+                    val sourceResult = compatibilitySource.bulkExactScan(root, loaded.sourceFilename.orEmpty(), SmartScanLimits())
+                    when (sourceResult) {
+                        is BrowserResult.Success -> {
+                            val matched = sourceResult.entries.firstOrNull { entry ->
+                                entry.path.contains("/vehicles/${loaded.carId}/", ignoreCase = true) &&
+                                    entry.name.contains(loaded.slotKey.replace('_', '.'), ignoreCase = true)
+                            }
+                            skin = loaded.copy(compatibility = if (matched == null) Compatibility.TARGET_MISSING else Compatibility.COMPATIBLE)
+                        }
+                        is BrowserResult.Error -> if (sourceResult.diagnostic?.code == SmartMatchErrorCode.SERVICE_UNAVAILABLE || sourceResult.diagnostic?.code == SmartMatchErrorCode.TRANSPORT_FAILURE) {
+                            skin = loaded.copy(compatibility = Compatibility.VERIFICATION_UNAVAILABLE)
+                        }
+                    }
+                }
+            }
             .onFailure { error ->
                 loadError = error.toDetailDiagnostic(id)
                 state = if (error is SkinApiException && error.statusCode == 404) DetailsState.NOT_FOUND else DetailsState.ERROR
@@ -349,6 +384,7 @@ private fun compatibilityText(c: Compatibility) = when (c) {
     Compatibility.WRONG_FORMAT -> "This format may need conversion before it can be applied."
     Compatibility.TARGET_MISSING -> "The target vehicle files were not detected."
     Compatibility.GAME_NOT_DETECTED -> "Compatibility will be checked when a target is available."
+    Compatibility.VERIFICATION_UNAVAILABLE -> "Compatibility could not be verified. Reconnect Shizuku and retry."
 }
 private fun formatSize(bytes: Long) = String.format(Locale.US, "%.2f MiB", bytes / 1024.0 / 1024.0)
 @Composable fun MetadataCard(vehicle: String, carId: String, slotLabel: String, slotKey: String, format: String, versions: String? = null) { RetroCard { DataRow("Vehicle", vehicle); DataRow("Car ID", carId); DataRow("Slot", "$slotLabel ($slotKey)"); DataRow("Format", format); versions?.takeIf { it.isNotBlank() }?.let { DataRow("Game versions", it) } } }

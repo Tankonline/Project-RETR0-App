@@ -1,6 +1,6 @@
 package com.example.projectretr0installer.ui.skins
 
-enum class Compatibility(val label: String) { COMPATIBLE("Fits"), WRONG_FORMAT("Check format"), TARGET_MISSING("Target missing"), GAME_NOT_DETECTED("Game not found") }
+enum class Compatibility(val label: String) { COMPATIBLE("Fits"), WRONG_FORMAT("Check format"), TARGET_MISSING("Target missing"), GAME_NOT_DETECTED("Game not found"), VERIFICATION_UNAVAILABLE("Check unavailable") }
 enum class SkinSlot(val label: String) { EXTERIOR_1("Exterior · Slot 1"), EXTERIOR_2("Exterior · Slot 2"), INTERIOR("Interior") }
 enum class GamePackage(val id: String, val short: String) { ROW("com.ea.games.r3_row", "r3_row"), NA("com.ea.games.r3_na", "r3_na") }
 enum class SkinStatus { LOCAL, DOWNLOADED, ACTIVE }
@@ -36,6 +36,9 @@ data class CommunitySkin(
     val detailsUrl: String? = null,
     val shareUrl: String? = null,
     val binarySha256: String? = null,
+    val manifestUrl: String? = null,
+    val manifestSha256: String? = null,
+    val manifestSize: Long? = null,
     val status: String? = null,
     val isOwner: Boolean = false,
     val likedByMe: Boolean = false,

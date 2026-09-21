@@ -3,6 +3,7 @@ package com.example.projectretr0installer.data.skins
 import android.content.Context
 import com.example.projectretr0installer.ui.skins.CommunitySkin
 import com.example.projectretr0installer.ui.skins.Compatibility
+import com.example.projectretr0installer.ui.skins.GamePackage
 import java.io.File
 import java.util.Locale
 
@@ -12,9 +13,11 @@ open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) 
     open suspend fun listPage(query: String = "", sort: String = "newest", limit: Int = 20, offset: Int = 0): SkinListResponse = source.list(query, sort, limit, offset)
     open suspend fun details(id: String): CommunitySkin = map(source.details(id))
 
+
     open suspend fun createDraft(draft: SkinDraft, idempotencyKey: String): SkinDraftResponse = authenticated { source.createDraft(draft, idempotencyKey) }
     open suspend fun uploadBinary(id: String, file: File) = authenticated { source.uploadBinary(id, file) }
     open suspend fun uploadCover(id: String, file: File, contentType: String) = authenticated { source.uploadCover(id, file, contentType) }
+    open suspend fun uploadManifest(id: String, manifest: String) = authenticated { source.uploadManifest(id, manifest) }
     open suspend fun uploadScreenshot(id: String, position: Int, file: File, contentType: String, caption: String = "") = authenticated { source.uploadScreenshot(id, position, file, contentType, caption) }
     open suspend fun publish(id: String) = authenticated { source.publish(id) }
     open suspend fun setLike(id: String, liked: Boolean) = authenticated { source.setLike(id, liked) }
@@ -28,12 +31,18 @@ open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) 
         cover: File,
         coverContentType: String,
         screenshots: List<SkinUploadImage> = emptyList(),
+        manifest: String? = null,
     ): SkinDraftResponse {
         require(binary.length() == draft.binarySize) { "Binary length does not match draft metadata" }
         val created = createDraft(draft, idempotencyKey)
         uploadBinary(created.id, binary)
         uploadCover(created.id, cover, coverContentType)
-        screenshots.sortedBy { it.position }.forEach { uploadScreenshot(created.id, it.position, it.file, it.contentType, it.caption) }
+        screenshots.sortedBy { it.position }.forEach { image ->
+            require(image.position in 1..4) { "Screenshot position must be between 1 and 4" }
+            require(image.file.isFile && image.file.length() > 0L) { "Screenshot ${image.position} is missing or empty" }
+            uploadScreenshot(created.id, image.position, image.file, image.contentType, image.caption)
+        }
+        manifest?.let { uploadManifest(created.id, it) }
         publish(created.id)
         return created
     }
@@ -52,7 +61,9 @@ open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) 
         creatorId = api.creatorId, creatorAvatarUrl = api.creatorAvatarUrl, coverUrl = api.coverUrl,
         screenshotUrls = api.screenshots.map { it.url }, sourceFilename = api.sourceFilename, binaryUrl = api.binaryUrl,
         detailsUrl = api.detailsUrl, shareUrl = api.shareUrl,
-        binarySha256 = api.binarySha256, status = api.status, isOwner = api.isOwner, likedByMe = api.likedByMe,
+        binarySha256 = api.binarySha256,
+        manifestUrl = api.manifestUrl, manifestSha256 = api.manifestSha256, manifestSize = api.manifestSize,
+        status = api.status, isOwner = api.isOwner, likedByMe = api.likedByMe,
     )
 
     private fun slotName(value: String): String = when (value.lowercase(Locale.ROOT)) {

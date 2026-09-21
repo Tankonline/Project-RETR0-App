@@ -40,17 +40,22 @@ fun SkinLibraryScreen(
     }
     val runtimeSkins = previewSkins ?: storedSkins.map { entity ->
         val active = storedApplied.any { it.skinId == entity.id }
-        val cover = localImages[entity.id]
-            ?.firstOrNull { it.role == SkinImageRole.COVER.name }
+        val localMedia = localImages[entity.id].orEmpty()
+        val cover = localMedia
+            .firstOrNull { it.role == SkinImageRole.COVER.name }
             ?.path
             ?.let { "file://$it" }
+        val screenshots = localMedia
+            .filter { it.role == SkinImageRole.SCREENSHOT.name }
+            .sortedBy { it.position }
+            .map { "file://${it.path}" }
         CarSkin(
             entity.id, entity.title, entity.vehicle, entity.carDirectory, entity.creator,
             slotFromKey(entity.slotKey), entity.textureFormat, entity.binarySize / 1024.0 / 1024.0,
             if (active) SkinStatus.ACTIVE else SkinStatus.LOCAL,
             if (entity.targetPath != null) Compatibility.COMPATIBLE else Compatibility.TARGET_MISSING,
-            screenshotCount = if (cover == null) 0 else 1,
-            coverUrl = cover,
+            screenshotCount = screenshots.size + if (cover == null) 0 else 1,
+            coverUrl = cover ?: screenshots.firstOrNull(),
             sha256 = entity.binarySha256,
             hasBackup = false,
             importedLabel = DateFormat.getDateInstance().format(Date(entity.importedAt)),
