@@ -53,6 +53,9 @@ class FileDownloader {
         chunkDao: ChunkDao? = null,
         onProgress: (Long, Long, Double) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
+        require(chunkNames.isNotEmpty()) { "No chunks were provided" }
+        require(totalSize > 0L) { "Chunked asset size must be positive" }
+        Log.i(TAG, "code=ASSET_INSTALL_I007 stage=chunks_start count=${chunkNames.size} totalBytes=$totalSize concurrency=$currentConcurrency")
         val semaphore = Semaphore(currentConcurrency)
         val downloadedBytes = AtomicLong(0)
         val startTime = System.currentTimeMillis()
@@ -69,10 +72,11 @@ class FileDownloader {
             val isDownloaded = chunkDao?.isChunkDownloaded(identity, modVersion, archiveId) ?: false
             if (isDownloaded) {
                 val file = File(destDir, localChunkFileName(name))
-                if (file.exists()) {
+                if (file.exists() && file.length() > 0L) {
                     initialTotal += file.length()
                     chunkCompletionMap[name] = true
                     chunksFinished++
+                    Log.i(TAG, "code=ASSET_INSTALL_I008 stage=chunk_resume chunk=$name bytes=${file.length()}")
                 }
             }
         }
@@ -98,6 +102,7 @@ class FileDownloader {
                                 "$baseUrl/$chunkName"
                             }
                             
+                            Log.i(TAG, "code=ASSET_INSTALL_I009 stage=chunk_connect chunk=$chunkName url=$chunkUrl")
                             var success = false
                             var attempt = 1
                             while (!success && (attempt <= 8)) {
@@ -121,6 +126,7 @@ class FileDownloader {
                             }
                             
                             if (success) {
+                                Log.i(TAG, "code=ASSET_INSTALL_I010 stage=chunk_complete chunk=$chunkName bytes=${chunkFile.length()} attempt=$attempt")
                                 // --- SMART RESUME: Record completion in DB ---
                                 chunkDao?.markChunkDownloaded(
                                     ChunkEntity(chunkIdentity(chunkName), modVersion, archiveId),
@@ -153,9 +159,10 @@ class FileDownloader {
                 }
                 jobs.awaitAll()
             }
+            Log.i(TAG, "code=ASSET_INSTALL_I011 stage=chunks_complete downloadedBytes=${downloadedBytes.get()} totalBytes=$totalSize")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Parallel download failed", e)
+            Log.e(TAG, "code=ASSET_INSTALL_E006 stage=chunks_failed downloadedBytes=${downloadedBytes.get()} totalBytes=$totalSize", e)
             lastError = e.message ?: "Chunk failure"
             false
         }
@@ -182,9 +189,11 @@ class FileDownloader {
                 connection.setRequestProperty("Range", "bytes=$existingSize-")
             }
 
+            Log.i(TAG, "code=ASSET_INSTALL_I012 stage=http_connect url=$urlStr existingBytes=$existingSize")
             connection.connect()
             when (val code = connection.responseCode) {
                 HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_PARTIAL -> {
+                    Log.i(TAG, "code=ASSET_INSTALL_I013 stage=http_response url=$urlStr status=$code contentLength=${connection.contentLengthLong} contentRange=${connection.getHeaderField("Content-Range")}")
                     val isResuming = (code == HttpURLConnection.HTTP_PARTIAL)
                     if (existingSize > 0L && code == HttpURLConnection.HTTP_OK) dest.delete()
                     if (existingSize > 0L && code == HttpURLConnection.HTTP_PARTIAL &&

@@ -43,6 +43,20 @@ class Retr0Installer(
 
     companion object {
         private const val TAG = "RETR0_INSTALLER_LOG"
+        private const val INSTALL_LOG_TAG = "RETR0_ASSET_INSTALL"
+        private const val CODE_START = "ASSET_INSTALL_E001"
+        private const val CODE_SERVICE_MISSING = "ASSET_INSTALL_E002"
+        private const val CODE_MANIFEST_READY = "ASSET_INSTALL_I001"
+        private const val CODE_STORAGE_CALCULATED = "ASSET_INSTALL_I002"
+        private const val CODE_STORAGE_CHECKED = "ASSET_INSTALL_I003"
+        private const val CODE_STORAGE_INSUFFICIENT = "ASSET_INSTALL_E003"
+        private const val CODE_TARGET_READY = "ASSET_INSTALL_I004"
+        private const val CODE_FILE_START = "ASSET_INSTALL_I005"
+        private const val CODE_CHUNK_DOWNLOAD_FAILED = "ASSET_INSTALL_E004"
+        private const val CODE_HASH_FAILED = "ASSET_INSTALL_E005"
+        private const val CODE_SIZE_FAILED = "ASSET_INSTALL_E007"
+        private const val CODE_SUCCESS = "ASSET_INSTALL_I006"
+        private const val CODE_FATAL = "ASSET_INSTALL_E999"
         private const val AI_TAG = "RETR0_AI"
         private const val MUSIC_LIBRARY_TAG = "RETR0_MUSIC_LIBRARY"
         private const val MANIFEST_URL = "https://pub-f87b4daf1b344ca39c9ba6de6812a777.r2.dev"
@@ -170,7 +184,8 @@ class Retr0Installer(
 
     suspend fun installMod(): Boolean = withContext(Dispatchers.IO) {
         try {
-            val s = service ?: run { fail("Service not connected."); return@withContext false }
+            Log.i(INSTALL_LOG_TAG, "code=$CODE_START stage=install_start")
+            val s = service ?: run { logInstallError(CODE_SERVICE_MISSING, "Service not connected."); fail("Service not connected."); return@withContext false }
             val rr3Path = getRr3Path()
             updateProgress(InstallState.FETCHING_MANIFEST, "Connecting to Cloudflare...")
 
@@ -179,6 +194,7 @@ class Retr0Installer(
                 return@withContext false
             }
             val requiredFiles = manifest.files.filter { it.required && !it.type.equals("apk", ignoreCase = true) }
+            Log.i(INSTALL_LOG_TAG, "code=$CODE_MANIFEST_READY stage=manifest_ready version=${manifest.version} files=${requiredFiles.size}")
             if (requiredFiles.isEmpty()) {
                 fail("Manifest contains no required install files.")
                 return@withContext false
@@ -196,15 +212,19 @@ class Retr0Installer(
                 }
                 .maxOfOrNull { it.size } ?: 0L
             val requiredBytes = totalUncompressed + largestCompressedArchive + (512 * 1024 * 1024L)
+            Log.i(INSTALL_LOG_TAG, "code=$CODE_STORAGE_CALCULATED stage=storage_calculated totalCompressed=$totalCompressed totalUncompressed=$totalUncompressed largestCompressedArchive=$largestCompressedArchive safetyBuffer=${512 * 1024 * 1024L} requiredBytes=$requiredBytes requiredFormatted=${StorageUtils.formatSize(requiredBytes)}")
             var downloadedBytesAccumulated = 0L
 
             updateProgress(InstallState.PREPARING, "Checking storage...")
-            val available = StorageUtils.getAvailableSpace(context.externalCacheDir ?: context.cacheDir)
+            val cacheRoot = context.externalCacheDir ?: context.cacheDir
+            val available = StorageUtils.getAvailableSpace(cacheRoot)
+            Log.i(INSTALL_LOG_TAG, "code=$CODE_STORAGE_CHECKED stage=storage_checked path=${cacheRoot.absolutePath} availableBytes=$available availableFormatted=${StorageUtils.formatSize(available)} requiredBytes=$requiredBytes")
             if (available in (1 until requiredBytes)) {
+                logInstallError(CODE_STORAGE_INSUFFICIENT, "Insufficient space availableBytes=$available requiredBytes=$requiredBytes path=${cacheRoot.absolutePath}")
                 fail("Insufficient space. You need ${StorageUtils.formatSize(requiredBytes)} free.")
                 return@withContext false
             }
-            if (!s.ping()) { fail("Shizuku service not connected."); return@withContext false }
+            if (!s.ping()) { logInstallError(CODE_SERVICE_MISSING, "Shizuku service not connected."); fail("Shizuku service not connected."); return@withContext false }
 
             val tempDir = File(context.externalCacheDir ?: context.cacheDir, "retr0_install").apply { mkdirs() }
             tempDir.listFiles()?.filter { it.name.endsWith(".merged") }?.forEach(File::delete)
@@ -219,9 +239,11 @@ class Retr0Installer(
             s.createDirectory("$rr3Path/files")
             s.createDirectory("$rr3Path/cache")
 
+            Log.i(INSTALL_LOG_TAG, "code=$CODE_TARGET_READY stage=target_ready target=$rr3Path")
             Log.i(TAG, "Starting install sequence targeting: $rr3Path")
             requiredFiles.forEachIndexed { index, file ->
                 val fileNum = "Part ${index + 1} of ${requiredFiles.size}"
+                Log.i(INSTALL_LOG_TAG, "code=$CODE_FILE_START stage=file_start index=${index + 1} file=${file.name} type=${file.type} compressedBytes=${file.size} uncompressedBytes=${file.uncompressedSize} chunks=${file.chunks.size} parts=${file.parts.size}")
                 val downloadFile = File(tempDir, file.name)
 
                 if (file.type == "zip") {
@@ -260,7 +282,10 @@ class Retr0Installer(
                                                 eta = if (speed > 0) "${(remaining / speed).toLong()}s" else "Calculating...",
                                             )
                                         }) throw Exception("Download failed for ${part.name}: ${downloader.lastError}")
-                                    if (!verifier.verifySha256(localPart, part.sha256)) throw Exception("Corrupted split ZIP part: ${part.name}")
+                                    if (!verifier.verifySha256(localPart, part.sha256)) {
+                                logInstallError(CODE_HASH_FAILED, "part=${part.name} path=${localPart.absolutePath} expectedSha256=${part.sha256} actualBytes=${localPart.length()}")
+                                throw Exception("Corrupted split ZIP part: ${part.name}")
+                            }
                                     localParts += localPart
                                     splitBytes += part.size
                                 }
@@ -317,6 +342,7 @@ class Retr0Installer(
                             eta = etaStr,
                         )
                         }) {
+                            logInstallError(CODE_CHUNK_DOWNLOAD_FAILED, "file=${file.name} error=${downloader.lastError}")
                             fail("Fast Download failed for ${file.name}: ${downloader.lastError}")
                             return@withContext false
                         }
@@ -333,8 +359,12 @@ class Retr0Installer(
                                     chunkFile.delete()
                                 }
                             }
+                            if (mergedFile.length() != file.size) {
+                                logInstallError(CODE_SIZE_FAILED, "file=${file.name} expectedBytes=${file.size} actualBytes=${mergedFile.length()}")
+                                throw IllegalStateException("Merged archive size mismatch for ${file.name}")
+                            }
                             if (downloadFile.exists()) downloadFile.delete()
-                            mergedFile.renameTo(downloadFile)
+                            check(mergedFile.renameTo(downloadFile)) { "Unable to finalize merged archive: ${file.name}" }
                         } catch (e: Exception) {
                             fail("Failed to stitch file parts: ${e.message}")
                             return@withContext false
@@ -378,6 +408,7 @@ class Retr0Installer(
                     // Verify hash for single files/merged files
                     if (file.sha256 != "SKIP_VERIFICATION") {
                         if (!verifier.verifySha256(downloadFile, file.sha256)) {
+                            logInstallError(CODE_HASH_FAILED, "file=${file.name} path=${downloadFile.absolutePath} expectedSha256=${file.sha256} actualBytes=${downloadFile.length()}")
                             fail("Corrupted file: ${file.name}")
                             return@withContext false
                         }
@@ -429,11 +460,13 @@ class Retr0Installer(
                 )
             }
 
+            Log.i(INSTALL_LOG_TAG, "code=$CODE_SUCCESS stage=install_complete target=$rr3Path totalCompressed=$totalCompressed totalUncompressed=$totalUncompressed")
             updateProgress(InstallState.SUCCESS, "MOD SUCCESSFULLY INSTALLED", "", 1.0f)
             tempDir.deleteRecursively()
             return@withContext true
 
         } catch (e: Exception) {
+            logInstallError(CODE_FATAL, "type=${e::class.java.simpleName} message=${e.message}", e)
             fail("Fatal Error: ${e.message}")
             return@withContext false
         }
@@ -1532,6 +1565,11 @@ class Retr0Installer(
                 },
             )
         }
+    }
+
+    private fun logInstallError(code: String, message: String, error: Throwable? = null) {
+        if (error == null) Log.e(INSTALL_LOG_TAG, "code=$code stage=install_failed message=$message")
+        else Log.e(INSTALL_LOG_TAG, "code=$code stage=install_failed message=$message", error)
     }
 
     private fun fail(message: String) {
