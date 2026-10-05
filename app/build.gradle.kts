@@ -9,11 +9,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.projectretr0installer"
+    namespace = "com.retr0.projectretr0"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.projectretr0installer"
+        applicationId = "com.retr0.projectretr0"
         minSdk = 26
         targetSdk = 35
         versionCode = 5

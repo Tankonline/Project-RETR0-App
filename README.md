@@ -521,8 +521,8 @@ app/build/outputs/apk/
 The application module currently specifies:
 
 ```text
-Namespace:     com.example.projectretr0installer
-Application ID: com.example.projectretr0installer
+Namespace:     com.retr0.projectretr0
+Application ID: com.retr0.projectretr0
 
 compileSdk:    35
 minSdk:        26

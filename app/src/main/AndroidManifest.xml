@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.projectretr0installer"
+    package="com.retr0.projectretr0"
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -38,7 +38,7 @@
             tools:replace="android:exported" />
 
         <activity
-            android:name="com.example.projectretr0installer.MainActivity"
+            android:name="com.retr0.projectretr0.MainActivity"
             android:exported="true"
             android:theme="@style/Theme.ProjectRETR0Installer"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
@@ -63,7 +63,7 @@
 
         <!-- Foreground Service for background installation -->
         <service
-            android:name="com.example.projectretr0installer.installer.Retr0InstallService"
+            android:name="com.retr0.projectretr0.installer.Retr0InstallService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />

@@ -3,17 +3,17 @@
 -keep interface rikka.shizuku.** { *; }
 
 # Project RETR0 AIDL
--keep class com.example.projectretr0installer.IRetr0UserService { *; }
--keep class com.example.projectretr0installer.IRetr0UserService$Stub { *; }
--keep class com.example.projectretr0installer.IRetr0UserService$Stub$Proxy { *; }
+-keep class com.retr0.projectretr0.IRetr0UserService { *; }
+-keep class com.retr0.projectretr0.IRetr0UserService$Stub { *; }
+-keep class com.retr0.projectretr0.IRetr0UserService$Stub$Proxy { *; }
 
 # Data Models
--keep class com.example.projectretr0installer.installer.InstallManifest { *; }
--keep class com.example.projectretr0installer.installer.InstallFile { *; }
--keep class com.example.projectretr0installer.installer.CommunitySave { *; }
--keep class com.example.projectretr0installer.installer.CommunityMusic { *; }
--keep class com.example.projectretr0installer.installer.LibraryMusic { *; }
--keep class com.example.projectretr0installer.installer.SaveProfile { *; }
+-keep class com.retr0.projectretr0.installer.InstallManifest { *; }
+-keep class com.retr0.projectretr0.installer.InstallFile { *; }
+-keep class com.retr0.projectretr0.installer.CommunitySave { *; }
+-keep class com.retr0.projectretr0.installer.CommunityMusic { *; }
+-keep class com.retr0.projectretr0.installer.LibraryMusic { *; }
+-keep class com.retr0.projectretr0.installer.SaveProfile { *; }
 
 # yt-dlp & FFmpeg
 -keep class com.yausername.youtubedl_android.** { *; }
@@ -34,7 +34,7 @@
 -keep class * extends androidx.room.RoomDatabase
 -keep class * extends androidx.room.Entity
 -keep class * extends androidx.room.Dao
--keep class com.example.projectretr0installer.installer.persistence.** { *; }
+-keep class com.retr0.projectretr0.installer.persistence.** { *; }
 -dontwarn androidx.room.**
 
 # Kotlin Coroutines

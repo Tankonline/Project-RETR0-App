@@ -147,7 +147,10 @@ bool unsupported_extra(const std::vector<uint8_t>& extra) {
         uint16_t len = extra[p + 2] | (uint16_t(extra[p + 3]) << 8);
         p += 4;
         if (p + len > extra.size()) return true;
-        if (id == 0x0001) return true; // ZIP64 is explicitly rejected.
+        if (id == 0x0001) {
+            LOGE("ZIP64 extra field encountered; native extractor does not support ZIP64");
+            return true;
+        }
         p += len;
     }
     return p != extra.size();
@@ -193,7 +196,7 @@ bool extract_one(Reader& r, uint16_t method, uint16_t flags, uint64_t expectedC,
 }
 } // namespace
 
-extern "C" JNIEXPORT jint JNICALL Java_com_example_projectretr0installer_Retr0UserService_nativeExtractPrivileged(JNIEnv* env, jobject, jint fd, jstring destPath) {
+extern "C" JNIEXPORT jint JNICALL Java_com_retr0_projectretr0_Retr0UserService_nativeExtractPrivileged(JNIEnv* env, jobject, jint fd, jstring destPath) {
     if (!destPath) { LOGE("Missing destination path"); return -1; }
     const char* raw = env->GetStringUTFChars(destPath, nullptr); if (!raw) { LOGE("Unable to read destination path"); return -1; }
     std::string root(raw); env->ReleaseStringUTFChars(destPath, raw);
@@ -253,6 +256,6 @@ fail:
     return -1;
 }
 
-extern "C" JNIEXPORT jint JNICALL Java_com_example_projectretr0installer_installer_SonicInstaller_nativeExtract(JNIEnv* env, jobject thiz, jint fd, jstring destPath) {
-    return Java_com_example_projectretr0installer_Retr0UserService_nativeExtractPrivileged(env, thiz, fd, destPath);
+extern "C" JNIEXPORT jint JNICALL Java_com_retr0_projectretr0_installer_SonicInstaller_nativeExtract(JNIEnv* env, jobject thiz, jint fd, jstring destPath) {
+    return Java_com_retr0_projectretr0_Retr0UserService_nativeExtractPrivileged(env, thiz, fd, destPath);
 }
