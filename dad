@@ -1,0 +1,77 @@
+[33mcommit e04771085110c3d6e6638b6d25f6dda80c95ff20[m
+Author: Retrospect69 <armaandeep08.ap@gmail.com>
+Date:   Fri Sep 18 02:37:11 2026 +0100
+
+    build: consolidate to single canonical APK and disable runtime updates
+    
+    - Remove 'github' and 'izzyOnDroid' product flavors to ship one unified APK.
+    - Disable app self-update and yt-dlp runtime executable updates to comply with IzzyOnDroid policies.
+    - Configure release signing using environment variables for secure CI builds.
+    - Refine backup and data extraction rules to exclude device-specific community identity data.
+    - Update version catalog and move hardcoded dependencies to libs.versions.toml.
+    - Clean up distribution-sensitive logic and unused imports in MainActivity and Retr0Installer.
+
+[1mdiff --git a/app/build.gradle.kts b/app/build.gradle.kts[m
+[1mindex 9987837..f95c788 100644[m
+[1m--- a/app/build.gradle.kts[m
+[1m+++ b/app/build.gradle.kts[m
+[36m@@ -17,7 +17,7 @@[m [mandroid {[m
+         minSdk = 26[m
+         targetSdk = 35[m
+         versionCode = 1[m
+[31m-        versionName = "1.0.0-STABLE"[m
+[32m+[m[32m        versionName = "1.0.0"[m
+ [m
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"[m
+ [m
+[36m@@ -40,17 +40,30 @@[m [mandroid {[m
+         }[m
+     }[m
+ [m
+[32m+[m[32m    signingConfigs {[m
+[32m+[m[32m        create("release") {[m
+[32m+[m[32m            val storeFilePath = providers.environmentVariable("RELEASE_STORE_FILE").orNull[m
+[32m+[m[32m            storeFile = storeFilePath?.let(::file)[m
+[32m+[m[32m            storePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull[m
+[32m+[m[32m            keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull[m
+[32m+[m[32m            keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull[m
+[32m+[m[32m        }[m
+[32m+[m[32m    }[m
+[32m+[m
+     buildTypes {[m
+         debug {[m
+             isMinifyEnabled = false[m
+             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")[m
+             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")[m
+[32m+[m[32m            buildConfigField("boolean", "ALLOW_APP_SELF_UPDATE", "false")[m
+         }[m
+         release {[m
+[31m-            isMinifyEnabled = false[m
+[32m+[m[32m            isMinifyEnabled = true[m
+             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")[m
+             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")[m
+[31m-            isShrinkResources = false[m
+[32m+[m[32m            buildConfigField("boolean", "ALLOW_APP_SELF_UPDATE", "false")[m
+[32m+[m[32m            signingConfig = signingConfigs.findByName("release")[m
+[32m+[m[32m            isShrinkResources = true[m
+             proguardFiles([m
+                 getDefaultProguardFile("proguard-android-optimize.txt"),[m
+                 "proguard-rules.pro",[m
+[36m@@ -97,7 +110,7 @@[m [mdependencies {[m
+     implementation(libs.androidx.compose.ui.tooling.preview)[m
+     implementation(libs.androidx.core.ktx)[m
+     implementation(libs.androidx.lifecycle.runtime.ktx)[m
+[31m-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")[m
+[32m+[m[32m    implementation(libs.androidx.lifecycle.viewmodel.ktx)[m
+     implementation(libs.androidx.documentfile)[m
+     implementation(libs.androidx.work.runtime)[m
+     implementation(libs.androidx.room.runtime)[m
+[36m@@ -119,7 +132,7 @@[m [mdependencies {[m
+     androidTestImplementation(libs.androidx.compose.ui.test.junit4)[m
+     androidTestImplementation(libs.androidx.espresso.core)[m
+     androidTestImplementation(libs.androidx.junit)[m
+[31m-    androidTestImplementation("androidx.room:room-testing:2.8.4")[m
+[32m+[m[32m    androidTestImplementation(libs.androidx.room.testing)[m
+     debugImplementation(libs.androidx.compose.ui.test.manifest)[m
+     debugImplementation(libs.androidx.compose.ui.tooling)[m
+ }[m

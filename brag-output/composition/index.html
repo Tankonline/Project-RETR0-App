@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project RETR0 installer - brag</title>
+<style>
+  @font-face { font-family: "PixelMood"; src: url("assets/fonts/hu_pixelmood_l.ttf") format("truetype"); }
+
+  :root {
+    --bg: #0B0D12; --surface: #161A22; --surfaceAlt: #12151C; --cover: #1A2030; --elevated: #1E232E;
+    --border: rgba(255,255,255,.08);
+    --text: #F2F4F8; --soft: #C8CFDA; --dim: #A8B1C0; --muted: #8E97A8;
+    --accent: #3B82F6; --accentT: #6BA2FA; --accentFill: #2563EB; --accentTint: rgba(59,130,246,.14);
+    --success: #34D399; --danger: #F87171; --gold: #F5C542;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  #root {
+    position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg);
+    font-family: Roboto, "Segoe UI", system-ui, sans-serif; color: var(--text);
+  }
+  .clip { position: absolute; }
+  .px { font-family: "PixelMood", monospace; }
+  .pd { display: inline-block; width: .13em; height: .13em; background: currentColor; margin-left: .05em; vertical-align: baseline; }
+  .hook .pd { opacity: 0; }
+
+  /* ---------- persistent background ---------- */
+  #bg { left: 0; top: 0; width: 1920px; height: 1080px;
+        background: radial-gradient(1400px 800px at 50% 110%, rgba(59,130,246,.07), transparent 65%), var(--bg); }
+  #halo { position: absolute; left: -550px; top: -550px; width: 1100px; height: 1100px; border-radius: 50%; opacity: .3;
+          background: radial-gradient(closest-side, rgba(59,130,246,.55), rgba(59,130,246,.18) 55%, transparent 100%); }
+  #vig { position: absolute; inset: 0; background: radial-gradient(closest-side at 50% 50%, transparent 62%, rgba(0,0,0,.5) 100%); pointer-events: none; }
+
+  /* ---------- scene 1 ---------- */
+  #s1 { left: 0; top: 0; width: 1920px; height: 1080px; }
+  .hook { position: absolute; left: 0; width: 1920px; text-align: center; white-space: nowrap;
+          font-family: "PixelMood", monospace; font-size: 132px; line-height: 150px; letter-spacing: 2px; color: var(--text); }
+  #hook1 { top: 190px; } #hook2 { top: 345px; }
+  .hook span { opacity: 0; }
+  #status { position: absolute; left: 470px; top: 640px; width: 980px; height: 268px; box-sizing: border-box; opacity: 0;
+            background: var(--surface); border: 2px solid var(--border); border-radius: 32px; padding: 30px 38px; }
+  #status .hdr { display: flex; align-items: center; gap: 16px; }
+  #status .hdr i { width: 20px; height: 20px; border-radius: 6px; background: var(--accent); display: block; }
+  #status .hdr b { font-weight: 500; font-size: 26px; letter-spacing: 4px; color: var(--muted); }
+  #status .hdr u { flex: 1; height: 2px; background: var(--border); display: block; }
+  #status .row { position: absolute; left: 38px; top: 104px; height: 60px; display: flex; align-items: center; gap: 22px; }
+  .dot { width: 26px; height: 26px; border-radius: 50%; position: absolute; left: 38px; top: 121px; }
+  #dotRed { background: var(--danger); box-shadow: 0 0 22px rgba(248,113,113,.7); }
+  #dotGreen { background: var(--success); box-shadow: 0 0 22px rgba(52,211,153,.7); opacity: 0; }
+  .st { position: absolute; left: 88px; top: 104px; font-size: 44px; font-weight: 500; line-height: 60px; white-space: nowrap; }
+  #stRed { color: var(--danger); }
+  #stGreen { color: var(--success); opacity: 0; }
+  #space { position: absolute; left: 88px; top: 184px; font-size: 30px; color: var(--dim); line-height: 40px; }
+  .ring { position: absolute; inset: -2px; border-radius: 32px; border: 3px solid; pointer-events: none; }
+  #ringRed { border-color: rgba(248,113,113,.65); }
+  #ringGreen { border-color: rgba(52,211,153,.75); opacity: 0; }
+
+  /* ---------- wordmark (scene 2 slam -> corner lockup) ---------- */
+  #wmBig { left: 0; top: 400px; width: 1920px; height: 280px; text-align: center; opacity: 0; }
+  #wmBig .t { font-family: "PixelMood", monospace; font-size: 190px; line-height: 200px; letter-spacing: 3px; color: var(--text); white-space: nowrap; }
+  #wmBig .s { font-size: 44px; line-height: 60px; color: var(--dim); letter-spacing: 3px; margin-top: 8px; opacity: 0; }
+  #wmSmall { left: 140px; top: 62px; width: 700px; opacity: 0; }
+  #wmSmall .t { font-family: "PixelMood", monospace; font-size: 64px; line-height: 70px; letter-spacing: 1.5px; color: var(--text); white-space: nowrap; }
+  #wmSmall .s { font-size: 24px; line-height: 32px; color: var(--dim); letter-spacing: 2px; }
+
+  /* ---------- captions ---------- */
+  .cap { left: 140px; top: 372px; width: 1000px; height: 420px; }
+  .cap .lbl { font-size: 28px; font-weight: 500; letter-spacing: 8px; color: var(--accentT); height: 40px; overflow: hidden; margin-bottom: 26px; }
+  .cap .lbl span, .cap .ln span { display: block; }
+  .cap .ln { overflow: hidden; height: 168px; font-family: "PixelMood", monospace; font-size: 150px; line-height: 168px; letter-spacing: 1px; color: var(--text); white-space: nowrap; }
+  .cap .ln.acc { color: var(--accentT); }
+  .cap .sub { margin-top: 34px; font-size: 34px; line-height: 46px; color: var(--dim); letter-spacing: .6px; white-space: nowrap; opacity: 0; }
+
+  /* ---------- phone ---------- */
+  #phone { left: 1226px; top: 32px; width: 520px; height: 1016px; border-radius: 68px; background: #06080c;
+           border: 2px solid rgba(255,255,255,.13); box-shadow: 0 50px 140px rgba(0,0,0,.65), 0 0 0 1px rgba(0,0,0,.6); }
+  #bezel { position: absolute; left: 12px; top: 12px; width: 496px; height: 992px; border-radius: 56px; overflow: hidden; background: var(--bg); }
+  #punch { position: absolute; left: 50%; top: 22px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: #000; z-index: 60; box-shadow: 0 0 0 2px #0b0e14; }
+  #screen { position: absolute; left: 0; top: 0; width: 360px; height: 720px; transform: scale(1.3778); transform-origin: 0 0; overflow: hidden; }
+
+  /* ---------- app UI kit (dp == px inside #screen) ---------- */
+  .scr { position: absolute; left: 0; top: 0; width: 360px; height: 720px; background: var(--bg); }
+  .abs { position: absolute; }
+  .ttl { position: absolute; left: 16px; font-family: "PixelMood", monospace; font-size: 18px; letter-spacing: .5px; color: var(--text); }
+  .card { position: absolute; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+  .pill { position: absolute; display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 50px; font-size: 11px; letter-spacing: .6px; white-space: nowrap; box-sizing: border-box; }
+  .pill svg, .ic { width: 13px; height: 13px; fill: currentColor; flex: none; }
+  .pill.gold { color: var(--gold); background: rgba(245,197,66,.13); border: 1px solid rgba(245,197,66,.4); }
+  .pill.green { color: var(--success); background: rgba(52,211,153,.13); border: 1px solid rgba(52,211,153,.4); }
+  .pill.blue { color: var(--accentT); background: rgba(59,130,246,.13); border: 1px solid rgba(59,130,246,.4); }
+  .t15 { font-size: 15px; font-weight: 500; color: var(--text); white-space: nowrap; }
+  .t12 { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .t11 { font-size: 11px; color: var(--muted); white-space: nowrap; letter-spacing: 0; }
+  .shead { position: absolute; left: 16px; width: 328px; height: 16px; display: flex; align-items: center; gap: 8px; }
+  .shead i { width: 13px; height: 13px; border-radius: 4px; background: var(--accent); display: block; }
+  .shead b { font-weight: 400; font-size: 11px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
+  .shead u { flex: 1; height: 1px; background: var(--border); display: block; }
+  .shead s { text-decoration: none; font-size: 11px; color: var(--muted); background: var(--surface); border-radius: 10px; padding: 2px 8px; }
+  .btnp { position: absolute; left: 16px; width: 328px; height: 48px; border-radius: 14px; background: var(--accentFill); color: #fff;
+          font-size: 15px; font-weight: 500; text-align: center; line-height: 48px; overflow: hidden; letter-spacing: .2px; }
+  .btnp .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,.26); transform-origin: 0 50%; }
+  .btnp .lab { position: absolute; left: 0; top: 0; width: 100%; }
+  .btns { position: absolute; box-sizing: border-box; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
+          color: var(--soft); font-size: 13px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .btns svg { width: 16px; height: 16px; fill: var(--dim); }
+  .cvr { position: absolute; overflow: hidden; border-radius: 12px; background: var(--cover); }
+  .cvr > svg { width: 100%; height: 100%; display: block; }
+  .scrim { position: absolute; left: 0; top: 0; width: 360px; height: 720px; background: #000; opacity: 0; z-index: 30; }
+  .tap { position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; border-radius: 50%; z-index: 90;
+         background: rgba(255,255,255,.26); border: 2px solid rgba(255,255,255,.55); box-shadow: 0 0 18px rgba(255,255,255,.25); opacity: 0; }
+  .rip { position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; border-radius: 50%; z-index: 89; border: 2px solid rgba(255,255,255,.7); opacity: 0; }
+
+  /* tabs / chips */
+  .tabs { position: absolute; left: 16px; width: 328px; height: 38px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-sizing: border-box; display: flex; padding: 3px; gap: 3px; }
+  .tabs div { flex: 1; border-radius: 9px; text-align: center; line-height: 30px; font-size: 12px; letter-spacing: 1.5px; color: var(--muted); }
+  .tabs div.on { background: var(--accentTint); color: var(--accentT); border: 1px solid rgba(59,130,246,.35); line-height: 28px; }
+  .chips { position: absolute; left: 16px; width: 340px; height: 32px; display: flex; gap: 8px; overflow: hidden; }
+  .chip { flex: none; height: 30px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface); color: var(--soft); font-size: 12px; line-height: 28px; white-space: nowrap; box-sizing: border-box; }
+  .chip.on { background: var(--accentFill); border-color: var(--accentFill); color: #fff; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="root" data-width="1920" data-height="1080" data-start="0" data-duration="22">
+
+  <!-- shared SVG symbols (icons + abstract livery art; no game artwork) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="gAur" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#34D399"/><stop offset=".5" stop-color="#3B82F6"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient>
+      <linearGradient id="gCarbon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a3140"/><stop offset="1" stop-color="#0e1118"/></linearGradient>
+      <linearGradient id="gStock" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9AA3B2"/><stop offset="1" stop-color="#5b6473"/></linearGradient>
+      <linearGradient id="gSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22345f"/><stop offset="1" stop-color="#0d1322"/></linearGradient>
+      <linearGradient id="gSky2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a2030"/><stop offset="1" stop-color="#0a0d14"/></linearGradient>
+      <path id="carBody" d="M28 142 L36 122 C52 112 92 106 128 100 C150 78 196 70 232 88 C262 92 288 108 296 130 L298 142 Z"/>
+      <path id="carCabin" d="M138 98 C156 82 190 78 220 92 L196 98 Z"/>
+      <path id="carStripe" d="M40 128 L292 122 L294 130 L38 136 Z"/>
+      <path id="carWing" d="M20 116 L52 108 L54 112 L22 121 Z"/>
+      <g id="carWheels"><circle cx="82" cy="146" r="20" fill="#0a0c10"/><circle cx="82" cy="146" r="11" fill="#2a3142"/><circle cx="246" cy="146" r="20" fill="#0a0c10"/><circle cx="246" cy="146" r="11" fill="#2a3142"/></g>
+
+      <symbol id="cov-aurora" viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice">
+        <rect width="320" height="190" fill="url(#gSky)"/><rect y="150" width="320" height="40" fill="#0a0d14"/>
+        <path d="M0 60 L320 20 L320 34 L0 82Z" fill="rgba(52,211,153,.22)"/><path d="M0 96 L320 52 L320 62 L0 108Z" fill="rgba(139,92,246,.22)"/>
+        <ellipse cx="160" cy="160" rx="122" ry="7" fill="rgba(0,0,0,.5)"/>
+        <use href="#carBody" fill="url(#gAur)"/><use href="#carCabin" fill="#0a0e18"/><use href="#carStripe" fill="rgba(255,255,255,.55)"/><use href="#carWing" fill="url(#gAur)"/><use href="#carWheels"/>
+      </symbol>
+      <symbol id="cov-carbon" viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice">
+        <rect width="320" height="190" fill="url(#gSky2)"/><rect y="150" width="320" height="40" fill="#090b10"/>
+        <path d="M0 70 L320 30 L320 40 L0 88Z" fill="rgba(59,130,246,.18)"/>
+        <ellipse cx="160" cy="160" rx="122" ry="7" fill="rgba(0,0,0,.5)"/>
+        <use href="#carBody" fill="url(#gCarbon)"/><use href="#carCabin" fill="#05070b"/><use href="#carStripe" fill="#3B82F6"/><use href="#carWing" fill="#3B82F6"/><use href="#carWheels"/>
+      </symbol>
+      <symbol id="cov-stock" viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice">
+        <rect width="320" height="190" fill="url(#gSky2)"/><rect y="150" width="320" height="40" fill="#090b10"/>
+        <ellipse cx="160" cy="160" rx="122" ry="7" fill="rgba(0,0,0,.5)"/>
+        <use href="#carBody" fill="url(#gStock)"/><use href="#carCabin" fill="#0a0e18"/><use href="#carStripe" fill="rgba(255,255,255,.25)"/><use href="#carWing" fill="#6b7280"/><use href="#carWheels"/>
+      </symbol>
+
+      <symbol id="i-dl" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
+      <symbol id="i-fav" viewBox="0 0 24 24"><path d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></symbol>
+      <symbol id="i-ok" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></symbol>
+      <symbol id="i-del" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
+      <symbol id="i-ver" viewBox="0 0 24 24"><path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.96 8.6 1.5 6.71 4.69 3.1 5.5l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82L8.6 22.5l3.4-1.47 3.4 1.46 1.89-3.19 3.61-.82-.34-3.69L23 12zm-12.91 4.72l-3.8-3.81 1.48-1.48 2.32 2.33 5.85-5.87 1.48 1.48-7.33 7.35z"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- ===== persistent background + audio-reactive halo ===== -->
+  <div id="bg" class="clip" data-start="0" data-duration="22" data-track-index="0"><div id="halo"></div><div id="vig"></div></div>
+
+  <!-- ===== SCENE 1 - hook (0.00-3.70) ===== -->
+  <div id="s1" class="clip" data-start="0" data-duration="3.7" data-track-index="1">
+    <div id="hook1" class="hook">Android locked</div>
+    <div id="hook2" class="hook">your game files.</div>
+    <div id="status">
+      <div class="hdr"><i></i><b>SYSTEM STATUS</b><u></u></div>
+      <div id="dotRed" class="dot"></div><div id="dotGreen" class="dot"></div>
+      <div id="stRed" class="st">Shizuku is not running.</div>
+      <div id="stGreen" class="st">Shizuku is running (permission granted).</div>
+      <div id="space">Available Space: 48.2 GB</div>
+      <div id="ringRed" class="ring"></div><div id="ringGreen" class="ring"></div>
+    </div>
+  </div>
+
+  <!-- ===== WORDMARK: scene 2 slam, then corner lockup (3.70-17.91) ===== -->
+  <div id="wmBig" class="clip" data-layout-allow-overlap data-start="3.7" data-duration="1.7" data-track-index="2">
+    <div class="t">PROJECT RETR0</div><div class="s">for Real Racing 3</div>
+  </div>
+  <div id="wmSmall" class="clip" data-layout-allow-overlap data-start="5.0" data-duration="12.91" data-track-index="2">
+    <div class="t">PROJECT RETR0</div><div class="s">for Real Racing 3</div>
+  </div>
+
+  <!-- ===== CAPTIONS (scenes 2-4) ===== -->
+  <div id="cap1" class="clip cap" data-start="5.2" data-duration="3.76" data-track-index="3">
+    <div class="lbl" data-layout-allow-overflow><span>01 / SKINS</span></div>
+    <div class="ln" data-layout-allow-overflow><span>Swap the</span></div><div class="ln acc" data-layout-allow-overflow><span>skin<i class="pd"></i></span></div>
+    <div class="sub">Community Hub  →  Get  →  Apply</div>
+  </div>
+  <div id="cap2" class="clip cap" data-start="8.96" data-duration="4.74" data-track-index="3">
+    <div class="lbl" data-layout-allow-overflow><span>02 / MUSIC</span></div>
+    <div class="ln" data-layout-allow-overflow><span>Swap the</span></div><div class="ln acc" data-layout-allow-overflow><span>soundtrack<i class="pd"></i></span></div>
+    <div class="sub">YouTube link  →  Local Library  →  game slot</div>
+  </div>
+  <div id="cap3" class="clip cap" data-start="13.7" data-duration="4.21" data-track-index="3">
+    <div class="lbl" data-layout-allow-overflow><span>03 / SAFETY NET</span></div>
+    <div class="ln" data-layout-allow-overflow><span>Broke it?</span></div><div class="ln acc" data-layout-allow-overflow><span>Revert it<i class="pd"></i></span></div>
+    <div class="sub">Backup first. Restore the original anytime.</div>
+  </div>
+
+  <!-- ===== PHONE with recreated app screens (4.90-17.91) ===== -->
+  <div id="phone" class="clip" data-layout-allow-overflow data-start="4.9" data-duration="13.01" data-track-index="4">
+    <div id="bezel"><div id="punch"></div>
+      <div id="screen">
+
+        <!-- A: Community Hub gallery -->
+        <div id="scrA" class="scr" data-layout-allow-overlap data-layout-allow-occlusion >
+          <div class="ttl" style="top:26px">COMMUNITY HUB</div>
+          <div class="tabs" style="top:66px"><div class="on">SKINS</div><div>SAVES</div><div>MUSIC</div></div>
+          <div class="chips" style="top:114px"><div class="chip on">All</div><div class="chip">Exterior · Slot 1</div><div class="chip">Exterior · Slot 2</div><div class="chip">Interior</div></div>
+
+          <div id="feat" class="card" style="left:14px;top:158px;width:332px;height:250px">
+            <div class="cvr" data-layout-allow-overflow style="left:14px;top:14px;width:304px;height:179px"><svg data-layout-allow-overflow viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice"><use href="#cov-aurora"/></svg>
+              <div class="pill gold" style="left:8px;top:8px"><svg><use href="#i-star"/></svg>Featured</div>
+              <div class="abs" style="left:0;bottom:0;width:304px;height:56px;background:rgba(18,21,28,.94)">
+                <div class="abs t15" style="left:10px;top:8px">Aurora Drift</div>
+                <div class="abs t12" style="left:10px;top:30px">by NovaMods</div>
+                <div class="pill gold" style="right:10px;top:16px"><svg><use href="#i-ver"/></svg>Verified</div>
+              </div>
+            </div>
+            <div class="abs" style="left:14px;top:202px;height:34px;display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11px">
+              <svg class="ic" style="fill:var(--dim);width:14px;height:14px"><use href="#i-fav"/></svg><span>1200</span>
+              <svg class="ic" style="fill:var(--accent);width:14px;height:14px;margin-left:8px"><use href="#i-dl"/></svg><span>4800</span>
+            </div>
+            <div id="getBtn" class="btns" style="left:234px;top:202px;width:84px;height:34px"><svg><use href="#i-dl"/></svg>Get</div>
+            <div id="activeChip" class="pill green" style="left:222px;top:205px;width:96px;height:28px;justify-content:center;opacity:0;font-size:12px"><svg><use href="#i-ok"/></svg>Active</div>
+            <div id="featRing" class="abs" style="left:-1px;top:-1px;width:332px;height:250px;border-radius:16px;border:2px solid var(--success);box-sizing:border-box;opacity:0"></div>
+          </div>
+
+          <div id="gal" class="card" style="left:14px;top:424px;width:332px;height:300px">
+            <div class="cvr" data-layout-allow-overflow style="left:14px;top:14px;width:304px;height:225px"><svg data-layout-allow-overflow viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice"><use href="#cov-carbon"/></svg>
+              <div class="pill green" style="right:8px;top:8px"><svg><use href="#i-ok"/></svg>Fits</div></div>
+            <div class="abs t15" style="left:14px;top:248px">Midnight Carbon</div>
+            <div class="abs t12" style="left:14px;top:270px">Audi R18 e-tron</div>
+          </div>
+
+          <!-- download & apply sheet -->
+          <div id="scrimA" class="scrim" data-layout-allow-overlap data-layout-allow-occlusion ></div>
+          <div id="sheet" class="abs" data-layout-allow-overlap data-layout-allow-occlusion  style="left:0;top:465px;width:360px;height:255px;background:var(--surface);border-radius:24px 24px 0 0;border-top:1px solid var(--border);z-index:40">
+            <div class="abs" style="left:150px;top:10px;width:60px;height:4px;border-radius:2px;background:rgba(255,255,255,.2)"></div>
+            <div class="abs px" style="left:18px;top:26px;font-size:18px;letter-spacing:.5px;color:var(--text)">Download &amp; apply</div>
+            <div class="abs t12" style="left:18px;top:58px;color:var(--dim)">Porsche 911 RSR · Exterior · Slot 1 · 4.7 MB</div>
+            <div class="abs" style="left:18px;top:90px;width:324px;height:56px;border-radius:12px;background:rgba(59,130,246,.10);box-sizing:border-box;padding:10px 12px 0 40px;font-size:12px;line-height:16px;color:var(--soft)">
+              <svg class="abs" style="left:12px;top:17px;width:20px;height:20px;fill:var(--accent)"><use href="#i-lock"/></svg>The app picks the game path; custom paths aren't allowed.</div>
+            <div id="applyBtn" class="btnp" style="left:18px;top:168px;width:324px"><div class="fill" id="applyFill"></div><div class="lab" id="applyLab">APPLY</div><div class="lab" id="applyLab2" style="opacity:0">APPLYING…</div></div>
+          </div>
+        </div>
+
+        <!-- B: Music hub / YouTube converter -->
+        <div id="scrB" class="scr" data-layout-allow-overlap data-layout-allow-occlusion >
+          <div class="ttl" style="top:26px">MUSIC HUB</div>
+          <div class="shead" style="top:76px"><i></i><b>YouTube converter</b><u></u></div>
+          <div class="abs t12" style="left:16px;top:100px;width:328px;white-space:normal;line-height:16px">Convert YouTube links to MP3s in your Local Library.</div>
+          <div id="field" class="abs" style="left:16px;top:146px;width:328px;height:46px;border-radius:12px;background:var(--surfaceAlt);border:1px solid var(--border);box-sizing:border-box">
+            <div id="fieldFocus" class="abs" style="inset:-1px;border-radius:12px;border:2px solid var(--accent);opacity:0"></div>
+            <div id="urlPh" class="abs" style="left:14px;top:0;line-height:44px;font-size:14px;color:var(--muted)">Paste YouTube URL here…</div>
+            <div id="urlTxt" class="abs" style="left:14px;top:0;line-height:44px;font-size:14px;color:var(--text);white-space:nowrap">youtu.be/n1ghtdr1ve</div>
+          </div>
+          <div id="cvBtn" class="btnp" data-layout-allow-overlap data-layout-allow-occlusion  style="top:204px"><div class="fill" id="cvFill"></div><div class="lab" id="cvLab" data-layout-allow-overlap data-layout-allow-occlusion >CONVERT TO LIBRARY</div><div class="lab" id="cvLab2" data-layout-allow-overlap data-layout-allow-occlusion  style="opacity:0">CONVERTING…</div></div>
+          <div class="shead" style="top:284px"><i></i><b>Local library</b><u></u><s id="libCount" style="opacity:0">1</s></div>
+          <div id="libCard" class="card" data-layout-allow-overlap data-layout-allow-occlusion  style="left:14px;top:312px;width:332px;height:76px">
+            <div id="libEmpty" class="abs" data-layout-allow-overlap data-layout-allow-occlusion  style="left:0;top:0;width:330px;line-height:74px;text-align:center;font-size:13px;color:var(--muted)">Your music library is empty.</div>
+            <div id="libRow" class="abs" data-layout-allow-overlap data-layout-allow-occlusion  style="left:0;top:0;width:330px;height:74px;opacity:0">
+              <div class="abs" style="left:14px;top:20px;width:32px;height:32px;border-radius:6px;background:#000 url(assets/img/retro-mark.jpg) -70px -77px/190px 190px no-repeat"></div>
+              <div class="abs" data-layout-allow-overlap data-layout-allow-occlusion style="left:58px;top:17px;font-size:14px;color:var(--text)">Night Drive</div>
+              <div class="abs t11" data-layout-allow-overlap data-layout-allow-occlusion style="left:58px;top:37px">Unknown Artist</div>
+              <svg class="abs" style="left:222px;top:27px;width:20px;height:20px;fill:var(--danger)"><use href="#i-del"/></svg>
+              <div id="applyPill" class="abs" style="left:255px;top:23px;width:62px;height:28px;border-radius:20px;border:1px solid rgba(59,130,246,.5);color:var(--accentT);font-size:13px;text-align:center;line-height:26px;box-sizing:border-box">Apply</div>
+            </div>
+          </div>
+
+          <!-- replace soundtrack dialog -->
+          <div id="scrimB" class="scrim" data-layout-allow-overlap data-layout-allow-occlusion ></div>
+          <div id="dlg" class="abs" data-layout-allow-overlap data-layout-allow-occlusion  style="left:28px;top:200px;width:304px;height:292px;border-radius:28px;background:var(--elevated);z-index:40;opacity:0;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+            <div class="abs" style="left:24px;top:22px;font-size:20px;color:var(--text)">Replace Soundtrack</div>
+            <div class="abs" style="left:24px;top:56px;font-size:13px;color:var(--soft)">Use 'Night Drive' to replace:</div>
+            <div id="slot1" class="abs" style="left:14px;top:92px;width:276px;height:52px;border-radius:12px;box-sizing:border-box;border:1px solid var(--border);background:var(--surface)">
+              <div id="slot1Sel" class="abs" style="inset:-1px;border-radius:12px;border:2px solid var(--accent);background:var(--accentTint);opacity:0"></div>
+              <div class="abs" style="left:14px;top:9px;font-size:14px;color:var(--text)">Race Music 1</div><div class="abs t11" style="left:14px;top:29px">race_music_01.mp3</div>
+              <div id="slot1Ok" class="pill green" style="right:10px;top:12px;opacity:0"><svg><use href="#i-ok"/></svg>Replaced</div>
+            </div>
+            <div class="abs" style="left:14px;top:150px;width:276px;height:52px;border-radius:12px;box-sizing:border-box;border:1px solid var(--border);background:var(--surface)">
+              <div class="abs" style="left:14px;top:9px;font-size:14px;color:var(--text)">Race Music 2</div><div class="abs t11" style="left:14px;top:29px">race_music_02.mp3</div></div>
+            <div class="abs" style="left:14px;top:208px;width:276px;height:52px;border-radius:12px;box-sizing:border-box;border:1px solid var(--border);background:var(--surface)">
+              <div class="abs" style="left:14px;top:9px;font-size:14px;color:var(--text)">Menu Theme</div><div class="abs t11" style="left:14px;top:29px">menu_theme.mp3</div></div>
+          </div>
+        </div>
+
+        <!-- C: Save hub -->
+        <div id="scrC" class="scr" data-layout-allow-overlap data-layout-allow-occlusion >
+          <div class="ttl" style="top:26px">SAVE HUB</div>
+          <div class="abs t12" style="left:16px;top:60px;width:328px;white-space:normal;line-height:16px">Create and switch between character data snapshots.</div>
+          <div id="bkBtn" class="btnp" style="top:108px"><div class="fill" id="bkFill"></div><div class="lab">BACKUP CHARACTER DATA</div></div>
+          <div class="shead" style="top:182px"><i></i><b>Snapshots</b><u></u><s id="snapCount" style="opacity:0">1</s></div>
+          <div id="snapCard" class="card" style="left:14px;top:210px;width:332px;height:84px">
+            <div id="snapEmpty" class="abs" style="left:24px;top:0;width:282px;height:82px;display:flex;align-items:center;text-align:center;justify-content:center;font-size:13px;line-height:18px;color:var(--muted)">No snapshots found. Backup your current progress!</div>
+            <div id="snapRow" class="abs" style="left:0;top:0;width:330px;height:82px;opacity:0">
+              <div class="abs" style="left:16px;top:20px;font-size:14px;color:var(--text)">My Career</div>
+              <div class="abs t11" style="left:16px;top:42px">Level 42 · Gold 320 · Just now</div>
+              <div class="abs" style="left:196px;top:26px;width:52px;height:28px;border-radius:20px;background:var(--accentFill);color:#fff;font-size:13px;text-align:center;line-height:28px">Apply</div>
+              <svg class="abs" style="left:258px;top:32px;width:16px;height:16px;fill:var(--success)"><use href="#i-up"/></svg>
+              <svg class="abs" style="left:282px;top:32px;width:16px;height:16px;fill:var(--dim)"><use href="#i-edit"/></svg>
+              <svg class="abs" style="left:306px;top:32px;width:16px;height:16px;fill:var(--danger)"><use href="#i-del"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- D: Library / revert -->
+        <div id="scrD" class="scr" data-layout-allow-overlap data-layout-allow-occlusion >
+          <div class="ttl" style="top:26px">LIBRARY</div>
+          <div id="origCard" class="card" style="left:14px;top:72px;width:332px;height:64px">
+            <div class="abs" style="left:16px;top:12px;font-size:14px;font-weight:500;color:var(--success)">Original backup available</div>
+            <div class="abs t11" style="left:16px;top:34px">Sep 20 · 3f9a1c2e</div>
+          </div>
+          <div class="shead" style="top:160px"><i></i><b>Active skin</b><u></u></div>
+          <div id="actCard" class="card" style="left:14px;top:188px;width:332px;height:104px">
+            <div class="cvr" data-layout-allow-overflow style="left:14px;top:14px;width:76px;height:76px"><svg data-layout-allow-overflow viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice"><use id="actCover" href="#cov-aurora"/></svg></div>
+            <div class="abs t15" style="left:102px;top:14px">Aurora Drift</div>
+            <div class="abs t11" style="left:102px;top:36px;white-space:normal;width:120px;line-height:14px">Porsche 911 RSR · Exterior · Slot 1</div>
+            <div class="pill green" style="left:102px;top:70px"><svg><use href="#i-ok"/></svg>Active</div>
+            <div id="revBtn" class="btns" style="left:228px;top:37px;width:90px;height:34px">Revert</div>
+            <div id="revLine" class="abs" style="left:0;top:0;width:330px;height:3px;background:var(--accent);transform-origin:0 50%;border-radius:16px 16px 0 0"></div>
+          </div>
+          <div id="restored" class="card" style="left:14px;top:188px;width:332px;height:104px;opacity:0;border-color:rgba(52,211,153,.5)">
+            <div class="cvr" data-layout-allow-overflow style="left:14px;top:14px;width:76px;height:76px"><svg data-layout-allow-overflow viewBox="0 0 320 190" preserveAspectRatio="xMidYMid slice"><use href="#cov-stock"/></svg></div>
+            <div class="abs t15" style="left:102px;top:14px">Original livery</div>
+            <div class="abs t11" style="left:102px;top:36px;white-space:normal;width:200px;line-height:14px">Porsche 911 RSR · Exterior · Slot 1</div>
+            <div class="pill green" style="left:102px;top:66px;font-size:12px"><svg><use href="#i-ok"/></svg>Restored</div>
+          </div>
+        </div>
+
+        <!-- touch indicator (Android shows a touch dot in screen recordings) -->
+        <div id="rip" class="rip"></div>
+        <div id="tap" class="tap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SCENE 5 - outro (17.91-22.00) ===== -->
+  <div id="s5" class="clip" data-start="17.91" data-duration="4.09" data-track-index="5" style="left:0;top:0;width:1920px;height:1080px">
+    <div id="mark" class="abs" data-layout-allow-overflow style="position:absolute;left:510px;top:60px;width:900px;height:440px;overflow:hidden;opacity:0;mix-blend-mode:screen">
+      <img data-layout-allow-overflow src="assets/img/retro-mark.jpg" alt="" style="position:absolute;width:1600px;height:1600px;left:-277px;top:-561px">
+    </div>
+    <div id="s5Title" style="position:absolute;left:0;top:530px;width:1920px;text-align:center;font-family:'PixelMood',monospace;font-size:150px;line-height:160px;letter-spacing:3px;color:var(--text);opacity:0;white-space:nowrap">PROJECT RETR0</div>
+    <div id="tag" style="position:absolute;left:0;top:730px;width:1920px;text-align:center;font-family:'PixelMood',monospace;font-size:82px;line-height:96px;letter-spacing:2px;white-space:nowrap;color:var(--soft)">
+      <span id="w1" style="opacity:0">Preserve<i class="pd"></i></span> <span id="w2" style="opacity:0">Modify<i class="pd"></i></span> <span id="w3" style="opacity:0">Restore<i class="pd"></i></span> <span id="w4" style="opacity:0;color:var(--accentT);display:inline-block">Race<i class="pd"></i></span>
+    </div>
+    <div id="foot" style="position:absolute;left:0;top:880px;width:1920px;text-align:center;opacity:0">
+      <div style="font-size:32px;letter-spacing:3px;color:var(--dim);line-height:44px">Free · Open source · GPL-3.0</div>
+      <div style="font-size:23px;color:var(--muted);line-height:36px;margin-top:22px">Unofficial. Not affiliated with EA or Real Racing 3.</div>
+    </div>
+  </div>
+
+  <!-- ===== cut flash + end fade ===== -->
+  <div id="flash" class="clip" data-start="0" data-duration="22" data-track-index="6" style="left:0;top:0;width:1920px;height:1080px;background:#fff;opacity:0;pointer-events:none"></div>
+  <div id="fade" class="clip" data-start="21.5" data-duration="0.5" data-track-index="7" style="left:0;top:0;width:1920px;height:1080px;background:#000;opacity:0;pointer-events:none"></div>
+
+  <!-- ===== audio ===== -->
+  <audio id="music" data-start="0" data-duration="22" data-track-index="8" data-volume="1" src="assets/audio/bed.mp3"></audio>
+  <audio id="sfx" data-start="0" data-duration="22" data-track-index="9" data-volume="1" src="assets/audio/sfx-mix.wav"></audio>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script src="assets/audio/rms.js"></script>
+  <script>
+  (function () {
+    const tl = gsap.timeline({ paused: true });
+    const q = (s) => document.querySelector(s);
+    const E = { out: "power3.out", in: "power2.in", io: "power2.inOut", expo: "expo.out", back: "back.out(1.7)" };
+
+    function splitChars(el) {
+      const txt = el.textContent; el.textContent = "";
+      return Array.from(txt).map((ch) => { const s = document.createElement("span"); if (ch === ".") { s.className = "pd"; } else { s.textContent = ch === " " ? " " : ch; } el.appendChild(s); return s; });
+    }
+    const fade = (el, to, t, d, ease) => tl.to(el, { opacity: to, duration: d == null ? 0.25 : d, ease: ease || "power2.out" }, t);
+    const press = (el, t) => { tl.to(el, { scale: 0.95, duration: 0.07, ease: "power2.out" }, t).to(el, { scale: 1, duration: 0.18, ease: "power2.out" }, t + 0.07); };
+
+    // ---------- touch indicator (phone-screen dp coordinates) ----------
+    const T = q("#tap"), R = q("#rip");
+    tl.set(T, { x: 300, y: 620, opacity: 0 }, 0);
+    tl.set(R, { x: 0, y: 0, opacity: 0 }, 0);
+    const touchTo = (x, y, t, d) => tl.to(T, { x: x, y: y, duration: d, ease: E.io }, t);
+    const touchTap = (x, y, t) => {
+      tl.set(R, { x: x, y: y, scale: 0.4, opacity: 0.6 }, t).to(R, { scale: 2.4, opacity: 0, duration: 0.45, ease: "power2.out" }, t);
+      tl.to(T, { scale: 0.78, duration: 0.07, ease: "power2.out" }, t).to(T, { scale: 1, duration: 0.16, ease: "power2.out" }, t + 0.07);
+    };
+
+    // ---------- initial states ----------
+    tl.set("#phone", { y: 1100 }, 0);
+    tl.set("#status", { y: 40 }, 0);
+    tl.set("#sheet", { y: 260 }, 0);
+    tl.set("#scrB, #scrC, #scrD", { x: 360 }, 0);
+    tl.set(".btnp .fill, #revLine", { scaleX: 0 }, 0);
+    tl.set("#scrB, #scrC, #scrD, #sheet", { visibility: "hidden" }, 0);
+    tl.set("#dlg", { scale: 0.92 }, 0);
+    tl.set("#libRow", { y: -10 }, 0);
+    tl.set("#snapRow", { y: -10 }, 0);
+    tl.set("#wmBig .s", { y: 12 }, 0);
+    tl.set(".cap .lbl span", { yPercent: 120 }, 0);
+    tl.set(".cap .ln span", { yPercent: 115 }, 0);
+    tl.set("#mark", { scale: 1.3 }, 0);
+    tl.set("#s5Title", { y: 40 }, 0);
+    tl.set("#w4", { scale: 0.7 }, 0);
+
+    // =========================================================
+    // SCENE 1 - hook (0.00 - 3.70)
+    // =========================================================
+    const c1 = splitChars(q("#hook1")), c2 = splitChars(q("#hook2"));
+    c1.slice(8, 14).forEach((s) => { s.style.color = "var(--danger)"; });   // "locked"
+    c1.concat(c2).forEach((s, i) => tl.set(s, { opacity: 1 }, 0.10 + i * 0.04));   // typed 0.10-1.26s
+    tl.to("#status", { opacity: 1, y: 0, duration: 0.3, ease: E.back }, 1.5);
+    // 2.50: Shizuku red -> green
+    fade("#stRed", 0, 2.5, 0.12); fade("#dotRed", 0, 2.5, 0.12); fade("#ringRed", 0, 2.5, 0.12);
+    fade("#stGreen", 1, 2.5, 0.2); fade("#dotGreen", 1, 2.5, 0.2); fade("#ringGreen", 1, 2.5, 0.2);
+    tl.to("#status", { scale: 1.03, duration: 0.12, ease: "power2.out" }, 2.5).to("#status", { scale: 1, duration: 0.3, ease: "back.out(2)" }, 2.62);
+    // cut flash at 3.70
+    tl.set("#flash", { opacity: 0.55 }, 3.70).to("#flash", { opacity: 0, duration: 0.18, ease: "power2.out" }, 3.70);
+
+    // =========================================================
+    // SCENE 2 - reveal + skin swap (3.70 - 8.96)
+    // =========================================================
+    // beat-locked: 3.70s title slam
+    tl.set("#wmBig", { scale: 1.28 }, 0);
+    tl.to("#wmBig", { opacity: 1, scale: 1, duration: 0.3, ease: E.expo }, 3.70);
+    tl.to("#wmBig .s", { opacity: 1, y: 0, duration: 0.3, ease: E.out }, 3.86);
+    // lands in the corner as a small lockup (crossfade at the end of the move)
+    tl.to("#wmBig", { x: -560, y: -420, scale: 0.34, duration: 0.5, ease: E.io }, 4.85);
+    fade("#wmBig", 0, 5.2, 0.2);
+    fade("#wmSmall", 1, 5.05, 0.25);
+
+    tl.to("#phone", { y: 0, duration: 0.6, ease: "power3.out" }, 4.9);
+    // caption 1
+    tl.to("#cap1 .lbl span", { yPercent: 0, duration: 0.35, ease: E.out }, 5.2);
+    tl.to("#cap1 .ln span", { yPercent: 0, duration: 0.45, ease: E.out, stagger: 0.09 }, 5.28);
+    fade("#cap1 .sub", 1, 5.75, 0.35);
+
+    // camera: scale + recenter on the current tap target (ry = target y relative to phone centre, in phone px)
+    const cam = (t, sc, ry, d) => {
+      const lim = Math.max(0, 508 * sc - 540 + 30);
+      const y = Math.max(-lim, Math.min(lim, -ry * sc * 0.9));
+      tl.to("#phone", { scale: sc, y: y, duration: d, ease: E.io }, t);
+    };
+    cam(5.95, 1.22, 23, 0.5);        // GET
+    cam(6.85, 1.28, 409, 0.45);      // APPLY (sheet)
+    cam(7.95, 1.12, 0, 0.6);         // Active
+    cam(9.15, 1.26, -240, 0.4);      // URL field
+    cam(11.40, 1.24, -15, 0.4);      // library row / Apply pill
+    cam(12.75, 1.10, 0, 0.6);        // release
+    cam(13.90, 1.26, -314, 0.4);     // BACKUP
+    cam(15.50, 1.26, -163, 0.4);     // Revert
+    cam(16.75, 1.14, 0, 0.6);        // Restored
+
+    // touch: GET -> sheet -> APPLY -> Active
+    fade(T, 1, 5.9, 0.2);
+    touchTo(290, 377, 5.95, 0.45);
+    touchTap(290, 377, 6.40); press("#getBtn", 6.40);
+    tl.to("#scrimA", { opacity: 0.55, duration: 0.25, ease: "power2.out" }, 6.45);
+    tl.set("#sheet", { visibility: "visible" }, 6.44);
+    tl.to("#sheet", { y: 0, duration: 0.35, ease: E.out }, 6.45);
+    touchTo(180, 657, 6.85, 0.45);
+    touchTap(180, 657, 7.30); press("#applyBtn", 7.30);
+    fade("#applyLab", 0, 7.32, 0.08); fade("#applyLab2", 1, 7.32, 0.08);
+    tl.to("#applyFill", { scaleX: 1, duration: 0.5, ease: "power1.inOut" }, 7.36);
+    fade(T, 0, 7.75, 0.2);
+    tl.to("#scrimA", { opacity: 0, duration: 0.3, ease: "power2.in" }, 7.90);
+    tl.to("#sheet", { y: 260, duration: 0.35, ease: E.in }, 7.90);
+    tl.set("#sheet", { visibility: "hidden" }, 8.26);
+    // 8.15: Active
+    fade("#getBtn", 0, 8.15, 0.1);
+    tl.to("#activeChip", { opacity: 1, duration: 0.15, ease: "power2.out" }, 8.15);
+    tl.fromTo("#activeChip", { scale: 0.7 }, { scale: 1, duration: 0.35, ease: E.back, immediateRender: false }, 8.15);
+    fade("#featRing", 1, 8.15, 0.2);
+
+    // =========================================================
+    // SCENE 3 - soundtrack swap (8.96 - 13.70)
+    // =========================================================
+    // beat-locked: 8.96s screen slide + caption swap
+    tl.to("#cap1 .lbl span", { yPercent: -120, duration: 0.25, ease: E.in }, 8.66);
+    tl.to("#cap1 .ln span", { yPercent: -115, duration: 0.28, ease: E.in, stagger: 0.05 }, 8.62);
+    fade("#cap1 .sub", 0, 8.62, 0.25);
+    tl.to("#scrA", { x: -120, opacity: 0, duration: 0.4, ease: E.io }, 8.96);
+    tl.set("#scrB", { visibility: "visible" }, 8.95);
+    tl.to("#scrB", { x: 0, duration: 0.4, ease: E.io }, 8.96);
+    tl.to("#cap2 .lbl span", { yPercent: 0, duration: 0.35, ease: E.out }, 9.02);
+    tl.to("#cap2 .ln span", { yPercent: 0, duration: 0.45, ease: E.out, stagger: 0.09 }, 9.08);
+    fade("#cap2 .sub", 1, 9.55, 0.35);
+
+    const url = splitChars(q("#urlTxt"));
+    url.forEach((s) => { s.style.opacity = 0; });
+    tl.set(T, { x: 250, y: 110 }, 9.1);
+    fade(T, 1, 9.15, 0.15);
+    touchTo(180, 169, 9.18, 0.27);
+    touchTap(180, 169, 9.45);
+    fade("#fieldFocus", 1, 9.45, 0.12); fade("#urlPh", 0, 9.55, 0.1);
+    url.forEach((s, i) => tl.set(s, { opacity: 1 }, 9.55 + i * 0.04));            // typed 9.55-10.31
+    touchTo(180, 228, 9.95, 0.5);
+    touchTap(180, 228, 10.50); press("#cvBtn", 10.50);
+    fade("#fieldFocus", 0, 10.5, 0.15);
+    fade("#cvLab", 0, 10.52, 0.08); fade("#cvLab2", 1, 10.52, 0.08);
+    tl.to("#cvFill", { scaleX: 1, duration: 0.75, ease: "power1.inOut" }, 10.55);
+    fade("#cvLab2", 0, 11.3, 0.08); fade("#cvLab", 1, 11.3, 0.08);
+    tl.to("#cvFill", { opacity: 0, duration: 0.2 }, 11.32);
+    // 11.40 library row lands
+    fade("#libEmpty", 0, 11.30, 0.1);
+    tl.to("#libRow", { opacity: 1, y: 0, duration: 0.3, ease: E.back }, 11.40);
+    fade("#libCount", 1, 11.42, 0.15);
+    touchTo(300, 349, 11.45, 0.35);
+    touchTap(300, 349, 11.85); press("#applyPill", 11.85);
+    tl.to("#scrimB", { opacity: 0.55, duration: 0.2, ease: "power2.out" }, 11.90);
+    tl.to("#dlg", { opacity: 1, scale: 1, duration: 0.28, ease: E.out }, 11.90);
+    touchTo(180, 318, 12.05, 0.32);
+    touchTap(180, 318, 12.40);
+    fade("#slot1Sel", 1, 12.40, 0.12);
+    // beat-locked: 12.65s replaced
+    tl.to("#slot1Ok", { opacity: 1, duration: 0.15, ease: "power2.out" }, 12.65);
+    tl.fromTo("#slot1Ok", { scale: 0.7 }, { scale: 1, duration: 0.35, ease: E.back, immediateRender: false }, 12.65);
+    fade(T, 0, 12.95, 0.2);
+
+    // =========================================================
+    // SCENE 4 - safety net (13.70 - 17.91)
+    // =========================================================
+    // beat-grid: 13.70s screen slide
+    tl.to("#cap2 .lbl span", { yPercent: -120, duration: 0.25, ease: E.in }, 13.40);
+    tl.to("#cap2 .ln span", { yPercent: -115, duration: 0.28, ease: E.in, stagger: 0.05 }, 13.36);
+    fade("#cap2 .sub", 0, 13.36, 0.25);
+    tl.to("#scrB", { x: -120, opacity: 0, duration: 0.4, ease: E.io }, 13.70);
+    tl.set("#scrC", { visibility: "visible" }, 13.69);
+    tl.to("#scrC", { x: 0, duration: 0.4, ease: E.io }, 13.70);
+    tl.to("#cap3 .lbl span", { yPercent: 0, duration: 0.35, ease: E.out }, 13.76);
+    tl.to("#cap3 .ln span", { yPercent: 0, duration: 0.45, ease: E.out, stagger: 0.09 }, 13.82);
+    fade("#cap3 .sub", 1, 14.3, 0.35);
+
+    tl.set(T, { x: 250, y: 200 }, 13.9);
+    fade(T, 1, 13.95, 0.15);
+    touchTo(180, 132, 13.98, 0.27);
+    touchTap(180, 132, 14.25); press("#bkBtn", 14.25);
+    tl.to("#bkFill", { scaleX: 1, duration: 0.36, ease: "power1.inOut" }, 14.30);
+    tl.to("#bkFill", { opacity: 0, duration: 0.2 }, 14.68);
+    fade("#snapEmpty", 0, 14.62, 0.1);
+    tl.to("#snapRow", { opacity: 1, y: 0, duration: 0.3, ease: E.back }, 14.70);
+    fade("#snapCount", 1, 14.72, 0.15);
+    fade(T, 0, 14.9, 0.2);
+
+    tl.to("#scrC", { x: -120, opacity: 0, duration: 0.4, ease: E.io }, 15.45);
+    tl.set("#scrD", { visibility: "visible" }, 15.44);
+    tl.to("#scrD", { x: 0, duration: 0.4, ease: E.io }, 15.45);
+    tl.set(T, { x: 250, y: 320 }, 15.8);
+    fade(T, 1, 15.85, 0.15);
+    touchTo(287, 242, 15.88, 0.4);
+    touchTap(287, 242, 16.30); press("#revBtn", 16.30);
+    tl.to("#revLine", { scaleX: 1, duration: 0.4, ease: "power1.inOut" }, 16.32);
+    fade(T, 0, 16.6, 0.2);
+    // 16.75: restored
+    fade("#actCard", 0, 16.75, 0.15);
+    tl.to("#restored", { opacity: 1, duration: 0.2, ease: "power2.out" }, 16.75);
+    tl.fromTo("#restored", { y: 8 }, { y: 0, duration: 0.35, ease: E.out, immediateRender: false }, 16.75);
+
+    // exits into the outro
+    tl.to("#phone", { y: 60, opacity: 0, scale: 1.02, duration: 0.3, ease: E.in }, 17.6);
+    tl.to("#cap3 .lbl span", { yPercent: -120, duration: 0.25, ease: E.in }, 17.62);
+    tl.to("#cap3 .ln span", { yPercent: -115, duration: 0.28, ease: E.in, stagger: 0.05 }, 17.58);
+    fade("#cap3 .sub", 0, 17.58, 0.25);
+    fade("#wmSmall", 0, 17.65, 0.25);
+
+    // =========================================================
+    // SCENE 5 - outro (17.91 - 22.00)
+    // =========================================================
+    // beat-locked: 17.91s logo slam
+    tl.set("#flash", { opacity: 0.5 }, 17.91).to("#flash", { opacity: 0, duration: 0.2, ease: "power2.out" }, 17.91);
+    tl.to("#mark", { opacity: 1, scale: 1, duration: 0.35, ease: E.expo }, 17.91);
+    tl.to("#s5Title", { opacity: 1, y: 0, duration: 0.4, ease: E.expo }, 17.99);
+    // beat-grid: tagline words on 18.43 / 18.96 / 19.48 / 20.00 (single-word reads; the full line holds >= 1.6s)
+    tl.to("#w1", { opacity: 1, duration: 0.12 }, 18.43);
+    tl.to("#w2", { opacity: 1, duration: 0.12 }, 18.96);
+    tl.to("#w3", { opacity: 1, duration: 0.12 }, 19.48);
+    tl.to("#w4", { opacity: 1, scale: 1, duration: 0.35, ease: E.back }, 20.00);
+    tl.to("#foot", { opacity: 1, duration: 0.4, ease: "power2.out" }, 20.35);
+    tl.to("#fade", { opacity: 1, duration: 0.3, ease: "power1.in" }, 21.7);
+
+    // =========================================================
+    // audio-reactive halo (bass energy of the music bed, 30fps, seek-safe: plain set())
+    // =========================================================
+    tl.set("#halo", { x: 960, y: 780 }, 0);
+    tl.to("#halo", { x: 1486, y: 540, duration: 0.7, ease: E.io }, 3.75);
+    tl.to("#halo", { x: 960, y: 330, duration: 0.7, ease: E.io }, 17.85);
+    const rms = window.__RMS || [];
+    for (let f = 0; f < rms.length; f++) {
+      tl.set("#halo", { opacity: 0.26 + 0.34 * rms[f], scale: 0.94 + 0.12 * rms[f] }, f / 30);
+    }
+
+    window.__timelines = window.__timelines || {};
+    window.__timelines["root"] = tl;
+  })();
+  </script>
+</div>
+</body>
+</html>
