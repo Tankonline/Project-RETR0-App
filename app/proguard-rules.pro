@@ -2,7 +2,12 @@
 -keep class rikka.shizuku.** { *; }
 -keep interface rikka.shizuku.** { *; }
 
-# Project RETR0 AIDL
+# Project RETR0 Android components and AIDL
+# These entry points are instantiated by Android or Shizuku from manifest/binder
+# metadata and must remain present and constructible after R8 shrinking.
+-keep class com.retr0.projectretr0.MainActivity { *; }
+-keep class com.retr0.projectretr0.Retr0UserService { *; }
+-keep class com.retr0.projectretr0.installer.Retr0InstallService { *; }
 -keep class com.retr0.projectretr0.IRetr0UserService { *; }
 -keep class com.retr0.projectretr0.IRetr0UserService$Stub { *; }
 -keep class com.retr0.projectretr0.IRetr0UserService$Stub$Proxy { *; }
