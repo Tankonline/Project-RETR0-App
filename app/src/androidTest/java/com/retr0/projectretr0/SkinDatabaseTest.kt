@@ -18,7 +18,23 @@ class SkinDatabaseTest {
     @After fun close() = database.close()
 
     @Test fun importedSkinRoundTrips() = runBlocking {
-        val entity = LocalSkinEntity("id", null, "Title", "Creator", "Vehicle", "car", "ext_one", "etc(1)", "skin.dds.z", "/private/skin.dds.z", 3, "a".repeat(64), "files/.depot/vehicles/car/livery/skin.dds.z", "row", 1)
+        val entity = LocalSkinEntity(
+            id = "id",
+            communityId = null,
+            title = "Title",
+            creator = "Creator",
+            vehicle = "Vehicle",
+            carDirectory = "car",
+            slotKey = "ext_one",
+            textureFormat = "etc(1)",
+            sourceFilename = "skin.dds.z",
+            binaryPath = "/private/skin.dds.z",
+            binarySize = 3L,
+            binarySha256 = "a".repeat(64),
+            targetPath = "files/.depot/vehicles/car/livery/skin.dds.z",
+            gamePackage = "row",
+            importedAt = 1L,
+        )
         database.skinDao().insertImported(entity, emptyList())
         assertEquals(entity, database.skinDao().skin("id"))
     }
