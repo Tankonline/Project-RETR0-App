@@ -1,12 +1,14 @@
 # Project RETR0 Release Checklist
 
-## v1.0.2 Release
-- [x] Version metadata updated to `versionName "1.0.2"` and `versionCode 3`.
+## v1.0.5 Release
+- [x] Version metadata updated to `versionName "1.0.5"` and `versionCode 7`.
 - [x] APK self-updater removal verified in current master.
 - [x] Debug unit tests passed.
 - [x] Debug APK assembly passed.
 - [x] Debug lint passed.
-- [ ] Release workflow and signed APK publication verified after pushing tag `v1.0.2`.
+- [x] Release workflow and signed APK publication completed for tag `v1.0.5`.
+- [x] Release APK launch verified on a Samsung Galaxy A16 running Android 16/API 36.
+- [x] Release APK contains `com.retr0.projectretr0.MainActivity` after R8 shrinking.
 
 ## Repository Cleanliness
 - [ ] Source tree clean (no `.apk`, `.zip`, `.log`, or temporary artifacts).

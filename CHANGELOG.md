@@ -2,6 +2,35 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.0.5]
+
+### Added
+- Documented the current release metadata: version `1.0.5`, `versionCode 7`, package/namespace `com.retr0.projectretr0`, and Android API range from API 26 with target/compile SDK 35.
+- Documented verified Community Hub App Links for `/v1/skins/<id>`, `/v1/saves/<id>`, and `/v1/music/<id>` on the configured HTTPS host.
+- Expanded documentation for RR3 skin apply/revert workflows, verified original-file backups, named save snapshots, Smart Backup scheduling, music slots/library workflows, and community skin/save/music/profile features.
+- Documented the checked-in native extraction component and the CMake/C++17 build requirements alongside the bundled Cronet, yt-dlp, and FFmpeg dependencies.
+
+### Changed
+- Updated README build and release instructions to match the current Gradle configuration, signed release environment variables, APK output, and checksum step.
+- Clarified that Shizuku is required for privileged RR3 file/package operations and that the app does not self-update or replace bundled yt-dlp at runtime.
+- Clarified the supported RR3 package identifiers: `com.ea.games.r3_row` and `com.ea.games.r3_na`.
+
+### Fixed
+- Preserved Android, Shizuku, foreground-service, and AIDL entry points in minified release builds.
+- Updated skin database test fixtures for the current metadata schema.
+
+### Security
+- Documented service-side path restrictions, archive-target validation, and SHA-256 verification used for supported privileged file and backup/restore operations.
+- Documented that installation identity, profile pictures, imported skins, and encrypted YouTube cookies are excluded from Android cloud backup and device transfer.
+- Reiterated that Community Hub uploads are user-selected remote data and must be treated as untrusted content; uploaders remain responsible for distribution rights.
+
+### Compatibility
+- Confirmed the release configuration targets Android 35 while retaining Android 8.0/API 26 as the minimum configured platform.
+- Documented device/vendor, storage, Shizuku availability, RR3 variant, and current YouTube delivery behavior as compatibility factors.
+
+### Verified
+- Confirmed the release APK contains `com.retr0.projectretr0.MainActivity`.
+
 ## [1.0.2] - 2026-09-19
 
 ### Changed

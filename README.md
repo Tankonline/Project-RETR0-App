@@ -17,6 +17,16 @@ The application is built around a simple principle:
 
 It combines streaming asset installation, backup and recovery workflows, Shizuku-powered privileged operations, an optional community hub, and local media processing into one Android application.
 
+### Current release
+
+- **Version:** `1.0.5` (`versionCode 7`)
+- **Application ID / namespace:** `com.retr0.projectretr0`
+- **Minimum Android:** Android 8.0 / API 26
+- **Target and compile SDK:** API 35
+- **Supported RR3 packages:** `com.ea.games.r3_row` (Global/ROW) and `com.ea.games.r3_na` (North America)
+
+The app requires Shizuku for privileged RR3 file and package operations; local browsing and other non-privileged UI may still open without an active Shizuku session.
+
 ---
 
 ## Table of Contents
@@ -175,6 +185,16 @@ A modding utility should not blindly assume that every RR3 installation is locat
 
 Project RETR0 installer therefore treats the package identifier as part of the installation target.
 
+## Android App Links
+
+The manifest declares verified HTTPS App Links for the Community Hub host `save-files.armaandeep08-ap.workers.dev`. Links under these paths are routed into the matching community view:
+
+- `/v1/skins/<id>` opens a skin detail flow.
+- `/v1/saves/<id>` opens a shared-save flow.
+- `/v1/music/<id>` opens a shared-music flow.
+
+App Links only navigate to community content; downloading or applying content remains a user-initiated operation and still depends on the relevant service, storage, and Shizuku requirements.
+
 ---
 
 # Shizuku
@@ -322,6 +342,10 @@ Install modification
 
 Users should still maintain independent backups of valuable data.
 
+The app supports named RR3 save snapshots, restore operations, and a Smart Backup option scheduled through WorkManager (every four hours when enabled). Automatic snapshots use a timestamped name and retain up to five auto-backups. Skin operations keep a verified original-file backup before replacement and require the game to be stopped for apply/revert flows. Audio and graphics workflows also expose restore/revert actions where supported.
+
+Backups are stored in the app's ProjectRETR0 area under public Documents paths used by the installer, including `Documents/ProjectRETR0/Backups` and `Documents/ProjectRETR0/MusicBackups`. Keep enough free space for source files, extraction, and backups.
+
 A backup system is a recovery mechanism, **not a guarantee against every possible form of data loss**.
 
 ---
@@ -348,7 +372,9 @@ The application declares permissions for:
 - Network-state information.
 - Wi-Fi-state information.
 
-These permissions support network-based asset and community workflows.
+These permissions support network-based asset and community workflows. The documented remote services include the Community Hub/installer service, the RR3 manifest/content host, optional DiceBear avatar fallback, and iTunes Search metadata lookup; user-selected YouTube imports contact YouTube through the bundled media workflow.
+
+Community features can transmit an installation-specific identity, profile picture, and user-selected skin/save/music content or metadata. The repository policy states that the app does not collect telemetry, usage analytics, or advertising data. Installation identity, profile pictures, imported skins, and encrypted YouTube cookies are excluded from Android cloud backup and device transfer. Do not upload content you are not permitted to share, and treat remote community files as untrusted input.
 
 ## Notifications
 
@@ -504,6 +530,15 @@ The generated APK will normally be under:
 app/build/outputs/apk/
 ```
 
+For a signed release build, provide `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD` as environment variables, then run:
+
+```powershell
+.\gradlew :app:testDebugUnitTest :app:assembleRelease
+Get-FileHash .\app\build\outputs\apk\release\app-release.apk -Algorithm SHA256
+```
+
+Release signing material must remain outside the repository. The canonical release artifact is the signed `app-release.apk`; the app does not self-update, and bundled yt-dlp/FFmpeg components are updated only through signed app releases.
+
 ## Android Studio
 
 1. Open the repository in Android Studio.
@@ -528,8 +563,8 @@ compileSdk:    35
 minSdk:        26
 targetSdk:     35
 
-versionCode:   4
-versionName:   1.0.3
+versionCode:   7
+versionName:   1.0.5
 
 Java:          17
 Kotlin JVM:    17
@@ -698,6 +733,8 @@ The project declares:
 # Security Considerations
 
 Project RETR0 installer handles game files and, in some workflows, privileged Android operations. Security should therefore be considered at multiple layers.
+
+The privileged service restricts supported operations to the declared RR3 data roots and selected ProjectRETR0/Download locations, validates hashes for backup and restore, and rejects unsafe archive targets such as traversal outside an allowed root. These controls reduce risk but do not make third-party assets trustworthy or guarantee recovery from every failure. Review the [security policy](SECURITY.md), [privacy policy](PRIVACY.md), and [privacy/community policy](docs/privacy-and-community-policy.md) before distributing builds.
 
 ## User authorization
 
@@ -887,7 +924,7 @@ Check:
 
 # Known Issues
 
-The following issues are currently known in the **v1.0.3** release. They do not all prevent normal use of the installer, but they are being tracked for future fixes.
+The following issues are currently known in the **v1.0.5** release. They do not all prevent normal use of the installer, but they are being tracked for future fixes.
 
 ## YouTube audio extraction reliability
 
@@ -1091,8 +1128,8 @@ Project RETR0 installer is an active development project.
 The current repository configuration identifies the application as:
 
 ```text
-Version: 1.0.3
-Version code: 4
+Version: 1.0.5
+Version code: 7
 ```
 
 The implementation and documentation may evolve as additional asset types, installation safeguards, community functionality, and compatibility improvements are introduced.
