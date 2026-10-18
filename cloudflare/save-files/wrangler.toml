@@ -1,0 +1,32 @@
+﻿name = "save-files"
+main = "src/save-files-worker.js"
+compatibility_date = "2026-08-22"
+compatibility_flags = []
+workers_dev = true
+
+[observability]
+enabled = true
+
+[[r2_buckets]]
+binding = "ASSET_BUCKET"
+bucket_name = "project-retr0"
+
+[[r2_buckets]]
+binding = "COMMUNITY_BUCKET"
+bucket_name = "save-files"
+
+[[d1_databases]]
+binding = "SKINS_DB"
+database_name = "save-files"
+database_id = "0937c661-1914-486d-88b1-7a03332ff99a"
+
+[[kv_namespaces]]
+binding = "ASSET_KV"
+id = "686d7a331a374ea0b72b0a343fac300e"
+
+[[kv_namespaces]]
+binding = "SOCIAL_KV"
+id = "eedfe8f6bed246a28283e16cd0e10beb"
+
+[ai]
+binding = "AI"
