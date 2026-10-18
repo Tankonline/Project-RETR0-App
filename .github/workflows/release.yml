@@ -93,13 +93,44 @@ jobs:
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
           ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
 
+          Project RETR0 installer v1.0.6 adds safer Community Hub synchronization and a more flexible car-model installation flow for RR3.
+
+          ### Highlights
+
+          - Added replacement and add-on car-model installation modes.
+          - Added full-package scanning for vehicle, shared depot, events, localization, and cache files.
+          - Added transaction-based backups with one-button add-on revert.
+          - Added safer restoration of overwritten files and removal of newly created add-on files.
+          - Fixed stale Community Hub car models remaining visible after their remote assets were deleted.
+          - Added Worker-side D1/R2 integrity validation and invalid-asset invalidation.
+          - Improved Community Hub refresh, sorting, stale-detail handling, and error-state behavior.
+          - Preserved local car-model files and backups when removing a remote Community Hub package.
+
+          ### Release information
+
+          - Version: 1.0.6
+          - Version code: 8
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)
-          - RR3 packages: com.ea.games.r3_row and com.ea.games.r3_na
+          - Supported RR3 packages: com.ea.games.r3_row and com.ea.games.r3_na
           - Shizuku is required for privileged installation operations.
           - Back up your game data before applying changes. Use the app's revert flow where available.
           - Community Hub and profile-picture features use the documented remote service.
+
+          ### SHA-256
+
+          The checksum is attached as `app-release.apk.sha256` and is generated directly from the signed APK published with this release.
+
+          ```text
+          $(cut -d ' ' -f1 app/build/outputs/apk/release/app-release.apk.sha256)  app-release.apk
+          ```
+
+          Verify the downloaded APK with:
+
+          ```bash
+          sha256sum app-release.apk
+          ```
 
           See [release guidance](https://github.com/${GITHUB_REPOSITORY}/blob/${{ steps.release_ref.outputs.tag }}/docs/releasing.md) and [privacy and community policy](https://github.com/${GITHUB_REPOSITORY}/blob/${{ steps.release_ref.outputs.tag }}/docs/privacy-and-community-policy.md).
           EOF
