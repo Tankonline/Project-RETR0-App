@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 
 enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
 
-@Composable fun CarSkinsTab(service: IRetr0UserService? = null, isServiceConnected: Boolean = false, onOpenMySkins: () -> Unit = {}, onOpenImport: () -> Unit = onOpenMySkins, onFullScreenChange: (Boolean) -> Unit = {}, modifier: Modifier = Modifier, initialSkinId: String? = null, onInitialSkinIdHandled: () -> Unit = {}) {
+@Composable fun CarSkinsTab(service: IRetr0UserService? = null, isServiceConnected: Boolean = false, onOpenMySkins: () -> Unit = {}, onOpenImport: () -> Unit = onOpenMySkins, onFullScreenChange: (Boolean) -> Unit = {}, modifier: Modifier = Modifier, initialSkinId: String? = null, onInitialSkinIdHandled: () -> Unit = {}, refreshToken: Int = 0, sortOrder: String = "newest") {
     val context = LocalContext.current
     val repository = remember(context) { SkinRepository(context) }
     val communityViewModel = remember(context, repository) {
@@ -71,6 +71,7 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
                 onImport = onOpenImport,
                 repository = repository,
                 onItemsLoaded = { galleryCache = it },
+                refreshToken = refreshToken,
             )
         } else {
             CommunitySkinDetails(
@@ -98,6 +99,8 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
     previewItems: List<CommunitySkin> = emptyList(),
     repository: SkinRepository? = null,
     onItemsLoaded: (List<CommunitySkin>) -> Unit = {},
+    refreshToken: Int = 0,
+    sortOrder: String = "newest",
 ) {
     val context = LocalContext.current
     val runtimeRepository = repository ?: remember(context) { SkinRepository(context) }
@@ -106,8 +109,8 @@ enum class GalleryState { CONTENT, LOADING, EMPTY, ERROR }
     var retry by remember { mutableIntStateOf(0) }
     var state by remember(previewState) { mutableStateOf(previewState ?: GalleryState.LOADING) }
     var skins by remember(previewState) { mutableStateOf(if (previewState != null) previewItems else emptyList()) }
-    val sort = listOf("newest", "newest", "downloads", "likes")[filter]
-    LaunchedEffect(query, sort, retry, previewState) {
+    val sort = if (sortOrder == "newest") listOf("newest", "newest", "downloads", "likes")[filter] else sortOrder
+    LaunchedEffect(query, sort, retry, previewState, refreshToken) {
         if (previewState != null) return@LaunchedEffect
         state = GalleryState.LOADING
         runCatching { runtimeRepository.list(query, sort) }

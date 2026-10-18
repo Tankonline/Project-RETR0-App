@@ -57,6 +57,7 @@
     <string name="hint_manual_import">Import external files directly into the game.</string>
     <string name="hint_youtube_converter">Convert YouTube links to MP3s in your Local Library.</string>
     <string name="hint_discord">Join our community for more from Project RETR0</string>
+    <string name="discord_invite_url">https://discord.gg/DfX8ArtfgX</string>
 
     <!-- Buttons -->
     <string name="btn_install">INSTALL PROJECT RETR0</string>

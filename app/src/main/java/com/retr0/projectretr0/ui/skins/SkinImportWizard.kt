@@ -57,8 +57,8 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
     var imageLoading by remember { mutableStateOf(false) }
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingRole by remember { mutableStateOf(SkinImageRole.COVER) }
-    var cropRequest by remember { mutableStateOf<CropRequest?>(null) }
-    var manualCropRequest by remember { mutableStateOf<CropRequest?>(null) }
+    var cropRequest by remember { mutableStateOf<ImageCropRequest?>(null) }
+    var manualImageCropRequest by remember { mutableStateOf<ImageCropRequest?>(null) }
     val imageCache = remember(context) { SkinImportCache(context) }
     val imageProcessor = remember(context, imageCache) { SkinImageProcessor(context.contentResolver, imageCache) }
     val viewModel = remember(context) { SkinImportViewModel(LocalSkinRepository(context), SkinRepository(context)) }
@@ -100,7 +100,7 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
                 }
                 pendingRole = if (state.images.none { it.role == SkinImageRole.COVER }) SkinImageRole.COVER else SkinImageRole.SCREENSHOT
                 if (inspection.needsCropChoice) {
-                    cropRequest = CropRequest(nextUri, inspection, pendingRole)
+                    cropRequest = ImageCropRequest(nextUri, inspection, pendingRole)
                     imageLoading = false
                     Log.i(CROP_WIZARD_LOG_TAG, "crop_choice_required dimensions=${inspection.width}x${inspection.height} role=$pendingRole")
                 } else {
@@ -137,7 +137,7 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
                 }
                 pendingRole = if (state.images.none { it.role == SkinImageRole.COVER }) SkinImageRole.COVER else SkinImageRole.SCREENSHOT
                 if (inspection.needsCropChoice) {
-                    cropRequest = CropRequest(selected.first(), inspection, pendingRole)
+                    cropRequest = ImageCropRequest(selected.first(), inspection, pendingRole)
                     Log.i(CROP_WIZARD_LOG_TAG, "crop_choice_required dimensions=${inspection.width}x${inspection.height} role=$pendingRole")
                 } else {
                     Log.i(CROP_WIZARD_LOG_TAG, "AUTO_CROP_BYPASSED_WITHIN_TOLERANCE role=$pendingRole dimensions=${inspection.width}x${inspection.height}")
@@ -166,15 +166,15 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
                 cropRequest = null
                 processNext()
             },
-            onManualCrop = { cropRequest = null; manualCropRequest = request },
+            onManualCrop = { cropRequest = null; manualImageCropRequest = request },
         )
     }
-    manualCropRequest?.let { request ->
+    manualImageCropRequest?.let { request ->
         ManualCropDialog(
             request = request,
             imageProcessor = imageProcessor,
-            onConfirm = { rect -> manualCropRequest = null; processNext(CropDecision.MANUAL_CROP, rect) },
-            onDismiss = { manualCropRequest = null; processNext() },
+            onConfirm = { rect -> manualImageCropRequest = null; processNext(CropDecision.MANUAL_CROP, rect) },
+            onDismiss = { manualImageCropRequest = null; processNext() },
         )
     }
 
@@ -196,10 +196,10 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
     }
 }
 
-private data class CropRequest(val uri: Uri, val inspection: ImageInspection, val role: SkinImageRole)
+data class ImageCropRequest(val uri: Uri, val inspection: ImageInspection, val role: SkinImageRole)
 
 @Composable
-private fun CropChoiceDialog(request: CropRequest, onAutoCrop: () -> Unit, onManualCrop: () -> Unit) {
+fun CropChoiceDialog(request: ImageCropRequest, onAutoCrop: () -> Unit, onManualCrop: () -> Unit) {
     AlertDialog(
         onDismissRequest = onAutoCrop,
         title = { Text("Crop image to 16:9?") },
@@ -210,7 +210,7 @@ private fun CropChoiceDialog(request: CropRequest, onAutoCrop: () -> Unit, onMan
 }
 
 @Composable
-private fun ManualCropDialog(request: CropRequest, imageProcessor: SkinImageProcessor, onConfirm: (CropRect) -> Unit, onDismiss: () -> Unit) {
+fun ManualCropDialog(request: ImageCropRequest, imageProcessor: SkinImageProcessor, onConfirm: (CropRect) -> Unit, onDismiss: () -> Unit) {
     var oriented by remember(request.uri) { mutableStateOf<Bitmap?>(null) }
     var decodeFailed by remember(request.uri) { mutableStateOf(false) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }

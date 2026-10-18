@@ -97,3 +97,33 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Keep privileged traversal bounded and safety-scoped, transport all safe `.dds.z` candidates in the canonical path encoding, rank related candidates client-side, and reserve strict filename/path validation for confirmation.
 
 **Principle:** Discovery and acceptance are different contracts; preserve candidate information across process boundaries and validate only at the final commit boundary.
+
+### Observation 7: Keep explicit remote lifecycle actions separate from local install
+
+**Status:** OPEN
+**Date:** 2026-09-20
+**Session context:** Completing an Android car-model UI integration slice with local import, draft upload, publish, and install flows.
+**Skill:** Android development workflow
+**Type:** open-source
+**Phase/Area:** UI state and action orchestration
+
+**Issue:** Local library state already carried draft/public remote identifiers, but the UI did not expose distinct upload and publish actions. Adding explicit confirmation boundaries made it possible to preserve the invariant that uploading never publishes and remote actions never install locally.
+
+**Suggested improvement:** When a domain model has local, draft, published, and installed lifecycles, represent each transition as a separate UI action and confirmation path rather than inferring transitions from a single primary button.
+
+**Principle:** Make cross-system lifecycle transitions explicit so asynchronous remote mutations cannot silently trigger local side effects.
+
+### Observation 8: Keep active local state independent from remote draft actions
+
+**Status:** OPEN
+**Date:** 2026-09-20
+**Session context:** Fixing an Android car-model screen where active local models could not upload drafts.
+**Skill:** Android development workflow
+**Type:** open-source
+**Phase/Area:** UI state and action availability
+
+**Issue:** A local installation state was incorrectly reused as a gate for remote upload and publish actions, hiding valid remote lifecycle transitions.
+
+**Suggested improvement:** Derive action availability from the remote lifecycle and operation state, while showing local install/revert state as independent messaging and controls.
+
+**Principle:** Independent state machines should not share disabling conditions merely because they are rendered on the same details screen.

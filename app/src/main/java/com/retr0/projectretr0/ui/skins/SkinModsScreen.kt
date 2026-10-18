@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ListAlt
@@ -40,7 +41,7 @@ import kotlin.time.Duration.Companion.seconds
 
 private sealed interface ModsRoute { data object Root : ModsRoute; data object Import : ModsRoute; data class Details(val id: String) : ModsRoute; data class TargetScan(val id: String) : ModsRoute; data class Progress(val op: OpType, val title: String) : ModsRoute }
 
-@Composable fun SkinModsScreen(isServiceConnected: Boolean, isGameInstalled: Boolean = true, gamePackage: GamePackage = GamePackage.ROW, storageText: String, service: IRetr0UserService?, onBrowseCommunity: () -> Unit, modifier: Modifier = Modifier, initialSection: SkinModsSection = SkinModsSection.OVERVIEW, previewState: SkinModsPreviewState = SkinModsPreviewState.CONTENT, onFullScreenChange: (Boolean) -> Unit = {}) {
+@Composable fun SkinModsScreen(isServiceConnected: Boolean, isGameInstalled: Boolean = true, gamePackage: GamePackage = GamePackage.ROW, storageText: String, service: IRetr0UserService?, onBrowseCommunity: () -> Unit, modifier: Modifier = Modifier, initialSection: SkinModsSection = SkinModsSection.OVERVIEW, previewState: SkinModsPreviewState = SkinModsPreviewState.CONTENT, onFullScreenChange: (Boolean) -> Unit = {}, header: (@Composable () -> Unit)? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val localRepository = remember(context) { LocalSkinRepository(context) }
@@ -103,7 +104,7 @@ private sealed interface ModsRoute { data object Root : ModsRoute; data object I
         is ModsRoute.Details -> LocalSkinDetails(currentRoute.id, ::back, { sheet = applyRequest(currentRoute.id) }, { sheet = revertRequest(currentRoute.id) })
         is ModsRoute.TargetScan -> TargetScanRoute(currentRoute.id, localRepository, service, gamePackage, ::back)
         is ModsRoute.Progress -> SimulatedProgress(currentRoute.op, currentRoute.title, operations, ::back)
-        ModsRoute.Root -> SkinModsRoot(section, { section = it }, isServiceConnected, isGameInstalled, gamePackage, storageText, operations, previewState, storedSkins.size, storedApplied.size, storedBackups.size, storedOperations.count { it.state == "FAILED" || it.state == "FAILED_SAFE" }, storedBackups, { push(ModsRoute.Import) }, onBrowseCommunity, { push(ModsRoute.Details(it)) }, { sheet = it }, ::start, modifier)
+        ModsRoute.Root -> SkinModsRoot(section, { section = it }, isServiceConnected, isGameInstalled, gamePackage, storageText, operations, previewState, storedSkins.size, storedApplied.size, storedBackups.size, storedOperations.count { it.state == "FAILED" || it.state == "FAILED_SAFE" }, storedBackups, { push(ModsRoute.Import) }, onBrowseCommunity, { push(ModsRoute.Details(it)) }, { sheet = it }, ::start, modifier, header)
     }
     sheet?.let { request -> SkinOperationSheet(request, { sheet = null }) {
         sheet = null
@@ -158,20 +159,21 @@ private fun TargetScanRoute(id: String, repository: LocalSkinRepository, service
     )
 }
 
-@Composable private fun SkinModsRoot(section: SkinModsSection, onSection: (SkinModsSection) -> Unit, connected: Boolean, gameInstalled: Boolean, gamePackage: GamePackage, storage: String, operations: List<ActivityOp>, preview: SkinModsPreviewState, localCount: Int, appliedCount: Int, backupCount: Int, issueCount: Int, backups: List<SkinBackupEntity>, onImport: () -> Unit, onHub: () -> Unit, onDetails: (String) -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit, modifier: Modifier) {
+@Composable private fun SkinModsRoot(section: SkinModsSection, onSection: (SkinModsSection) -> Unit, connected: Boolean, gameInstalled: Boolean, gamePackage: GamePackage, storage: String, operations: List<ActivityOp>, preview: SkinModsPreviewState, localCount: Int, appliedCount: Int, backupCount: Int, issueCount: Int, backups: List<SkinBackupEntity>, onImport: () -> Unit, onHub: () -> Unit, onDetails: (String) -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit, modifier: Modifier, header: (@Composable () -> Unit)? = null) {
     BoxWithConstraints(modifier.fillMaxSize().background(RetroBg)) {
         val landscape = maxWidth > maxHeight
         val contentModifier = if (landscape) Modifier.fillMaxWidth().padding(horizontal = 24.dp) else Modifier.fillMaxSize()
         Column(contentModifier) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Skin Mods", style = MaterialTheme.typography.titleLarge, color = RetroText); Text("Manage RR3 exterior liveries", color = RetroTextMuted, style = MaterialTheme.typography.labelSmall) }; IconButton(onClick = {}) { Icon(Icons.Filled.MoreVert, "Skin Mods options", tint = RetroTextDim) } }
+        if (header != null) header() else Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Skin Mods", style = MaterialTheme.typography.titleLarge, color = RetroText); Text("Manage RR3 exterior liveries", color = RetroTextMuted, style = MaterialTheme.typography.labelSmall) }; IconButton(onClick = {}) { Icon(Icons.Filled.MoreVert, "Skin Mods options", tint = RetroTextDim) } }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val expanded = this.maxWidth >= 600.dp
             Row(Modifier.fillMaxSize()) {
-                if (expanded) NavigationRail(containerColor = RetroSurfaceAlt) { SkinModsSection.entries.forEach { item -> NavigationRailItem(selected = section == item, onClick = { onSection(item) }, icon = { Icon(sectionIcon(item), null) }, label = { Text(item.label) }) } }
+                // Scrollable stand-in for NavigationRail, which clips its items on short (landscape phone) screens.
+                if (expanded) Column(Modifier.fillMaxHeight().background(RetroSurfaceAlt).windowInsetsPadding(NavigationRailDefaults.windowInsets).width(80.dp).verticalScroll(rememberScrollState()).padding(vertical = 8.dp).selectableGroup(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) { SkinModsSection.entries.forEach { item -> NavigationRailItem(selected = section == item, onClick = { onSection(item) }, icon = { Icon(sectionIcon(item), null) }, label = { Text(item.label) }) } }
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     if (!expanded) CompactSectionNavigation(section, onSection)
-                    Box(Modifier.weight(1f).fillMaxWidth()) { when(section) {
-                        SkinModsSection.OVERVIEW -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { OverviewSection(connected, gameInstalled, gamePackage, storage, localCount, appliedCount, backupCount, issueCount, onImport, onHub, onSheet, onStart) }
+                    Box(Modifier.weight(1f).fillMaxWidth().then(if (expanded) Modifier.wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 1040.dp) else Modifier)) { when(section) {
+                        SkinModsSection.OVERVIEW -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { OverviewSection(connected, gameInstalled, gamePackage, storage, localCount, appliedCount, backupCount, issueCount, onImport, onHub, onSheet, onStart, wide = expanded) }
                         SkinModsSection.LIBRARY -> SkinLibraryScreen({}, onDetails, onImport, onHub, embedded = true, onApply = { onSheet(applyRequest(it)) }, onRevert = { onSheet(revertRequest(it)) })
                         SkinModsSection.APPLIED -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { AppliedSection(onSheet) }
                         SkinModsSection.BACKUPS -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { BackupsSection(backups) }
@@ -184,14 +186,44 @@ private fun TargetScanRoute(id: String, repository: LocalSkinRepository, service
     }
 }
 
-@Composable private fun OverviewSection(connected: Boolean, installed: Boolean, pkg: GamePackage, storage: String, localCount: Int, appliedCount: Int, backupCount: Int, issueCount: Int, onImport: () -> Unit, onHub: () -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit) = LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
-    item { SectionHeader("System status", Icons.Filled.MonitorHeart); RetroCard { StatusLine(if (connected) "Shizuku service connected" else "Shizuku disconnected", connected, "Connect"); StatusLine("RR3 ${pkg.short}${if (installed) " installed" else " missing"}", installed, "Install"); StatusLine("Original backups healthy", true, "View"); StatusLine(storage, true, "Storage") } }
-    if (!connected) item { WarningBanner("Privileged service unavailable", "Connect Shizuku to browse, apply, verify, or restore targets.") }
-    item { val stats = listOf("Local" to localCount, "Applied" to appliedCount, "Backups" to backupCount, "Issues" to issueCount); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { stats.forEach { (label, value) -> RetroCard(Modifier.weight(1f)) { Text(value.toString(), color = RetroText, style = MaterialTheme.typography.titleLarge); Text(label, color = RetroTextMuted, maxLines = 1) } } } }
-    item { SectionHeader("Quick actions", Icons.Filled.Bolt); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton("Import skin", Modifier.weight(1f), Icons.Filled.Upload, onImport); SecondaryButton("Browse Hub", Modifier.weight(1f), Icons.Filled.Public, onHub) }; Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton("Scan liveries", Modifier.weight(1f), Icons.Filled.Search) { onStart(OpType.SCAN, "Scan liveries") }; SecondaryButton("Restore all", Modifier.weight(1f), Icons.Filled.Restore) { onSheet(restoreAllRequest()) } } } }
-    item { SectionHeader("Recently used", Icons.Filled.History) }
-    item { EmptyState(Icons.Filled.History, "No recently used skins", "Applied or imported skins will appear here.") }
+@Composable private fun OverviewSection(connected: Boolean, installed: Boolean, pkg: GamePackage, storage: String, localCount: Int, appliedCount: Int, backupCount: Int, issueCount: Int, onImport: () -> Unit, onHub: () -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit, wide: Boolean = false) = LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
+    if (wide) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column { OverviewStatus(connected, installed, pkg, storage) }
+                    if (!connected) OverviewServiceWarning()
+                    OverviewStatTiles(localCount, appliedCount, backupCount, issueCount)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column { OverviewQuickActions(onImport, onHub, onSheet, onStart) }
+                    OverviewRecentHeader()
+                    OverviewRecentEmpty()
+                }
+            }
+        }
+    } else {
+        item { OverviewStatus(connected, installed, pkg, storage) }
+        if (!connected) item { OverviewServiceWarning() }
+        item { OverviewStatTiles(localCount, appliedCount, backupCount, issueCount) }
+        item { OverviewQuickActions(onImport, onHub, onSheet, onStart) }
+        item { OverviewRecentHeader() }
+        item { OverviewRecentEmpty() }
+    }
 }
+
+@Composable private fun OverviewStatus(connected: Boolean, installed: Boolean, pkg: GamePackage, storage: String) {
+    val lines = listOf(Triple(if (connected) "Shizuku service connected" else "Shizuku disconnected", connected, "Connect"), Triple("RR3 ${pkg.short}${if (installed) " installed" else " missing"}", installed, "Install"), Triple("Original backups healthy", true, "View"), Triple(storage, true, "Storage"))
+    SectionHeader("System status", Icons.Filled.MonitorHeart)
+    RetroCard {
+        lines.forEach { (text, good, action) -> StatusLine(text, good, action) }
+    }
+}
+@Composable private fun OverviewServiceWarning() { WarningBanner("Privileged service unavailable", "Connect Shizuku to browse, apply, verify, or restore targets.") }
+@Composable private fun OverviewStatTiles(localCount: Int, appliedCount: Int, backupCount: Int, issueCount: Int) { val stats = listOf("Local" to localCount, "Applied" to appliedCount, "Backups" to backupCount, "Issues" to issueCount); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { stats.forEach { (label, value) -> RetroCard(Modifier.weight(1f)) { Text(value.toString(), color = RetroText, style = MaterialTheme.typography.titleLarge); Text(label, color = RetroTextMuted, maxLines = 1) } } } }
+@Composable private fun OverviewQuickActions(onImport: () -> Unit, onHub: () -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit) { SectionHeader("Quick actions", Icons.Filled.Bolt); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton("Import skin", Modifier.weight(1f), Icons.Filled.Upload, onImport); SecondaryButton("Browse Hub", Modifier.weight(1f), Icons.Filled.Public, onHub) }; Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton("Scan liveries", Modifier.weight(1f), Icons.Filled.Search) { onStart(OpType.SCAN, "Scan liveries") }; SecondaryButton("Restore all", Modifier.weight(1f), Icons.Filled.Restore) { onSheet(restoreAllRequest()) } } } }
+@Composable private fun OverviewRecentHeader() { SectionHeader("Recently used", Icons.Filled.History) }
+@Composable private fun OverviewRecentEmpty() { EmptyState(Icons.Filled.History, "No recently used skins", "Applied or imported skins will appear here.") }
 
 @Composable
 private fun CompactSectionNavigation(selected: SkinModsSection, onSection: (SkinModsSection) -> Unit) {
@@ -313,8 +345,8 @@ private fun BackupCard(backup: SkinBackupEntity) {
 
 @Composable private fun SimulatedProgress(type: OpType, title: String, operations: MutableList<ActivityOp>, onBack: () -> Unit) { val op = operations.firstOrNull { it.type == type && it.title == title && it.result == OpResult.ACTIVE }; LaunchedEffect(op?.id) { if (op == null) return@LaunchedEffect; for (p in 10..100 step 10) { delay(120.milliseconds); val i = operations.indexOfFirst { it.id == op.id }; if (i >= 0) operations[i] = op.copy(stage = if (p < 100) "Processing" else "Verified", progress = p, bytes = "${p * 42} KiB", result = if (p == 100) OpResult.SUCCESS else OpResult.ACTIVE) } }; SkinProgressScreen(if (type == OpType.REVERT || type == OpType.RESTORE_ALL) OpKind.REVERT else OpKind.APPLY, onBack, onBack) }
 
-@Composable private fun StatusLine(text: String, good: Boolean, action: String) { Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) { Icon(if(good) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline, null, tint = if(good) RetroSuccess else RetroDanger); Spacer(Modifier.width(8.dp)); Text(text, color = RetroTextSoft, modifier = Modifier.weight(1f)); Text(action, color = RetroAccent) } }
-@Composable private fun WarningBanner(title: String, body: String) { Row(Modifier.fillMaxWidth().background(RetroGold.copy(alpha=.12f), RoundedCornerShape(12.dp)).border(1.dp, RetroGold.copy(alpha=.4f), RoundedCornerShape(12.dp)).padding(12.dp)) { Icon(Icons.Filled.WarningAmber, null, tint = RetroGold); Spacer(Modifier.width(8.dp)); Column { Text(title, color = RetroGold); Text(body, color = RetroTextSoft) } } }
+@Composable internal fun StatusLine(text: String, good: Boolean, action: String) { Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) { Icon(if(good) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline, null, tint = if(good) RetroSuccess else RetroDanger); Spacer(Modifier.width(8.dp)); Text(text, color = RetroTextSoft, modifier = Modifier.weight(1f)); Text(action, color = RetroAccent) } }
+@Composable internal fun WarningBanner(title: String, body: String) { Row(Modifier.fillMaxWidth().background(RetroGold.copy(alpha=.12f), RoundedCornerShape(12.dp)).border(1.dp, RetroGold.copy(alpha=.4f), RoundedCornerShape(12.dp)).padding(12.dp)) { Icon(Icons.Filled.WarningAmber, null, tint = RetroGold); Spacer(Modifier.width(8.dp)); Column { Text(title, color = RetroGold); Text(body, color = RetroTextSoft) } } }
 private fun sectionIcon(s: SkinModsSection) = when(s) { SkinModsSection.OVERVIEW -> Icons.Filled.Dashboard; SkinModsSection.LIBRARY -> Icons.Filled.Garage; SkinModsSection.APPLIED -> Icons.Filled.CheckCircle; SkinModsSection.BACKUPS -> Icons.Filled.Backup; SkinModsSection.ACTIVITY -> Icons.Filled.History }
 private fun applyRequest(id: String): SkinOperationRequest = SkinOperationRequest(OpType.APPLY, "Apply this skin?", "", "The selected RR3 target", skinId = id)
 private fun revertRequest(id: String): SkinOperationRequest = SkinOperationRequest(OpType.REVERT, "Restore original livery?", "", "The selected RR3 target", skinId = id)

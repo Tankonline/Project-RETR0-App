@@ -17,7 +17,6 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 7
-
         versionName = "1.0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -54,6 +53,7 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
+            // Debug builds use the live Worker for local upload/publish testing; no credentials are embedded.
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
         }

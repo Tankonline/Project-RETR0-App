@@ -34,3 +34,5 @@ val RetroGold        = Color(0xFFF5C542)
 val RetroGoldTint    = Color(0x1FF5C542)
 val RetroDiscord     = Color(0xFF5865F2)
 val RetroDiscordTint = Color(0x245865F2)
+
+val RetroModelPurple = Color(0xFFA78BFA) // content-type badge for Skins (Car Models use RetroAccent)

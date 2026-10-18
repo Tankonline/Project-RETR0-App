@@ -19,6 +19,11 @@ var MAX_JSON_BYTES = 32 * 1024;
 var AUTH_WINDOW_MS = 5 * 60 * 1e3;
 var NONCE_TTL_SECONDS = 10 * 60;
 var REPORT_REASONS = /* @__PURE__ */ new Set(["inappropriate", "copyright", "misleading", "broken", "spam", "other"]);
+var CAR_MODEL_MAX_FILES = 256;
+var CAR_MODEL_MAX_FILE_BYTES = 20 * 1024 * 1024;
+var CAR_MODEL_MAX_TOTAL_BYTES = 520 * 1024 * 1024;
+var CAR_MODEL_MAX_MANIFEST_BYTES = 256 * 1024;
+var RR3_PACKAGE_IDS = /* @__PURE__ */ new Set(["com.ea.games.r3_row", "com.ea.games.r3_na", "com.ea.games.r3_ww"]);
 async function handleV1(request, env, ctx, requestId) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/v1/")) return null;
@@ -142,6 +147,9 @@ async function handleV1(request, env, ctx, requestId) {
       if (!identity2.ok) return fail(identity2.status, identity2.code, identity2.message);
       return deleteInstallation(env, ctx, identity2.installationId, requestId, respond, fail);
     }
+    if (url.pathname === "/v1/car-models" || url.pathname.startsWith("/v1/car-models/")) {
+      return handleCarModelRoute(request, env, ctx, url, requestId, respond, fail);
+    }
     const listRoute = url.pathname === "/v1/skins";
     const route = matchSkinRoute(url.pathname);
     if (listRoute && request.method === "GET") {
@@ -176,6 +184,142 @@ async function handleV1(request, env, ctx, requestId) {
 }
 __name(handleV1, "handleV1");
 __name2(handleV1, "handleV1");
+function safeCarModelPath(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 255 && !value.startsWith("/") && !value.includes("\\") && !/^[A-Za-z]:/.test(value) && value.split("/").every((part) => part && part !== "." && part !== "..") && !/[\u0000-\u001f]/.test(value);
+}
+function carModelKey(modelId, relativePath) { return `car-models/${modelId}/files/${relativePath}`; }
+function validateCarModelManifest(manifest, modelId) {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return invalid("invalid_manifest", "Manifest must be an object");
+  if (Number(manifest.manifestVersion ?? manifest.schemaVersion ?? 1) !== 1) return invalid("invalid_manifest_version", "Unsupported manifest version");
+  const metadata = manifest.metadata && typeof manifest.metadata === "object" ? manifest.metadata : {};
+  const target = clean(manifest.targetVehicleDirectory ?? manifest.target?.vehicleDirectory, 100);
+  const packageId = clean(manifest.packageId ?? (Array.isArray(manifest.supportedGamePackages) ? manifest.supportedGamePackages[0] : ""), 100).toLowerCase();
+  const files = Array.isArray(manifest.files) ? manifest.files : [];
+  if (!clean(manifest.packageType, 64) || clean(manifest.packageType, 64) !== "rr3-car-model") return invalid("invalid_package_type", "Unsupported packageType");
+  if (!clean(metadata.name ?? manifest.title, 120)) return invalid("invalid_package_metadata", "metadata.name is required");
+  if (!CAR_PATTERN.test(target) || target !== (manifest.targetVehicleDirectory ?? manifest.target?.vehicleDirectory)) return invalid("invalid_target_vehicle_directory", "targetVehicleDirectory is invalid");
+  if (!RR3_PACKAGE_IDS.has(packageId)) return invalid("invalid_package_id", "Unsupported RR3 packageId");
+  if (!files.length || files.length > CAR_MODEL_MAX_FILES) return invalid("invalid_file_count", "Manifest file count is outside the allowed range");
+  const seen = new Set(); const destinations = new Set(); let total = 0;
+  const normalized = [];
+  for (const file of files) {
+    const path = file && (file.path ?? file.sourcePath);
+    const destination = file && (file.destinationRelativePath ?? file.destinationPath);
+    if (!file || !safeCarModelPath(path) || !safeCarModelPath(destination)) return invalid("invalid_file_path", "Files require safe source and destination relative paths");
+    const addon = String(manifest.installMode ?? manifest.mode ?? "REPLACE").toUpperCase() === "ADDON";
+    const root = String(file.root ?? file.destinationRoot ?? "VEHICLE").toUpperCase();
+    const expected = root === "VEHICLE" ? `${target}/${path}` : root === "VEHICLES_DATA" ? `vehicles/data/${path}` : root === "DEPOT_DATA" ? `data/${path}` : root === "DEPOT_ROOT" ? path : null;
+    const recognizedDepotRoot = root === "DEPOT_ROOT" && (path === "gametext.txt" || path === "asset_list_base.txtCache.txt" || /^text_[^/]+\.txt$/.test(path) || path === "gametext/asset_list_base.txtCache.txt" || /^gametext\/text_[^/]+\.txt$/.test(path));
+    if (!expected || destination !== expected || (root !== "VEHICLE" && !addon) || (root === "DEPOT_ROOT" && !recognizedDepotRoot)) return invalid("invalid_destination_path", `Destination for ${path} is not allowed`);
+    if (seen.has(path) || destinations.has(destination)) return invalid("duplicate_file_path", "Manifest contains duplicate or colliding paths");
+    seen.add(path); destinations.add(destination);
+    const size = Number(file.size ?? file.sizeBytes); const sha256 = clean(file.sha256, 64).toLowerCase();
+    if (!Number.isSafeInteger(size) || size <= 0 || size > CAR_MODEL_MAX_FILE_BYTES) return invalid("invalid_file_size", `File size for ${path} is invalid`);
+    if (!SHA256_PATTERN.test(sha256)) return invalid("invalid_file_sha256", `SHA-256 for ${path} is invalid`);
+    total += size; if (total > CAR_MODEL_MAX_TOTAL_BYTES) return invalid("total_size_exceeded", "Manifest total size exceeds the limit");
+    normalized.push({ path, destination, role: clean(file.role, 32) || "asset", detectedFormat: clean(file.detectedFormat, 24).toLowerCase() || null, variant: clean(file.variant, 64) || null, required: Boolean(file.required), size, sha256, contentType: clean(file.contentType, 120).toLowerCase() || "application/octet-stream" });
+  }
+  return { ok: true, target, packageId, manifestVersion: 1, packageName: clean(metadata.name ?? manifest.title, 120), supportedVersions: clean(Array.isArray(manifest.supportedVersions) ? manifest.supportedVersions.join(",") : manifest.supportedVersions, 512), files: normalized, fileCount: normalized.length, totalSize: total };
+}
+async function handleCarModelRoute(request, env, ctx, url, requestId, respond, fail) {
+  const match = /^\/v1\/car-models(?:\/([^/]+))?(?:\/(manifest|files|cover|screenshots|publish|like|report))?(?:\/(.*))?$/i.exec(url.pathname);
+  if (!match) return fail(404, "not_found", "Route not found");
+  const modelId = match[1] && UUID_PATTERN.test(match[1]) ? match[1].toLowerCase() : null;
+  let action = (match[2] || "").toLowerCase();
+  let tail = null;
+  try { tail = match[3] ? decodeURIComponent(match[3]) : null; } catch { return fail(400, "invalid_path", "Path encoding is invalid"); }
+  if (tail && (tail.includes("?") || tail.includes("#"))) return fail(400, "invalid_path", "Path contains invalid delimiters");
+  if (request.method === "GET" && !modelId) { const auth = await optionalAuthentication(request, env.SKINS_DB, url, "car_model_list"); return listCarModels(env, ctx, url, respond, auth.installationId); }
+  if (request.method === "POST" && !modelId) { const body = await boundedBody(request, MAX_JSON_BYTES); if (body === null) return fail(413, "body_too_large", "Request body exceeds the route limit"); const identity = await authenticate(request, env.SKINS_DB, url, body); if (!identity.ok) return fail(identity.status, identity.code, identity.message); return createCarModel(body, request, env, url, identity.installationId, requestId, respond, fail); }
+  const bodyLimit = action === "manifest" ? CAR_MODEL_MAX_MANIFEST_BYTES : action === "files" ? CAR_MODEL_MAX_FILE_BYTES : action === "cover" ? MAX_COVER_BYTES : action === "screenshots" ? MAX_SCREENSHOT_BYTES : MAX_JSON_BYTES;
+  const requestBody = request.method === "GET" || request.method === "HEAD" ? new Uint8Array() : await boundedBody(request, bodyLimit);
+  if (requestBody === null) return fail(413, "body_too_large", "Request body exceeds the route limit");
+  const needsAuth = !(request.method === "GET" || request.method === "HEAD") || !modelId;
+  let identity = { ok: true, installationId: null };
+  if (modelId && (request.method === "GET" || request.method === "HEAD")) { identity = await optionalAuthentication(request, env.SKINS_DB, url, "car_model_read"); identity = { ok: true, installationId: identity.installationId }; }
+  if (needsAuth || (modelId && action !== "" && action !== "cover" && action !== "screenshots" && action !== "files")) { identity = await authenticate(request, env.SKINS_DB, url, requestBody); if (!identity.ok) return fail(identity.status, identity.code, identity.message); }
+  if (!modelId) return fail(404, "model_not_found", "Car model not found");
+  if ((request.method === "GET" || request.method === "HEAD") && action === "files" && tail) return readCarModelFile(request, env, modelId, tail, identity.installationId, requestId, fail);
+  if ((request.method === "GET" || request.method === "HEAD") && action === "manifest") return readCarModelManifest(request, env, modelId, requestId, fail);
+  if ((request.method === "GET" || request.method === "HEAD") && action === "cover") return readCarModelAsset(request, env, modelId, "cover_key", requestId, fail);
+  if ((request.method === "GET" || request.method === "HEAD") && action === "screenshots" && tail) return readCarModelScreenshot(request, env, modelId, Number(tail), requestId, fail);
+  if (request.method === "GET" || request.method === "HEAD") return readCarModelDetails(request, env, modelId, identity.installationId, requestId, respond, fail);
+  const bytes = requestBody;
+  if (!action && request.method === "PUT") return updateCarModelManifest(bytes, request, env, modelId, identity.installationId, requestId, respond, fail);
+  if (action === "manifest" && request.method === "PUT") return updateCarModelManifest(bytes, request, env, modelId, identity.installationId, requestId, respond, fail);
+  if (action === "files" && request.method === "PUT" && tail) return uploadCarModelFile(bytes, env, modelId, tail, identity.installationId, requestId, respond, fail);
+  if (action === "cover" && request.method === "PUT") return uploadCarModelImage(bytes, request, env, modelId, "cover", identity.installationId, requestId, respond, fail);
+  if (action === "screenshots" && request.method === "PUT" && tail) return uploadCarModelImage(bytes, request, env, modelId, `screenshot:${Number(tail)}`, identity.installationId, requestId, respond, fail);
+  if (action === "publish" && request.method === "POST") return publishCarModel(env, modelId, identity.installationId, requestId, respond, fail);
+  if (action === "like" && (request.method === "POST" || request.method === "DELETE")) return setCarModelLike(env.SKINS_DB, modelId, identity.installationId, request.method === "POST", requestId, respond, fail);
+  if (action === "report" && request.method === "POST") return reportCarModel(bytes, env.SKINS_DB, modelId, identity.installationId, requestId, respond, fail);
+  if (!action && request.method === "DELETE") return deleteCarModel(env, ctx, modelId, identity.installationId, requestId, respond, fail);
+  return fail(405, "method_not_allowed", "Method not allowed");
+}
+async function createCarModel(bytes, request, env, url, owner, requestId, respond, fail) { const body = parseJson(bytes); if (!body || !clean(body.title, 80) || !clean(body.creatorName, 50)) return fail(400, "invalid_metadata", "title and creatorName are required"); const key = clean(request.headers.get("Idempotency-Key"), 128); if (!/^[A-Za-z0-9._:-]{8,128}$/.test(key)) return fail(400, "invalid_idempotency_key", "Idempotency-Key must contain 8-128 safe characters"); const previous = await env.SKINS_DB.prepare("SELECT id, status FROM car_models WHERE owner_id = ? AND idempotency_key = ? LIMIT 1").bind(owner, key).first(); if (previous) return respond({ success: true, id: previous.id, status: previous.status, requestId }, 200); const id = crypto.randomUUID(); await env.SKINS_DB.prepare("INSERT INTO car_models (id, owner_id, title, creator_name, description, target_vehicle_directory, package_id, package_name, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, owner, clean(body.title, 80), clean(body.creatorName, 50), clean(body.description, 1500), clean(body.targetVehicleDirectory, 100), clean(body.packageId, 100).toLowerCase(), clean(body.packageName ?? body.title, 120), key).run(); return respond({ success: true, id, status: "draft", manifestUrl: `${url.origin}/v1/car-models/${id}/manifest`, requestId }, 201); }
+async function ownedCarModel(db, id, owner) { return db.prepare("SELECT * FROM car_models WHERE id = ? AND owner_id = ? AND deleted_at IS NULL LIMIT 1").bind(id, owner).first(); }
+async function updateCarModelManifest(bytes, request, env, id, owner, requestId, respond, fail) { const declared = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase(); if (declared !== "application/json") return fail(415, "manifest_type_mismatch", "Manifest Content-Type must be application/json"); const model = await ownedCarModel(env.SKINS_DB, id, owner); if (!model) return fail(404, "model_not_found", "Owned draft not found"); const parsed = parseJson(bytes); const valid = validateCarModelManifest(parsed, id); if (!valid.ok) return fail(422, valid.code, valid.message); const digest = await sha256Hex(bytes); const key = `car-models/${id}/manifest.json`; await env.COMMUNITY_BUCKET.put(key, bytes, { httpMetadata: { contentType: "application/json" }, customMetadata: { modelId: id, ownerId: owner, role: "manifest", sha256: digest } }); await env.SKINS_DB.prepare("UPDATE car_models SET target_vehicle_directory = ?, package_id = ?, package_name = ?, manifest_version = ?, supported_versions = ?, manifest_key = ?, manifest_size = ?, manifest_sha256 = ?, file_count = ?, total_size = ?, status = 'uploading', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_id = ?").bind(valid.target, valid.packageId, valid.packageName, valid.manifestVersion, valid.supportedVersions, key, bytes.length, digest, valid.fileCount, valid.totalSize, id, owner).run(); await env.SKINS_DB.prepare("DELETE FROM car_model_files WHERE model_id = ?").bind(id).run(); for (const file of valid.files) await env.SKINS_DB.prepare("INSERT INTO car_model_files (id, model_id, relative_path, destination_relative_path, role, detected_format, variant, required, object_key, file_size, file_sha256, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), id, file.path, file.destination, file.role, file.detectedFormat, file.variant, file.required ? 1 : 0, carModelKey(id, file.path), file.size, file.sha256, file.contentType).run(); return respond({ success: true, fileCount: valid.fileCount, totalSize: valid.totalSize, sha256: digest, requestId }); }
+async function uploadCarModelFile(bytes, env, id, path, owner, requestId, respond, fail) { const model = await ownedCarModel(env.SKINS_DB, id, owner); if (!model) return fail(404, "model_not_found", "Owned draft not found"); if (!safeCarModelPath(path)) return fail(400, "invalid_file_path", "File path is invalid"); const row = await env.SKINS_DB.prepare("SELECT * FROM car_model_files WHERE model_id = ? AND relative_path = ?").bind(id, path).first(); if (!row) return fail(404, "file_not_declared", "File is not declared by the manifest"); if (bytes.length !== Number(row.file_size)) return fail(422, "size_mismatch", "File size does not match the manifest"); const digest = await sha256Hex(bytes); if (digest !== row.file_sha256) return fail(422, "sha256_mismatch", "File SHA-256 does not match the manifest"); await env.COMMUNITY_BUCKET.put(row.object_key, bytes, { httpMetadata: { contentType: row.content_type || "application/octet-stream" }, customMetadata: { modelId: id, ownerId: owner, path, sha256: digest, contentType: row.content_type || "application/octet-stream" } }); const stored = await env.COMMUNITY_BUCKET.head(row.object_key); if (!stored || stored.size !== bytes.length || stored.httpMetadata?.contentType !== (row.content_type || "application/octet-stream")) { await env.COMMUNITY_BUCKET.delete(row.object_key); return fail(500, "storage_verification_failed", "Stored file could not be verified"); } await env.SKINS_DB.prepare("UPDATE car_models SET status = 'uploading', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_id = ?").bind(id, owner).run(); return respond({ success: true, path, size: bytes.length, sha256: digest, requestId }); }
+async function readCarModelFile(request, env, id, path, viewer, requestId, fail) { if (!safeCarModelPath(path)) return fail(400, "invalid_file_path", "File path is invalid"); const row = await env.SKINS_DB.prepare("SELECT f.*, m.status, m.owner_id FROM car_model_files f JOIN car_models m ON m.id = f.model_id WHERE f.model_id = ? AND f.relative_path = ? AND m.deleted_at IS NULL AND (m.status = 'published' OR (m.owner_id = ? AND m.status IN ('draft','uploading')))").bind(id, path, viewer || "").first(); if (!row) return fail(404, "file_not_found", "File not found"); const object = await env.COMMUNITY_BUCKET.get(row.object_key); if (!object) { if (row.status === "published") await invalidateBrokenCarModel(env, { waitUntil: (promise) => promise }, row, "file_asset"); return fail(404, "asset_not_found", "File asset not found"); } const headers = new Headers({ "Content-Type": row.content_type || "application/octet-stream", "Content-Length": String(object.size), "Cache-Control": row.status === "published" ? "public, max-age=31536000, immutable" : "no-store", "X-Request-ID": requestId }); return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers }); }
+async function readCarModelManifest(request, env, id, requestId, fail) { const row = await env.SKINS_DB.prepare("SELECT * FROM car_models WHERE id = ? AND deleted_at IS NULL AND status = 'published'").bind(id).first(); if (!row?.manifest_key) return fail(404, "asset_not_found", "Manifest not found"); const object = await env.COMMUNITY_BUCKET.get(row.manifest_key); if (!object || object.size !== Number(row.manifest_size) || String(object.customMetadata?.sha256 || "").toLowerCase() !== String(row.manifest_sha256 || "").toLowerCase()) { await invalidateBrokenCarModel(env, { waitUntil: (promise) => promise }, row, "manifest_asset"); return fail(404, "asset_not_found", "Manifest not found"); } const headers = new Headers({ "Content-Type": "application/json", "Content-Length": String(object.size), "ETag": object.httpEtag, "X-Request-ID": requestId, "Cache-Control": "public, max-age=86400" }); return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers }); }
+async function readCarModelAsset(request, env, id, column, requestId, fail) { const row = await env.SKINS_DB.prepare(`SELECT * FROM car_models WHERE id = ? AND deleted_at IS NULL AND status = 'published'`).bind(id).first(); if (!row?.[column]) return fail(404, "asset_not_found", "Asset not found"); const object = await env.COMMUNITY_BUCKET.get(row[column]); if (!object) { await invalidateBrokenCarModel(env, { waitUntil: (promise) => promise }, row, column === "cover_key" ? "cover_asset" : "required_asset"); return fail(404, "asset_not_found", "Asset not found"); } const headers = new Headers({ "Content-Type": object.httpMetadata?.contentType || row.cover_content_type || "application/octet-stream", "Content-Length": String(object.size), "ETag": object.httpEtag, "X-Request-ID": requestId, "Cache-Control": "public, max-age=86400" }); return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers }); }
+async function readCarModelScreenshot(request, env, id, position, requestId, fail) { const row = await env.SKINS_DB.prepare("SELECT object_key, content_type FROM car_model_screenshots s JOIN car_models m ON m.id = s.model_id WHERE model_id = ? AND position = ? AND m.status = 'published' AND m.deleted_at IS NULL").bind(id, position).first(); if (!row) return fail(404, "asset_not_found", "Screenshot not found"); const object = await env.COMMUNITY_BUCKET.get(row.object_key); if (!object) return fail(404, "asset_not_found", "Screenshot not found"); return new Response(request.method === "HEAD" ? null : object.body, { headers: { "Content-Type": row.content_type, "X-Request-ID": requestId } }); }
+async function readCarModelDetails(request, env, id, viewer, requestId, respond, fail) {
+  const row = await env.SKINS_DB.prepare("SELECT m.*, (SELECT COUNT(*) FROM car_model_likes l WHERE l.model_id = m.id) likes, (SELECT 1 FROM car_model_likes l WHERE l.model_id = m.id AND l.user_id = ?) liked FROM car_models m WHERE m.id = ? AND m.deleted_at IS NULL AND (m.status = 'published' OR m.owner_id = ?)").bind(viewer, id, viewer || "").first();
+  if (!row) return fail(404, "model_not_found", "Car model not found");
+  if (row.status === "published") {
+    const integrity = await validatePublishedCarModel(env, row);
+    if (!integrity.ok) {
+      await invalidateBrokenCarModel(env, { waitUntil: (promise) => promise }, row, integrity.reason);
+      return fail(404, "model_not_found", "Car model not found");
+    }
+  }
+  const files = await env.SKINS_DB.prepare("SELECT relative_path AS path, destination_relative_path AS destinationRelativePath, role, detected_format AS detectedFormat, variant, required, file_size AS size, file_sha256 AS sha256, content_type AS contentType FROM car_model_files WHERE model_id = ? ORDER BY relative_path").bind(id).all();
+  return respond({ id, title: row.title, creatorName: row.creator_name, description: row.description, targetVehicleDirectory: row.target_vehicle_directory, packageId: row.package_id, supportedVersions: row.supported_versions, status: row.status, manifestSha256: row.manifest_sha256, coverUploaded: Boolean(row.cover_key), screenshotPositions: (await env.SKINS_DB.prepare("SELECT position FROM car_model_screenshots WHERE model_id = ?").bind(id).all()).results?.map((item) => Number(item.position)) || [], fileCount: Number(row.file_count), totalSize: Number(row.total_size), files: files.results || [], likes: Number(row.likes || 0), likedByMe: Boolean(row.liked), requestId });
+}
+async function validatePublishedCarModel(env, row) {
+  if (!row.manifest_key || !row.cover_key || !Number.isSafeInteger(Number(row.file_count)) || Number(row.file_count) < 1 || Number(row.file_count) > CAR_MODEL_MAX_FILES) return { ok: false, reason: "catalog_metadata" };
+  const manifest = await env.COMMUNITY_BUCKET.head(row.manifest_key);
+  const cover = await env.COMMUNITY_BUCKET.head(row.cover_key);
+  if (!manifest || manifest.size !== Number(row.manifest_size) || String(manifest.customMetadata?.sha256 || "").toLowerCase() !== String(row.manifest_sha256 || "").toLowerCase() || !cover || cover.size <= 0 || cover.size > MAX_COVER_BYTES || String(cover.customMetadata?.sha256 || "").toLowerCase() !== String(row.cover_sha256 || "").toLowerCase()) return { ok: false, reason: "required_asset" };
+  const files = await env.SKINS_DB.prepare("SELECT object_key, file_size, file_sha256 FROM car_model_files WHERE model_id = ? ORDER BY relative_path LIMIT ?").bind(row.id, CAR_MODEL_MAX_FILES + 1).all();
+  const indexed = files.results || [];
+  if (indexed.length !== Number(row.file_count)) return { ok: false, reason: "file_index" };
+  const objects = await Promise.all(indexed.map((file) => env.COMMUNITY_BUCKET.head(file.object_key)));
+  if (objects.some((object, index) => !object || object.size !== Number(indexed[index].file_size) || String(object.customMetadata?.sha256 || "").toLowerCase() !== String(indexed[index].file_sha256 || "").toLowerCase())) return { ok: false, reason: "file_asset" };
+  return { ok: true };
+}
+async function invalidateBrokenCarModel(env, ctx, row, reason) {
+  console.warn(JSON.stringify({ event: "car_model_invalidated", modelId: row.id, reason }));
+  // The conditional update makes detection idempotent and preserves child metadata for diagnostics.
+  const result = await env.SKINS_DB.prepare("UPDATE car_models SET invalidated_at = COALESCE(invalidated_at, CURRENT_TIMESTAMP), invalid_reason = COALESCE(invalid_reason, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'published' AND deleted_at IS NULL AND invalidated_at IS NULL").bind(reason, row.id).run();
+  if (result.meta?.changes) {
+    await env.SKINS_DB.prepare("DELETE FROM car_model_likes WHERE model_id = ?").bind(row.id).run();
+    await env.SKINS_DB.prepare("UPDATE car_model_reports SET status = 'actioned', updated_at = CURRENT_TIMESTAMP WHERE model_id = ? AND status IN ('open','reviewed')").bind(row.id).run();
+  }
+  ctx.waitUntil(deleteR2Prefix(env.COMMUNITY_BUCKET, `car-models/${row.id}/`).catch(() => {}));
+}
+async function hideBrokenCarModel(env, ctx, row, reason) {
+  return invalidateBrokenCarModel(env, ctx, row, reason);
+}
+async function listCarModels(env, ctx, url, respond, viewer) {
+  const limit = clamp(url.searchParams.get("limit"), 1, 50, 20);
+  // D1 is the catalog index; validate a bounded candidate window against R2 before exposing it.
+  const result = await env.SKINS_DB.prepare("SELECT m.*, (SELECT COUNT(*) FROM car_model_likes l WHERE l.model_id = m.id) likes FROM car_models m WHERE m.status = 'published' AND m.deleted_at IS NULL AND m.invalidated_at IS NULL ORDER BY m.created_at DESC LIMIT ?").bind(Math.min(50, Math.max(limit * 2, limit + 10))).all();
+  const valid = [];
+  for (const row of result.results || []) {
+    const integrity = await validatePublishedCarModel(env, row);
+    if (!integrity.ok) { await hideBrokenCarModel(env, ctx, row, integrity.reason); continue; }
+    valid.push({ id: row.id, title: row.title, creatorName: row.creator_name, targetVehicleDirectory: row.target_vehicle_directory, packageId: row.package_id, fileCount: Number(row.file_count), totalSize: Number(row.total_size), likes: Number(row.likes || 0), manifestSha256: row.manifest_sha256, coverUrl: `${url.origin}/v1/car-models/${row.id}/cover` });
+    if (valid.length >= limit) break;
+  }
+  return respond({ items: valid, limit });
+}
+async function uploadCarModelImage(bytes, request, env, id, role, owner, requestId, respond, fail) { const model = await ownedCarModel(env.SKINS_DB, id, owner); if (!model) return fail(404, "model_not_found", "Owned draft not found"); const detected = detectImage(bytes); if (!detected || (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase() !== detected.mime) return fail(415, "invalid_image", "Image type does not match its bytes"); const digest = await sha256Hex(bytes); if (role === "cover") { const key = `car-models/${id}/cover.${detected.extension}`; await env.COMMUNITY_BUCKET.put(key, bytes, { httpMetadata: { contentType: detected.mime }, customMetadata: { modelId: id, ownerId: owner, role: "cover", sha256: digest } }); await env.SKINS_DB.prepare("UPDATE car_models SET cover_key = ?, cover_sha256 = ?, cover_content_type = ?, status = 'uploading', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(key, digest, detected.mime, id).run(); return respond({ success: true, sha256: digest, requestId }); } const position = Number(role.split(":")[1]); if (!Number.isInteger(position) || position < 1 || position > 8) return fail(400, "invalid_position", "Screenshot position must be 1-8"); const key = `car-models/${id}/screenshots/${String(position).padStart(2, "0")}.${detected.extension}`; await env.COMMUNITY_BUCKET.put(key, bytes, { httpMetadata: { contentType: detected.mime } }); await env.SKINS_DB.prepare("INSERT INTO car_model_screenshots (id, model_id, position, object_key, sha256, content_type) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(model_id, position) DO UPDATE SET object_key = excluded.object_key, sha256 = excluded.sha256, content_type = excluded.content_type").bind(crypto.randomUUID(), id, position, key, digest, detected.mime).run(); return respond({ success: true, position, sha256: digest, requestId }); }
+async function publishCarModel(env, id, owner, requestId, respond, fail) { const model = await ownedCarModel(env.SKINS_DB, id, owner); if (!model) return fail(404, "model_not_found", "Owned draft not found"); if (!model.manifest_key || !model.cover_key) return fail(409, "uploads_incomplete", "Manifest and cover are required"); const manifest = await env.COMMUNITY_BUCKET.get(model.manifest_key); if (!manifest || manifest.size !== Number(model.manifest_size) || await sha256Hex(new Uint8Array(await manifest.arrayBuffer())) !== String(model.manifest_sha256).toLowerCase()) return fail(409, "uploads_incomplete", "Manifest asset could not be verified"); const cover = await env.COMMUNITY_BUCKET.head(model.cover_key); if (!cover || cover.size <= 0 || cover.size > MAX_COVER_BYTES || cover.httpMetadata?.contentType !== model.cover_content_type) return fail(409, "uploads_incomplete", "Cover asset could not be verified"); const files = await env.SKINS_DB.prepare("SELECT * FROM car_model_files WHERE model_id = ?").bind(id).all(); if ((files.results || []).length !== Number(model.file_count)) return fail(409, "uploads_incomplete", "Manifest file index is incomplete"); for (const file of files.results || []) { const object = await env.COMMUNITY_BUCKET.get(file.object_key); if (!object || object.size !== Number(file.file_size) || await sha256Hex(new Uint8Array(await object.arrayBuffer())) !== String(file.file_sha256).toLowerCase() || (object.httpMetadata?.contentType || "application/octet-stream") !== (file.content_type || "application/octet-stream")) return fail(409, "uploads_incomplete", `File ${file.relative_path} is missing or unverifiable`); } const screenshots = await env.SKINS_DB.prepare("SELECT * FROM car_model_screenshots WHERE model_id = ?").bind(id).all(); for (const screenshot of screenshots.results || []) { const object = await env.COMMUNITY_BUCKET.get(screenshot.object_key); if (!object || object.size <= 0 || await sha256Hex(new Uint8Array(await object.arrayBuffer())) !== String(screenshot.sha256).toLowerCase() || object.httpMetadata?.contentType !== screenshot.content_type) return fail(409, "uploads_incomplete", `Screenshot ${screenshot.position} is missing or unverifiable`); } const result = await env.SKINS_DB.prepare("UPDATE car_models SET status = 'published', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_id = ? AND status IN ('draft','uploading')").bind(id, owner).run(); if (!result.meta?.changes) return fail(409, "invalid_state_transition", "Model state changed before publishing"); return respond({ success: true, id, status: "published", requestId }); }
+async function setCarModelLike(db, id, user, liked, requestId, respond, fail) { const exists = await db.prepare("SELECT id FROM car_models WHERE id = ? AND status = 'published' AND deleted_at IS NULL AND invalidated_at IS NULL").bind(id).first(); if (!exists) return fail(404, "model_not_found", "Car model not found"); if (liked) await db.prepare("INSERT OR IGNORE INTO car_model_likes (model_id, user_id) VALUES (?, ?)").bind(id, user).run(); else await db.prepare("DELETE FROM car_model_likes WHERE model_id = ? AND user_id = ?").bind(id, user).run(); const row = await db.prepare("SELECT COUNT(*) count FROM car_model_likes WHERE model_id = ?").bind(id).first(); return respond({ success: true, liked, likes: Number(row?.count || 0), requestId }); }
+async function reportCarModel(bytes, db, id, user, requestId, respond, fail) { const body = parseJson(bytes); const reason = clean(body?.reason, 32).toLowerCase(); if (!body || !REPORT_REASONS.has(reason)) return fail(400, "invalid_report_reason", "Report reason is invalid"); const result = await db.prepare("INSERT OR IGNORE INTO car_model_reports (id, model_id, reporter_id, reason, details) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), id, user, reason, clean(body.details, 1000)).run(); return respond({ success: true, duplicate: !result.meta?.changes, requestId }, result.meta?.changes ? 201 : 200); }
+async function deleteCarModel(env, ctx, id, owner, requestId, respond, fail) { const result = await env.SKINS_DB.prepare("UPDATE car_models SET status = 'hidden', deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").bind(id, owner).run(); if (!result.meta?.changes) return fail(404, "model_not_found", "Owned car model not found"); ctx.waitUntil(deleteR2Prefix(env.COMMUNITY_BUCKET, `car-models/${id}/`).catch(() => {})); return respond({ success: true, deleted: true, requestId }, 202); }
 async function optionalAuthentication(request, database, url, route) {
   const installationId = clean(request.headers.get("X-Installation-ID"), 36).toLowerCase();
   if (!installationId) return { installationId: null, authenticated: false, reason: "missing_identity" };
@@ -510,10 +654,11 @@ async function softDeleteMusic(env, ctx, musicId, ownerId, requestId, respond, f
 __name(softDeleteMusic, "softDeleteMusic");
 __name2(softDeleteMusic, "softDeleteMusic");
 async function deleteInstallation(env, ctx, ownerId, requestId, respond, fail) {
-  const [saves, music, skins] = await Promise.all([
+  const [saves, music, skins, carModels] = await Promise.all([
     env.SKINS_DB.prepare("SELECT file_key FROM accountless_save_uploads WHERE owner_id = ?").bind(ownerId).all(),
     env.SKINS_DB.prepare("SELECT file_key, cover_key FROM community_music_uploads WHERE owner_id = ?").bind(ownerId).all(),
-    env.SKINS_DB.prepare("SELECT id FROM skins WHERE owner_id = ?").bind(ownerId).all()
+    env.SKINS_DB.prepare("SELECT id FROM skins WHERE owner_id = ?").bind(ownerId).all(),
+    env.SKINS_DB.prepare("SELECT id FROM car_models WHERE owner_id = ?").bind(ownerId).all()
   ]);
   await env.SKINS_DB.prepare("UPDATE anonymous_installations SET status = 'revoked', revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'").bind(ownerId).run();
   await env.SKINS_DB.batch([
@@ -521,7 +666,10 @@ async function deleteInstallation(env, ctx, ownerId, requestId, respond, fail) {
     env.SKINS_DB.prepare("DELETE FROM community_music_uploads WHERE owner_id = ?").bind(ownerId),
     env.SKINS_DB.prepare("UPDATE skins SET status = 'hidden', deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE owner_id = ? AND deleted_at IS NULL").bind(ownerId),
     env.SKINS_DB.prepare("DELETE FROM skin_likes WHERE user_id = ?").bind(ownerId),
-    env.SKINS_DB.prepare("DELETE FROM skin_reports WHERE reporter_id = ?").bind(ownerId)
+    env.SKINS_DB.prepare("DELETE FROM skin_reports WHERE reporter_id = ?").bind(ownerId),
+    env.SKINS_DB.prepare("UPDATE car_models SET status = 'hidden', deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE owner_id = ? AND deleted_at IS NULL").bind(ownerId),
+    env.SKINS_DB.prepare("DELETE FROM car_model_likes WHERE user_id = ?").bind(ownerId),
+    env.SKINS_DB.prepare("DELETE FROM car_model_reports WHERE reporter_id = ?").bind(ownerId)
   ]);
   const cleanup = /* @__PURE__ */ __name2(async () => {
     for (const row of saves.results || []) await env.COMMUNITY_BUCKET.delete(row.file_key);
@@ -530,6 +678,7 @@ async function deleteInstallation(env, ctx, ownerId, requestId, respond, fail) {
       if (row.cover_key) await env.COMMUNITY_BUCKET.delete(row.cover_key);
     }
     for (const row of skins.results || []) await deletePrefix(env.COMMUNITY_BUCKET, `skins/${row.id}/`);
+    for (const row of carModels.results || []) await deletePrefix(env.COMMUNITY_BUCKET, `car-models/${row.id}/`);
   }, "cleanup");
   ctx.waitUntil(cleanup().catch((error) => console.error(JSON.stringify({ event: "installation_cleanup_failed", requestId, ownerId, error: error instanceof Error ? error.message : String(error) }))));
   return respond({ success: true, deleted: true, requestId }, 202);
@@ -1095,7 +1244,7 @@ var ASSET_LINKS = [
     relation: ["delegate_permission/common.handle_all_urls"],
     target: {
       namespace: "android_app",
-      package_name: "com.example.projectretr0installer",
+      package_name: "com.retr0.projectretr0",
       sha256_cert_fingerprints: ["4B:E1:C8:BB:D7:6B:40:00:78:11:D7:5A:97:CF:CC:46:F4:AC:C2:BD:B8:FC:1D:78:3B:49:8F:EE:D0:2D:48:A5"]
     }
   }

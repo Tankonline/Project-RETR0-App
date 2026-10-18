@@ -322,6 +322,11 @@ class Retr0InstallService : Service() {
                             installer?.applyFromLibrary(trackFileName, targetTrack)
                         }
                     }
+                    "APPLY_FROM_FILE" -> {
+                        if (uri != null && targetTrack != null) {
+                            installer?.applyMusicMod(uri, targetTrack)
+                        }
+                    }
                     "DOWNLOAD_TO_LIBRARY" -> {
                         if (saveId != null && customName != null) {
                             installer?.downloadCommunityMusic(CommunityMusic(saveId, customName, "", 0, "", ""), toLibrary = true)

@@ -57,6 +57,7 @@
     <string name="hint_manual_import">Importa archivos externos directamente al juego.</string>
     <string name="hint_youtube_converter">Convierte enlaces de YouTube a MP3 en tu biblioteca local.</string>
     <string name="hint_discord">Únete a nuestra comunidad para ver más de Proyecto RETR0</string>
+    <string name="discord_invite_url">https://discord.gg/DfX8ArtfgX</string>
 
     <!-- Buttons -->
     <string name="btn_install">INSTALAR PROYECTO RETR0</string>

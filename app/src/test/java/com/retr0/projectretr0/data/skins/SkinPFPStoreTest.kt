@@ -1,4 +1,4 @@
-package com.example.projectretr0installer.data.skins
+package com.retr0.projectretr0.data.skins
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals

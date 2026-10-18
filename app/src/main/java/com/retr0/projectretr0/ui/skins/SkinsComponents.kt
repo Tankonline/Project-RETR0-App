@@ -28,6 +28,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.retr0.projectretr0.ui.carmodels.ContentType
+import com.retr0.projectretr0.ui.carmodels.ContentTypeBadge
 import com.retr0.projectretr0.ui.components.*
 import com.retr0.projectretr0.ui.theme.*
 import java.io.File
@@ -105,6 +107,7 @@ import java.util.Locale
     RetroCard(modifier.clickable(onClick = onClick)) {
         Box {
             SkinCover(Modifier.fillMaxWidth().aspectRatio(1.35f), imageUrl = skin.coverUrl, imageUrls = skin.screenshotUrls)
+            ContentTypeBadge(ContentType.SKIN, Modifier.align(Alignment.TopStart).padding(7.dp))
             Row(Modifier.align(Alignment.TopEnd).padding(7.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (skin.isOwner) BadgePill("Mine", Icons.Filled.Person, RetroAccent)
                 CompatibilityBadge(skin.compatibility)
@@ -169,6 +172,7 @@ fun LibrarySkinCard(
         Box {
             SkinCover(Modifier.fillMaxWidth().aspectRatio(1.7f), imageUrl = skin.coverUrl, imageUrls = skin.screenshotUrls)
             Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ContentTypeBadge(ContentType.SKIN)
                 BadgePill("Featured", Icons.Filled.Star, RetroGold)
                 if (skin.isOwner) BadgePill("Mine", Icons.Filled.Person, RetroAccent)
             }

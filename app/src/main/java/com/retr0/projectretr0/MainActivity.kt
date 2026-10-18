@@ -68,9 +68,11 @@ import com.retr0.projectretr0.data.skins.SkinPFPStore
 import com.retr0.projectretr0.ui.skins.PFPEditorFlow
 import com.retr0.projectretr0.ui.skins.SkinAvatar
 import com.retr0.projectretr0.ui.components.*
+import com.retr0.projectretr0.ui.carmodels.CarModelsHubTab
+import com.retr0.projectretr0.ui.carmodels.ModsHomeScreen
+import com.retr0.projectretr0.ui.carmodels.ModsKind
 import com.retr0.projectretr0.ui.skins.CarSkinsTab
 import com.retr0.projectretr0.ui.skins.GamePackage
-import com.retr0.projectretr0.ui.skins.SkinModsScreen
 import com.retr0.projectretr0.ui.theme.*
 import com.retr0.projectretr0.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
@@ -123,6 +125,7 @@ class MainActivity : ComponentActivity() {
     private var pendingDeepLinkSaveId by mutableStateOf<String?>(null)
     private var pendingDeepLinkMusicId by mutableStateOf<String?>(null)
     private var communityTab by mutableIntStateOf(0)
+    private var modsKind by mutableStateOf(ModsKind.SKINS)
     
     private var installService: Retr0InstallService.LocalBinder? by mutableStateOf(null)
     private var isInstallServiceBound by mutableStateOf(value = false)
@@ -131,6 +134,10 @@ class MainActivity : ComponentActivity() {
     private var communitySaves by mutableStateOf<List<CommunitySave>>(emptyList())
     private var communityMusic by mutableStateOf<List<CommunityMusic>>(emptyList())
     private var communitySortType by mutableStateOf("newest")
+    private var communityRefreshToken by mutableIntStateOf(0)
+    // Car-model browsing is network-backed and must refresh independently of the
+    // Shizuku-dependent saves/music flows.
+    private var carModelsRefreshToken by mutableIntStateOf(0)
     private var libraryMusic by mutableStateOf<List<LibraryMusic>>(emptyList())
     private var allMusicSlots by mutableStateOf<List<String>>(emptyList())
     private var backedUpSlots by mutableStateOf<Set<String>>(emptySet())
@@ -176,8 +183,9 @@ class MainActivity : ComponentActivity() {
     private val youtubeCookieStore by lazy { YouTubeCookieStore(this) }
 
     // Slot Swapping State
-    private var showLibraryPickerForSlot by mutableStateOf<String?>(null) // game slot being swapped
-    private var showSlotPickerForLibraryTrack by mutableStateOf<LibraryMusic?>(null) // library track being applied
+    private var showLibraryPickerForSlot by mutableStateOf<String?>(null) // legacy library picker state
+    private var showSlotPickerForLibraryTrack by mutableStateOf<LibraryMusic?>(null) // legacy library picker state
+    private var pendingAudioFileTarget by mutableStateOf<String?>(null)
     
     private var aiFixResponse by mutableStateOf<String?>(null)
     private var isAiThinking by mutableStateOf(false)
@@ -435,13 +443,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshCommunityHub() {
+        communityRefreshToken++
+        // Car models are fetched directly from the Community Hub and do not require
+        // the Shizuku installer service or the saves/music loading gate.
+        if (communityTab == 3) {
+            carModelsRefreshToken++
+            return
+        }
+        if (communityTab >= 2) return
         val currentService = service ?: return
+        if (isCommunityLoading) return
         isCommunityLoading = true
         lifecycleScope.launch {
-            val installer = Retr0Installer(this@MainActivity, currentService)
-            communitySaves = installer.fetchCommunitySaves(communitySortType)
-            communityMusic = installer.fetchCommunityMusic(communitySortType)
-            isCommunityLoading = false
+            try {
+                val installer = Retr0Installer(this@MainActivity, currentService)
+                if (communityTab == 0) communitySaves = installer.fetchCommunitySaves(communitySortType)
+                else communityMusic = installer.fetchCommunityMusic(communitySortType)
+            } finally {
+                isCommunityLoading = false
+            }
         }
     }
 
@@ -546,7 +566,7 @@ class MainActivity : ComponentActivity() {
                         items = listOf(
                             RetroNavItem("Home", Icons.Filled.Home) { currentMode = AppMode.DASHBOARD },
                             RetroNavItem("Hub", Icons.Filled.Public) { currentMode = AppMode.COMMUNITY },
-                            RetroNavItem("Skins", Icons.Filled.Brush) { currentMode = AppMode.SKIN_MODS },
+                            RetroNavItem("Mods", Icons.Filled.Tune) { currentMode = AppMode.SKIN_MODS },
                             RetroNavItem("AI", Icons.Filled.SmartToy) { currentMode = AppMode.AI_CHAT },
                         )
                     )
@@ -564,7 +584,7 @@ class MainActivity : ComponentActivity() {
                     AppMode.SELECTION -> GameSelectionScreen()
                     AppMode.DASHBOARD -> RR3Dashboard(installProgress)
                     AppMode.COMMUNITY -> CommunityGalleryScreen(onFullScreenChange = { skinsFullScreen = it })
-                    AppMode.SKIN_MODS -> SkinModsScreen(isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service, onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onFullScreenChange = { skinsFullScreen = it })
+                    AppMode.SKIN_MODS -> ModsHomeScreen(kind = modsKind, onKind = { modsKind = it }, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service, onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onFullScreenChange = { skinsFullScreen = it })
                     AppMode.AI_CHAT -> AiChatScreen()
                     AppMode.EXPERIMENTAL_GRAPHICS -> ExperimentalGraphicsScreen(
                         (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED)
@@ -806,6 +826,17 @@ class MainActivity : ComponentActivity() {
                 showMusicImportDialog = true
             }
         }
+        val audioFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            val target = pendingAudioFileTarget
+            pendingAudioFileTarget = null
+            if (uri != null && target != null) {
+                startBackgroundInstall(
+                    actionType = "APPLY_FROM_FILE",
+                    uri = uri,
+                    targetTrack = target,
+                )
+            }
+        }
 
         Column(
             Modifier.fillMaxSize().background(RetroBg)
@@ -934,7 +965,6 @@ class MainActivity : ComponentActivity() {
                                 bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
                             }
                         }
-                        SecondaryButton("Community hub", Modifier.weight(1f), icon = Icons.Filled.Public) { currentMode = AppMode.COMMUNITY }
                     }
                 }
             }
@@ -944,7 +974,7 @@ class MainActivity : ComponentActivity() {
                 SectionHeader("Community & support", Icons.Filled.Favorite)
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     AccentTintButton("Discord", Icons.Filled.Forum, RetroDiscordTint, RetroDiscord.copy(alpha = 0.4f), RetroDiscord, Modifier.weight(1f)) { 
-                        startActivity(Intent(Intent.ACTION_VIEW, "https://discord.gg/projectretr0".toUri()))
+                        startActivity(Intent(Intent.ACTION_VIEW, getString(R.string.discord_invite_url).toUri()))
                     }
                     AccentTintButton("Subscribe", Icons.Filled.Star, RetroGoldTint, RetroGold.copy(alpha = 0.45f), RetroGold, Modifier.weight(1f)) { 
                         startActivity(Intent(Intent.ACTION_VIEW, "https://www.youtube.com/@Retrospect69".toUri()))
@@ -1203,7 +1233,7 @@ class MainActivity : ComponentActivity() {
 
         Column(
             Modifier.fillMaxSize().background(RetroBg)
-                .then(if (communityTab == 2) Modifier else Modifier.verticalScroll(scrollState))
+                .then(if (communityTab >= 2) Modifier else Modifier.verticalScroll(scrollState))
                 .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -1221,10 +1251,19 @@ class MainActivity : ComponentActivity() {
                     RetroSearchField(value = searchQuery, onValueChange = { searchQuery = it }, placeholder = "Search name, author, file ID…", icon = Icons.Filled.Search)
                 }
                 Box(Modifier.size(44.dp).background(RetroSurface, RoundedCornerShape(12.dp)).border(1.dp, RetroBorder, RoundedCornerShape(12.dp))
-                        .clickable { /* toggleSort() */ }, Alignment.Center) { Icon(Icons.Filled.SwapVert, null, tint = RetroAccent) }
+                        .clickable {
+                            communitySortType = when (communitySortType) {
+                                "newest" -> "downloads"
+                                "downloads" -> "likes"
+                                else -> "newest"
+                            }
+                            refreshCommunityHub()
+                        }, Alignment.Center) {
+                    Icon(Icons.Filled.SwapVert, contentDescription = "Change sort order", tint = RetroAccent)
+                }
             }
             
-            SegmentedTabs(listOf("Saves", "Music", "Skins"), communityTab) { communityTab = it }
+            SegmentedTabs(listOf("Saves", "Music", "Skins", "Car Models"), communityTab) { communityTab = it }
 
             if (communityTab == 0) {
                 if (isCommunityLoading) {
@@ -1327,6 +1366,15 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(12.dp))
                     }
                 }
+            } else if (communityTab == 3) {
+                CarModelsHubTab(
+                    gamePackage = GamePackage.ROW,
+                    onOpenMyModels = { modsKind = ModsKind.CARS; currentMode = AppMode.SKIN_MODS },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    onFullScreenChange = { focusedSkinRoute = it },
+                    refreshToken = carModelsRefreshToken,
+                    onRefresh = { refreshCommunityHub() },
+                )
             } else {
                 // Keep this instance composed while it switches between the gallery and
                 // a skin detail. Replacing it with a full-screen instance reset its
@@ -1334,12 +1382,14 @@ class MainActivity : ComponentActivity() {
                 CarSkinsTab(
                     service = service,
                     isServiceConnected = isServiceBound,
-                    onOpenMySkins = { currentMode = AppMode.SKIN_MODS },
-                    onOpenImport = { currentMode = AppMode.SKIN_MODS },
+                    onOpenMySkins = { modsKind = ModsKind.SKINS; currentMode = AppMode.SKIN_MODS },
+                    onOpenImport = { modsKind = ModsKind.SKINS; currentMode = AppMode.SKIN_MODS },
                     onFullScreenChange = { focusedSkinRoute = it },
                     initialSkinId = pendingDeepLinkSkinId,
                     onInitialSkinIdHandled = { pendingDeepLinkSkinId = null },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    refreshToken = communityRefreshToken,
+                    sortOrder = communitySortType,
                 )
             }
         }
@@ -1535,11 +1585,11 @@ class MainActivity : ComponentActivity() {
                     
                     when (communityTabIndex) {
                         0 -> {
-                            TrackRow("Main menu", "Menu_Music.mp3") { startBackgroundInstall("MUSIC_RESTORE", trackFileName = "Menu_Music.mp3") }
+                            TrackRow("Main menu", "Menu_Music.mp3")
                             HorizontalDivider(color = RetroBorder)
-                            TrackRow("Garage", "Garage_Music.mp3") { startBackgroundInstall("MUSIC_RESTORE", trackFileName = "Garage_Music.mp3") }
+                            TrackRow("Garage", "Garage_Music.mp3")
                             HorizontalDivider(color = RetroBorder)
-                            TrackRow("Loading screen", "LoadingScreen.mp3") { startBackgroundInstall("MUSIC_RESTORE", trackFileName = "LoadingScreen.mp3") }
+                            TrackRow("Loading screen", "LoadingScreen.mp3")
                         }
                         1 -> {
                             val extended = listOf(
@@ -1553,7 +1603,7 @@ class MainActivity : ComponentActivity() {
                                 "Ryan_Kurt_Red_Green.mp3" to "Red Green"
                             )
                             extended.forEachIndexed { i, (file, title) ->
-                                TrackRow(title, file) { startBackgroundInstall("MUSIC_RESTORE", trackFileName = file) }
+                                TrackRow(title, file)
                                 if (i < extended.size - 1) HorizontalDivider(color = RetroBorder)
                             }
                         }
@@ -1611,7 +1661,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun TrackRow(title: String, file: String, onSwap: () -> Unit) {
+    fun TrackRow(title: String, file: String) {
         // The slot explorer uses full paths (music/file.mp3), 
         // while the dashboard often uses just the filename. 
         // We check both for the revert button logic to be foolproof.
@@ -1632,10 +1682,6 @@ class MainActivity : ComponentActivity() {
                     .size(if (hasBackup) 22.dp else 15.dp)
                     .then(if (hasBackup) Modifier.clickable { startBackgroundInstall("REVERT_AUDIO", targetTrack = "music/$file") } else Modifier)
             )
-            Spacer(Modifier.width(10.dp))
-            Text("Swap", color = RetroAccent, style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.border(1.dp, RetroAccent.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
-                    .clickable(onClick = onSwap).padding(horizontal = 12.dp, vertical = 4.dp))
         }
     }
 
@@ -2299,6 +2345,17 @@ class MainActivity : ComponentActivity() {
     fun MusicSlotsScreen() {
         var query by remember { mutableStateOf("") }
         var explorerPath by remember { mutableStateOf<List<String>>(emptyList()) }
+        val audioFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            val target = pendingAudioFileTarget
+            pendingAudioFileTarget = null
+            if (uri != null && target != null) {
+                startBackgroundInstall(
+                    actionType = "APPLY_FROM_FILE",
+                    uri = uri,
+                    targetTrack = target,
+                )
+            }
+        }
         
         // Filter by search query first if it's not empty
         val slotsToDisplay = if (query.isNotBlank()) {
@@ -2435,9 +2492,9 @@ class MainActivity : ComponentActivity() {
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier
                                             .border(1.dp, RetroAccent.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
-                                            .clickable { 
-                                                // The slot fileName needs to be the full relative path
-                                                showLibraryPickerForSlot = fullRelativePath 
+                                            .clickable {
+                                                pendingAudioFileTarget = fullRelativePath
+                                                audioFilePicker.launch("audio/*")
                                             }
                                             .padding(horizontal = 10.dp, vertical = 4.dp)
                                     )
