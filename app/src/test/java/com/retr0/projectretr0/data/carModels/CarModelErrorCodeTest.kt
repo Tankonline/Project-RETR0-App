@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CarModelErrorCodeTest {
-    private val format = Regex("CM-(APPLY|BACKUP|REVERT|TARGET|IMPORT|HUB|FILEOP|ADDON)-\\d{3}")
+    private val format = Regex("CM-(APPLY|BACKUP|REVERT|TARGET|IMPORT|HUB|FILEOP|ADDON|STORAGE)-\\d{3}")
 
     @Test fun codesAreUniqueAndFollowTheScheme() {
         val codes = CarModelErrorCode.entries.map { it.code }

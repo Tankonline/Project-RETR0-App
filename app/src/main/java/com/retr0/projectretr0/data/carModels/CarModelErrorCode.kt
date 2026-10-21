@@ -60,6 +60,8 @@ package com.retr0.projectretr0.data.carModels
  * | CM-FILEOP-001 | a relative path failed traversal validation |
  * | CM-FILEOP-002 | unexpected failure in a file operation (binder / IO) |
  * | CM-FILEOP-003 | privileged (Shizuku) service not connected |
+ * | CM-STORAGE-001 | storage scan, a folder's size could not be read |
+ * | CM-STORAGE-002 | storage clear, some cache/download files could not be deleted |
  */
 enum class CarModelErrorCode(val code: String, val userMessage: String) {
     BACKUP_REQUIRED("CM-APPLY-001", "A verified local backup is required before applying."),
@@ -124,4 +126,7 @@ enum class CarModelErrorCode(val code: String, val userMessage: String) {
     UNSAFE_PATH("CM-FILEOP-001", "A file path in this car model is unsafe."),
     UNEXPECTED("CM-FILEOP-002", "A file operation failed unexpectedly."),
     SERVICE_UNAVAILABLE("CM-FILEOP-003", "Shizuku service is disconnected."),
+
+    STORAGE_SCAN_FAILED("CM-STORAGE-001", "Some storage sizes could not be read."),
+    STORAGE_CLEAR_FAILED("CM-STORAGE-002", "Some files could not be cleared."),
 }

@@ -70,6 +70,9 @@ import com.retr0.projectretr0.ui.skins.SkinAvatar
 import com.retr0.projectretr0.ui.components.*
 import com.retr0.projectretr0.ui.carmodels.CarModelsHubTab
 import com.retr0.projectretr0.ui.carmodels.ModsHomeScreen
+import com.retr0.projectretr0.ui.carmodels.CarModelsSection
+import com.retr0.projectretr0.ui.skins.SkinModsSection
+import com.retr0.projectretr0.ui.storage.StorageScreen
 import com.retr0.projectretr0.ui.carmodels.ModsKind
 import com.retr0.projectretr0.ui.skins.CarSkinsTab
 import com.retr0.projectretr0.ui.skins.GamePackage
@@ -107,7 +110,8 @@ class MainActivity : ComponentActivity() {
         SKIN_MODS,
         AI_CHAT,
         EXPERIMENTAL_GRAPHICS,
-        MUSIC_SLOTS
+        MUSIC_SLOTS,
+        STORAGE
     }
 
     private var currentMode by mutableStateOf(AppMode.SELECTION)
@@ -126,6 +130,8 @@ class MainActivity : ComponentActivity() {
     private var pendingDeepLinkMusicId by mutableStateOf<String?>(null)
     private var communityTab by mutableIntStateOf(0)
     private var modsKind by mutableStateOf(ModsKind.SKINS)
+    // One-shot: which section Mods opens on next time (Storage → "Review backups"). Reset once consumed.
+    private var modsOpenOnBackups by mutableStateOf(false)
     
     private var installService: Retr0InstallService.LocalBinder? by mutableStateOf(null)
     private var isInstallServiceBound by mutableStateOf(value = false)
@@ -196,6 +202,9 @@ class MainActivity : ComponentActivity() {
     private var isAiChatThinking by mutableStateOf(false)
     
     private var shizukuMonitorJob: Job? = null
+    private var userServiceBindJob: Job? = null
+    private var userServiceBinder: IBinder? = null
+    private var bindInProgress = false
 
     private val installServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -215,15 +224,23 @@ class MainActivity : ComponentActivity() {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.i(TAG, "onServiceConnected(name=$name, binder=${binder != null})")
-            val boundService = IRetr0UserService.Stub.asInterface(binder)
-            service = boundService
+            Log.i(TAG, "RETR0 user service connected name=$name binder=${binder != null}")
+            if (binder == null || !binder.isBinderAlive) {
+                handleUserServiceLost("Shizuku returned an invalid RETR0 binder")
+                return
+            }
+            userServiceBinder = binder
+            runCatching {
+                binder.linkToDeath({ runOnUiThread { handleUserServiceLost("RETR0 user service binder died") } }, 0)
+            }.onFailure { Log.w(TAG, "Could not register RETR0 binder death recipient", it) }
+            service = IRetr0UserService.Stub.asInterface(binder)
             isServiceBound = true
+            bindInProgress = false
+            userServiceBindJob?.cancel()
             shizukuStatus = "RETR0 privileged service connected."
 
             val intent = Intent(this@MainActivity, Retr0InstallService::class.java)
-            bindService(intent, installServiceConnection, 0)
-            
+            bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
             refreshSaveHub()
             refreshCommunityHub()
             refreshMusicLibrary()
@@ -231,14 +248,20 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            Log.w(TAG, "onServiceDisconnected(name=$name)")
-            service = null
-            isServiceBound = false
-            shizukuStatus = "RETR0 privileged service disconnected."
+            Log.w(TAG, "RETR0 user service disconnected name=$name")
+            handleUserServiceLost("RETR0 privileged service disconnected")
+        }
+
+        override fun onBindingDied(name: ComponentName?) {
+            Log.w(TAG, "RETR0 user service binding died name=$name")
+            handleUserServiceLost("RETR0 privileged service binding died")
+            scheduleUserServiceBindRetry()
         }
     }
 
     private val userServiceArgs by lazy {
+        // This component is the UserService entry point, not an Android service
+        // declaration. Shizuku starts it in its own authorized process.
         Shizuku.UserServiceArgs(ComponentName(packageName, Retr0UserService::class.java.name))
             .daemon(false)
             .debuggable(BuildConfig.DEBUG)
@@ -248,7 +271,10 @@ class MainActivity : ComponentActivity() {
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Log.i(TAG, "Shizuku binder received")
-        runOnUiThread { updateShizukuStatus() }
+        runOnUiThread {
+            updateShizukuStatus()
+            if (canAttemptServiceBind() && !isServiceBound) bindRetr0Service()
+        }
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
@@ -256,9 +282,7 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
             isShizukuRunning = false
             isPermissionGranted = false
-            isServiceBound = false
-            service = null
-            shizukuStatus = "Shizuku binder disconnected."
+            handleUserServiceLost("Shizuku binder disconnected")
         }
     }
 
@@ -266,9 +290,8 @@ class MainActivity : ComponentActivity() {
         if (requestCode == SHIZUKU_PERMISSION_REQUEST_CODE) {
             updateShizukuStatus()
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permission granted. Connecting...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Permission granted. Connecting to RETR0...", Toast.LENGTH_SHORT).show()
                 bindRetr0Service()
-                refreshSaveHub()
             } else {
                 Toast.makeText(this, "Shizuku permission denied.", Toast.LENGTH_SHORT).show()
             }
@@ -559,7 +582,7 @@ class MainActivity : ComponentActivity() {
                         selectedIndex = when(currentMode) {
                             AppMode.DASHBOARD -> 0
                             AppMode.COMMUNITY -> 1
-                            AppMode.SKIN_MODS -> 2
+                            AppMode.SKIN_MODS, AppMode.STORAGE -> 2
                             AppMode.AI_CHAT -> 3
                             else -> 0
                         },
@@ -584,7 +607,25 @@ class MainActivity : ComponentActivity() {
                     AppMode.SELECTION -> GameSelectionScreen()
                     AppMode.DASHBOARD -> RR3Dashboard(installProgress)
                     AppMode.COMMUNITY -> CommunityGalleryScreen(onFullScreenChange = { skinsFullScreen = it })
-                    AppMode.SKIN_MODS -> ModsHomeScreen(kind = modsKind, onKind = { modsKind = it }, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service, onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onFullScreenChange = { skinsFullScreen = it })
+                    AppMode.SKIN_MODS -> {
+                        val openBackups = modsOpenOnBackups
+                        // The sections are read once when the screen is first composed, so the flag can be reset right away.
+                        LaunchedEffect(Unit) { modsOpenOnBackups = false }
+                        ModsHomeScreen(
+                            kind = modsKind, onKind = { modsKind = it }, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service,
+                            onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onStorage = { currentMode = AppMode.STORAGE }, onConnect = ::requestShizukuPermission, onFullScreenChange = { skinsFullScreen = it },
+                            initialSkinSection = if (openBackups) SkinModsSection.BACKUPS else SkinModsSection.OVERVIEW,
+                            initialCarSection = if (openBackups) CarModelsSection.BACKUPS else CarModelsSection.OVERVIEW,
+                        )
+                    }
+                    AppMode.STORAGE -> StorageScreen(
+                        service = service, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW,
+                        operationsIdle = !isClearingTempFiles && (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED),
+                        onBack = { currentMode = AppMode.SKIN_MODS },
+                        onReviewBackups = { modsOpenOnBackups = true; currentMode = AppMode.SKIN_MODS },
+                        onStorageChanged = ::updateStorageStatus,
+                        onConnect = ::requestShizukuPermission,
+                    )
                     AppMode.AI_CHAT -> AiChatScreen()
                     AppMode.EXPERIMENTAL_GRAPHICS -> ExperimentalGraphicsScreen(
                         (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED)
@@ -865,7 +906,16 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(if(isShizukuRunning) "Shizuku running" else "Shizuku not running", style = MaterialTheme.typography.bodyLarge, color = RetroText)
-                        Text(if(isPermissionGranted) "Permission granted" else "Tap to grant permission", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = if(isPermissionGranted) RetroTextMuted else RetroDangerText)
+                        Text(
+                            when {
+                                !isShizukuRunning -> "Shizuku unavailable"
+                                !isPermissionGranted -> "Tap to grant permission"
+                                isServiceBound -> "Permission granted • RETR0 connected"
+                                else -> "Permission granted • RETR0 not connected"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                            color = if (isServiceBound) RetroSuccess else RetroTextMuted
+                        )
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(availableSpace, style = MaterialTheme.typography.bodyLarge, color = RetroText)
@@ -2232,43 +2282,69 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun canAttemptServiceBind(): Boolean {
-        val binderOk = runCatching { Shizuku.pingBinder() }.getOrDefault(defaultValue = false)
-        return binderOk && (runCatching { Shizuku.checkSelfPermission() }.getOrDefault(PackageManager.PERMISSION_DENIED) == PackageManager.PERMISSION_GRANTED)
+        return runCatching { Shizuku.pingBinder() }.getOrDefault(false) &&
+            runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+    }
+
+    private fun handleUserServiceLost(reason: String) {
+        userServiceBinder = null
+        service = null
+        isServiceBound = false
+        bindInProgress = false
+        shizukuStatus = reason
+        Log.w(TAG, reason)
+    }
+
+    private fun scheduleUserServiceBindRetry() {
+        if (userServiceBindJob?.isActive == true) return
+        userServiceBindJob = lifecycleScope.launch {
+            repeat(3) { attempt ->
+                delay(750L * (attempt + 1))
+                if (!isServiceBound && canAttemptServiceBind()) {
+                    bindRetr0Service()
+                    delay(2_000)
+                    if (isServiceBound) return@launch
+                }
+            }
+            if (!isServiceBound && canAttemptServiceBind()) {
+                shizukuStatus = "RETR0 service did not connect. Tap Enable Privileged Services to retry."
+            }
+        }
     }
 
     private fun bindRetr0Service() {
-        // Do not call bindUserService until both the Shizuku binder and the
-        // app's Shizuku permission are ready. Calling it earlier produces the
-        // provider SecurityException reported by Android.
+        if (isServiceBound || bindInProgress) return
         val binderReady = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
         val permissionReady = runCatching {
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         }.getOrDefault(false)
-
         if (!binderReady || !permissionReady) {
-            isServiceBound = false
-            service = null
-            shizukuStatus = if (!binderReady) {
-                "Shizuku is not running."
-            } else {
-                "Shizuku permission is required."
-            }
-            Log.w(TAG, "Skipping bind: binderReady=$binderReady permissionReady=$permissionReady")
-            if (binderReady) {
-                requestShizukuPermission()
-            }
+            handleUserServiceLost(if (!binderReady) "Shizuku is not running. Open Shizuku and start its service." else "Shizuku permission is required.")
+            if (binderReady) requestShizukuPermission()
             return
         }
-
-        Log.i(TAG, "Attempting to bind privileged service...")
-        runCatching {
-            Shizuku.bindUserService(userServiceArgs, serviceConnection)
-        }.onSuccess {
-            Log.i(TAG, "bindUserService called successfully")
-        }.onFailure {
-            Log.e(TAG, "Failed to bind user service", it)
-            shizukuStatus = "Failed to bind: ${it.message}"
-        }
+        bindInProgress = true
+        shizukuStatus = "Connecting to RETR0 privileged service..."
+        Log.i(TAG, "Binding RETR0 user service package=$packageName component=${Retr0UserService::class.java.name}")
+        runCatching { Shizuku.bindUserService(userServiceArgs, serviceConnection) }
+            .onSuccess {
+                // Some OEMs accept the request but delay (or drop) the callback.
+                // Do not report success until onServiceConnected has supplied a live binder.
+                userServiceBindJob?.cancel()
+                userServiceBindJob = lifecycleScope.launch {
+                    delay(5_000)
+                    if (!isServiceBound && bindInProgress) {
+                        bindInProgress = false
+                        shizukuStatus = "RETR0 service did not connect. Keep Shizuku running and tap Enable Privileged Services again."
+                        Log.w(TAG, "RETR0 user-service bind timed out")
+                    }
+                }
+            }
+            .onFailure {
+                bindInProgress = false
+                handleUserServiceLost("Could not start RETR0 service: ${it.message ?: "Shizuku rejected the bind"}")
+                scheduleUserServiceBindRetry()
+            }
     }
 
     private fun runRemoteCall(block: (IRetr0UserService) -> String) {

@@ -64,6 +64,12 @@ fun Throwable.toUiError(message: String? = null): UiError = asCarModelException(
 fun CarModelErrorCode.toUiError(message: String = userMessage) = UiError(message, code)
 
 fun formatMb(bytes: Long): String = String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+/** MB below 1 GB, GB from there, two decimals. Negative means unknown. */
+fun formatBytes(bytes: Long): String = when {
+    bytes < 0 -> "—"
+    bytes >= 1024L * 1024 * 1024 -> String.format(Locale.US, "%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
+    else -> String.format(Locale.US, "%.2f MB", bytes / 1024.0 / 1024.0)
+}
 fun formatDate(millis: Long): String = DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(millis))
 fun packageLabel(id: String): String = when (id) { GamePackage.ROW.id -> "Global"; GamePackage.NA.id -> "N. America"; else -> id }
 fun packageShort(id: String): String = GamePackage.entries.firstOrNull { it.id == id }?.short ?: id

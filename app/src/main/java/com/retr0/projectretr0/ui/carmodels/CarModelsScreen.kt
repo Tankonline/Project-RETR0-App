@@ -32,6 +32,7 @@ import com.retr0.projectretr0.ui.skins.DestructiveConfirmationDialog
 import com.retr0.projectretr0.ui.skins.EmptyState
 import com.retr0.projectretr0.ui.skins.GamePackage
 import com.retr0.projectretr0.ui.skins.SkinModsScreen
+import com.retr0.projectretr0.ui.skins.SkinModsSection
 import com.retr0.projectretr0.ui.skins.StatusLine
 import com.retr0.projectretr0.ui.skins.WarningBanner
 import com.retr0.projectretr0.ui.theme.*
@@ -53,11 +54,15 @@ fun ModsHomeScreen(
     modifier: Modifier = Modifier,
     isGameInstalled: Boolean = true,
     onFullScreenChange: (Boolean) -> Unit = {},
+    onStorage: () -> Unit = {},
+    onConnect: (() -> Unit)? = null,
+    initialSkinSection: SkinModsSection = SkinModsSection.OVERVIEW,
+    initialCarSection: CarModelsSection = CarModelsSection.OVERVIEW,
 ) {
     val header: @Composable () -> Unit = { ModsHeader(kind, onKind) }
     when (kind) {
-        ModsKind.SKINS -> SkinModsScreen(isServiceConnected, isGameInstalled, gamePackage, storageText, service, onBrowseCommunity, modifier, onFullScreenChange = onFullScreenChange, header = header)
-        ModsKind.CARS -> CarModelsScreen(isServiceConnected, gamePackage, service, header, modifier, isGameInstalled, onFullScreenChange = onFullScreenChange)
+        ModsKind.SKINS -> SkinModsScreen(isServiceConnected, isGameInstalled, gamePackage, storageText, service, onBrowseCommunity, modifier, initialSection = initialSkinSection, onFullScreenChange = onFullScreenChange, onStorage = onStorage, onConnect = onConnect, header = header)
+        ModsKind.CARS -> CarModelsScreen(isServiceConnected, gamePackage, service, header, modifier, isGameInstalled, initialSection = initialCarSection, onFullScreenChange = onFullScreenChange, onStorage = onStorage, onConnect = onConnect)
     }
 }
 
@@ -95,6 +100,9 @@ data class CarModelsActions(
     val onRevert: (gamePackage: String, vehicleDirectory: String) -> Unit = { _, _ -> },
     val onDeleteBackup: (CarModelBackup) -> Unit = {},
     val onVerifyBackups: () -> Unit = {},
+    val onBackups: () -> Unit = {},
+    val onStorage: () -> Unit = {},
+    val onConnect: (() -> Unit)? = null,
 )
 
 @Composable
@@ -107,6 +115,8 @@ fun CarModelsScreen(
     isGameInstalled: Boolean = true,
     initialSection: CarModelsSection = CarModelsSection.OVERVIEW,
     onFullScreenChange: (Boolean) -> Unit = {},
+    onStorage: () -> Unit = {},
+    onConnect: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -165,6 +175,9 @@ fun CarModelsScreen(
         onRevert = ::undoInstall,
         onDeleteBackup = { deleteTarget = it },
         onVerifyBackups = { requireService()?.let { svc -> run("Verifying backups…") { viewModel.verifyAllBackups(svc) } } },
+        onBackups = { section = CarModelsSection.BACKUPS },
+        onStorage = onStorage,
+        onConnect = onConnect,
     )
 
     when (currentRoute) {
@@ -429,9 +442,10 @@ private fun OverviewSection(state: CarModelState, connected: Boolean, installed:
     item {
         SectionHeader("System status", Icons.Filled.MonitorHeart)
         RetroCard {
-            StatusLine(if (connected) "Shizuku service connected" else "Shizuku disconnected", connected, "Connect")
-            StatusLine("RR3 ${pkg.short}${if (installed) " installed" else " missing"}", installed, "Install")
-            StatusLine(when { state.backups.isEmpty() -> "No original backups yet"; unhealthy == 0 -> "Original backups verified"; else -> "$unhealthy original backups need attention" }, unhealthy == 0, "View")
+            StatusLine(if (connected) "Shizuku service connected" else "Shizuku disconnected", connected, if (connected) null else "Connect", if (connected) null else actions.onConnect)
+            StatusLine(if (installed) "RR3 ${pkg.short} installed" else "RR3 ${pkg.short} package missing", installed)
+            StatusLine(when { state.backups.isEmpty() -> "No original backups yet"; unhealthy == 0 -> "Original backups verified"; else -> "$unhealthy original backups need attention" }, unhealthy == 0, "View", actions.onBackups)
+            StatusLine("Storage", true, "Storage", actions.onStorage)
         }
     }
     item {
