@@ -93,23 +93,22 @@ jobs:
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
           ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
 
-          Project RETR0 installer v1.0.6 adds safer Community Hub synchronization and a more flexible car-model installation flow for RR3.
+          Project RETR0 installer v1.0.7 improves Shizuku reliability on OEM devices and continues the safer Community Hub and car-model installation work introduced in v1.0.6.
 
           ### Highlights
 
-          - Added replacement and add-on car-model installation modes.
-          - Added full-package scanning for vehicle, shared depot, events, localization, and cache files.
-          - Added transaction-based backups with one-button add-on revert.
-          - Added safer restoration of overwritten files and removal of newly created add-on files.
-          - Fixed stale Community Hub car models remaining visible after their remote assets were deleted.
-          - Added Worker-side D1/R2 integrity validation and invalid-asset invalidation.
-          - Improved Community Hub refresh, sorting, stale-detail handling, and error-state behavior.
-          - Preserved local car-model files and backups when removing a remote Community Hub package.
+          - Improved Shizuku UserService binding and reconnection for devices such as Infinix/XOS.
+          - Separately tracks Shizuku permission, binder availability, and RETR0 privileged-service connection.
+          - Added bind timeout, retry/backoff, binder-death handling, and clearer connection status messages.
+          - Removed misleading System Status actions when the underlying operation is unavailable.
+          - Connected real actions for Shizuku connection, mod-specific original backups, and storage navigation.
+          - Preserved replacement and add-on car-model installation with transaction backups and one-button revert.
+          - Added Community Hub D1/R2 integrity validation and stale asset invalidation.
 
           ### Release information
 
-          - Version: 1.0.6
-          - Version code: 8
+          - Version: 1.0.7
+          - Version code: 9
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)
