@@ -28,11 +28,25 @@ class StorageViewModel(private val repository: StorageRepository, private val sc
     private val _busy = MutableStateFlow<String?>(null)
     val busy: StateFlow<String?> = _busy
     private var scan: Job? = null
+    private var lastKey: String? = null
+    private var invalidated = true
 
     fun refresh(service: IRetr0UserService?, gamePackage: String) {
+        val key = "${System.identityHashCode(service)}:$gamePackage"
+        if (!invalidated && lastKey == key && scan?.isActive != true && _state.value is StorageUiState.Ready) return
+        if (scan?.isActive == true && lastKey == key) return // latest request is already authoritative
         scan?.cancel()
+        lastKey = key
+        invalidated = false
         (_state.value as? StorageUiState.Ready)?.let { _state.value = it.copy(refreshing = true) }
-        scan = scope.launch { _state.value = StorageUiState.Ready(repository.snapshot(service, gamePackage)) }
+        scan = scope.launch {
+            _state.value = StorageUiState.Ready(repository.snapshot(service, gamePackage))
+        }
+    }
+
+    fun invalidate() {
+        invalidated = true
+        repository.invalidate()
     }
 
     fun clearCache(service: IRetr0UserService?, gamePackage: String, onDone: (StorageNotice) -> Unit) =
@@ -53,6 +67,7 @@ class StorageViewModel(private val repository: StorageRepository, private val sc
                 ))
             } finally {
                 _busy.value = null
+                invalidate()
                 refresh(service, gamePackage)
             }
         }

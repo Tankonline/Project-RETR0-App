@@ -108,6 +108,12 @@ private fun categorySubtitle(id: StorageCategoryId): String = when (id) {
 
 private fun sizeText(bytes: Long?) = bytes?.let(::formatBytes) ?: "—"
 
+/** True when any category or the game size couldn't be read, so the app total is only a lower bound. */
+private fun StorageSnapshot.isIncomplete(): Boolean = categories.any { it.bytes == null } || gameBytes == null
+
+/** App total, prefixed with "≥ " when it is partial. Used by the hero and the device legend so they agree. */
+private fun StorageSnapshot.appTotalText(): String = (if (isIncomplete()) "≥ " else "") + formatBytes(appTotalBytes)
+
 @Composable
 fun StorageContent(
     state: StorageUiState,
@@ -146,8 +152,9 @@ fun StorageContent(
             item {
                 RetroCard {
                     Text("Used by RETR0", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
-                    Text(formatBytes(snapshot.appTotalBytes), color = RetroText, style = MaterialTheme.typography.headlineSmall)
+                    Text(snapshot.appTotalText(), color = RetroText, style = MaterialTheme.typography.headlineSmall)
                     Text("of ${formatBytes(snapshot.deviceFreeBytes)} free", color = RetroTextDim, style = MaterialTheme.typography.bodyMedium)
+                    if (snapshot.isIncomplete()) Text("Partial — backups, music & game not counted yet.", color = RetroTextDim, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(12.dp))
                     StackedBar(snapshot.categories.map { (it.bytes ?: 0L) to categoryColor(it.id) }, fillTo = snapshot.appTotalBytes)
                 }
@@ -195,7 +202,7 @@ fun StorageContent(
                         Spacer(Modifier.height(8.dp))
                     }
                     LegendRow(RR3Color, "RR3 (${gamePackage.id.substringAfterLast('.')})", sizeText(game))
-                    LegendRow(RetroGold, "Project RETR0", formatBytes(snapshot.appTotalBytes))
+                    LegendRow(RetroGold, "Project RETR0", snapshot.appTotalText())
                     LegendRow(RetroTextMuted, "Other", formatBytes(other))
                     LegendRow(RetroStatBg, "Free", if (known) "${formatBytes(snapshot.deviceFreeBytes)} of ${formatBytes(snapshot.deviceTotalBytes)}" else "—")
                 }

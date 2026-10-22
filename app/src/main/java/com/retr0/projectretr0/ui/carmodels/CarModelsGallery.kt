@@ -108,6 +108,8 @@ fun CarModelsGallery(
     var models by remember(previewState) { mutableStateOf(if (previewState != null) previewItems else emptyList()) }
     LaunchedEffect(query, retry, refreshToken, sortOrder, previewState) {
         if (previewState != null) return@LaunchedEffect
+        kotlinx.coroutines.delay(250)
+
         // A refresh is authoritative: never keep rendering the previous catalog while the
         // Worker is unavailable or has removed an asset-backed row.
         models = emptyList()

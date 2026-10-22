@@ -73,6 +73,7 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
             .put("supportedGamePackages", manifest.supportedGamePackages), idempotency)
         coroutineContext.ensureActive()
         val remote = api.getDraft(draft.modelId)
+        val remoteFilesByPath = remote.files.associateBy { it.path }
         if (remote.manifestSha256 != sha256(manifestJson.toByteArray())) {
             CarModelLog.step("upload_stage=manifest modelId=${draft.modelId}")
             api.uploadManifest(draft.modelId, manifestJson)
@@ -83,7 +84,7 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
             val local = File(root, entry.sourcePath).canonicalFile
             require(local.toPath().startsWith(root.toPath())) { "File escapes selected folder" }
             require(local.isFile && local.length() == entry.sizeBytes && sha256(local) == entry.sha256) { "File changed while uploading: ${entry.sourcePath}" }
-            val existing = remote.files.firstOrNull { it.path == entry.sourcePath }
+            val existing = remoteFilesByPath[entry.sourcePath]
             if (existing == null || existing.size != entry.sizeBytes || !existing.sha256.equals(entry.sha256, ignoreCase = true)) {
                 // The Worker addresses uploaded objects by their declared source path;
                 // destinationPath is the in-game target and is validated from the manifest.

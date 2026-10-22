@@ -29,13 +29,13 @@ class CarModelsViewModel private constructor(context: Context) {
     private val store = CarModelStore.get(context)
     private val engine = CarModelEngine(store)
     val importer = CarModelImporter(context.applicationContext, store)
-    val hub: CarModelHubRepository = CloudflareCarModelHubRepository(CarModelApiClient(context))
+    private val api = CarModelApiClient(context)
+    val hub: CarModelHubRepository = CloudflareCarModelHubRepository(api)
     val state: StateFlow<CarModelState> = store.state
 
     internal suspend fun uploadDraft(context: Context, modelId: String, onProgress: (CarModelUploadManager.UploadProgress) -> Unit = {}): Result<CarModelUploadManager.UploadResult> = runCatching {
         CarModelLog.info("upload_requested", "model=$modelId")
         val model = state.value.model(modelId) ?: error("Car model is no longer in the library")
-        val api = CarModelApiClient(context)
         val manager = CarModelUploadManager(api)
         val result = manager.upload(CarModelUploadManager.UploadRequest(
             root = File(model.filesRoot),
@@ -64,7 +64,7 @@ class CarModelsViewModel private constructor(context: Context) {
         val model = state.value.model(modelId) ?: error("Car model is no longer in the library")
         val remoteId = model.remotePublicId ?: model.remoteDraftId ?: error("This model has no owned Community Hub package")
         CarModelLog.info("remote_delete_requested", "model=$modelId")
-        val response = CarModelApiClient(context).deleteOwned(remoteId)
+        val response = api.deleteOwned(remoteId)
         if (!response.deleted) error("Community Hub did not accept deletion")
         store.update { current -> current.copy(models = current.models.map { if (it.id == modelId) it.copy(remotePublicId = null, remoteDraftId = null) else it }) }
         store.log(CarModelActivityKind.IMPORT, model.name, "Remote Community Hub package deleted; local files preserved", true)
@@ -75,7 +75,7 @@ class CarModelsViewModel private constructor(context: Context) {
         CarModelLog.info("publish_requested", "model=$modelId")
         val model = state.value.model(modelId) ?: error("Car model is no longer in the library")
         val draftId = model.remoteDraftId ?: error("Upload a draft before publishing")
-        CarModelApiClient(context).publish(draftId)
+        api.publish(draftId)
         store.update { current -> current.copy(models = current.models.map { if (it.id == modelId) it.copy(remotePublicId = draftId) else it }) }
         store.log(CarModelActivityKind.IMPORT, model.name, "Car model published", true)
         Unit

@@ -12,6 +12,7 @@ import com.retr0.projectretr0.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.nio.file.Files
 import kotlin.coroutines.coroutineContext
@@ -71,8 +72,22 @@ class StoragePaths(context: Context) {
 
 /** Measures what Project RETR0 stores on the device and clears the safe, re-creatable parts. */
 class StorageRepository(private val context: Context, val paths: StoragePaths = StoragePaths(context)) {
+    private val snapshotLock = kotlinx.coroutines.sync.Mutex()
+    private val snapshotCache = mutableMapOf<String, StorageSnapshot>()
 
-    suspend fun snapshot(service: IRetr0UserService?, gamePackage: String): StorageSnapshot = withContext(Dispatchers.IO) {
+    fun invalidate() {
+        snapshotCache.clear()
+    }
+
+    suspend fun snapshot(service: IRetr0UserService?, gamePackage: String): StorageSnapshot {
+        val key = "${System.identityHashCode(service)}:$gamePackage"
+        snapshotCache[key]?.let { return it }
+        return snapshotLock.withLock {
+            snapshotCache[key] ?: snapshotUncached(service, gamePackage).also { snapshotCache[key] = it }
+        }
+    }
+
+    private suspend fun snapshotUncached(service: IRetr0UserService?, gamePackage: String): StorageSnapshot = withContext(Dispatchers.IO) {
         val downloadPaths = (listOf(paths.installDownloads) + paths.downloadTemps).map { it.absolutePath }.toSet()
 
         // Library and media share folders: split them file by file so nothing is counted twice.

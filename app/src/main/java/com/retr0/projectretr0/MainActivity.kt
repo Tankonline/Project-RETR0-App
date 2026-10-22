@@ -1057,15 +1057,11 @@ class MainActivity : ComponentActivity() {
                 Text("Repair game assets or remove temporary installer downloads.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
                 DangerButton("RR3 crash / error fix", icon = Icons.Filled.ReportProblem) { startBackgroundInstall("REPAIR") }
                 SecondaryButton(
-                    text = if (isClearingTempFiles) "Clearing temporary files..." else "Clear temporary files",
+                    text = "Storage",
                     modifier = Modifier.fillMaxWidth(),
-                    icon = Icons.Filled.DeleteSweep,
+                    icon = Icons.Filled.Storage,
                 ) {
-                    if (!isUiIdle || isClearingTempFiles) {
-                        Toast.makeText(this@MainActivity, "Temporary files cannot be cleared during installation.", Toast.LENGTH_SHORT).show()
-                    } else {
-                        clearInstallerTempFiles()
-                    }
+                    currentMode = AppMode.STORAGE
                 }
             }
 
