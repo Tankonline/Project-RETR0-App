@@ -1,7 +1,6 @@
 package com.retr0.projectretr0.ui.storage
 
 import com.retr0.projectretr0.IRetr0UserService
-import com.retr0.projectretr0.data.storage.StorageRepository
 import com.retr0.projectretr0.data.storage.StorageSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -22,7 +21,7 @@ data class StorageNotice(val text: String, val good: Boolean, val code: String? 
  * Holds the Storage screen state. Scans run on IO inside [scope] (the screen's composition scope),
  * so leaving the screen cancels any scan in flight.
  */
-class StorageViewModel(private val repository: StorageRepository, private val scope: CoroutineScope) {
+class StorageViewModel(private val repository: com.retr0.projectretr0.data.storage.StorageDataSource, private val scope: CoroutineScope) {
     private val _state = MutableStateFlow<StorageUiState>(StorageUiState.Loading)
     val state: StateFlow<StorageUiState> = _state
     private val _busy = MutableStateFlow<String?>(null)

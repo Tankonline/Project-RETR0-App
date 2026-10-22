@@ -71,19 +71,34 @@ class StoragePaths(context: Context) {
 }
 
 /** Measures what Project RETR0 stores on the device and clears the safe, re-creatable parts. */
-class StorageRepository(private val context: Context, val paths: StoragePaths = StoragePaths(context)) {
-    private val snapshotLock = kotlinx.coroutines.sync.Mutex()
-    private val snapshotCache = mutableMapOf<String, StorageSnapshot>()
+internal class StorageSnapshotCache<K, V> {
+    private val values = mutableMapOf<K, V>()
 
-    fun invalidate() {
+    fun get(key: K): V? = values[key]
+    fun put(key: K, value: V) { values[key] = value }
+    fun clear() = values.clear()
+}
+
+interface StorageDataSource {
+    suspend fun snapshot(service: IRetr0UserService?, gamePackage: String): StorageSnapshot
+    fun invalidate()
+    suspend fun clearCache(): Result<Long>
+    suspend fun clearDownloads(): Result<Long>
+}
+
+open class StorageRepository(private val context: Context, val paths: StoragePaths = StoragePaths(context)) : StorageDataSource {
+    private val snapshotLock = kotlinx.coroutines.sync.Mutex()
+    private val snapshotCache = StorageSnapshotCache<String, StorageSnapshot>()
+
+    override fun invalidate() {
         snapshotCache.clear()
     }
 
-    suspend fun snapshot(service: IRetr0UserService?, gamePackage: String): StorageSnapshot {
+    override suspend fun snapshot(service: IRetr0UserService?, gamePackage: String): StorageSnapshot {
         val key = "${System.identityHashCode(service)}:$gamePackage"
-        snapshotCache[key]?.let { return it }
+        snapshotCache.get(key)?.let { return it }
         return snapshotLock.withLock {
-            snapshotCache[key] ?: snapshotUncached(service, gamePackage).also { snapshotCache[key] = it }
+            snapshotCache.get(key) ?: snapshotUncached(service, gamePackage).also { snapshotCache.put(key, it) }
         }
     }
 
@@ -132,7 +147,7 @@ class StorageRepository(private val context: Context, val paths: StoragePaths = 
 
     /** Deletes car-model staging, app cache folders and Coil's image cache. Returns bytes freed. */
     @OptIn(ExperimentalCoilApi::class)
-    suspend fun clearCache(): Result<Long> = withContext(Dispatchers.IO) {
+    override suspend fun clearCache(): Result<Long> = withContext(Dispatchers.IO) {
         val keep = (listOf(paths.installDownloads) + paths.downloadTemps).map { it.absolutePath }.toSet()
         var freed = 0L; var failed = 0
         fun remove(file: File) {
@@ -154,7 +169,7 @@ class StorageRepository(private val context: Context, val paths: StoragePaths = 
     }
 
     /** Deletes the resumable install downloads (and their chunk records) plus download leftovers. Returns bytes freed. */
-    suspend fun clearDownloads(): Result<Long> = withContext(Dispatchers.IO) {
+    override suspend fun clearDownloads(): Result<Long> = withContext(Dispatchers.IO) {
         var freed = 0L; var failed = 0
         (listOf(paths.installDownloads) + paths.downloadTemps).forEach { file ->
             val size = runCatching { file.walkTopDown().filter { it.isFile }.sumOf { it.length() } }.getOrDefault(0L)
