@@ -205,6 +205,7 @@ class MainActivity : ComponentActivity() {
     private var userServiceBindJob: Job? = null
     private var userServiceBinder: IBinder? = null
     private var bindInProgress = false
+    private var activityStarted = false
 
     private val installServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -224,9 +225,14 @@ class MainActivity : ComponentActivity() {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.i(TAG, "RETR0 user service connected name=$name binder=${binder != null}")
+            Log.i(TAG, "code=SHIZUKU_USVC_CONNECTED stage=callback name=$name binder=${binder != null}")
+            if (!activityStarted) {
+                Log.w(TAG, "code=SHIZUKU_USVC_STALE_CALLBACK stage=callback_ignored")
+                return
+            }
             if (binder == null || !binder.isBinderAlive) {
                 handleUserServiceLost("Shizuku returned an invalid RETR0 binder")
+                scheduleUserServiceBindRetry()
                 return
             }
             userServiceBinder = binder
@@ -328,11 +334,8 @@ class MainActivity : ComponentActivity() {
             // Pre-fetch the shared RR3 installation manifest for faster content installation.
             Retr0Installer(this@MainActivity).preFetchManifest()
             isSystemStatusLoading = true
+            updateShizukuStatus()
             withContext(Dispatchers.IO) {
-                runCatching { updateShizukuStatus() }
-                    .onFailure { error -> Log.w(TAG, "Initial Shizuku status check failed", error) }
-                runCatching { updateStorageStatus() }
-                    .onFailure { error -> Log.w(TAG, "Initial storage status check failed", error) }
                 runCatching {
                     installationId = identity.installationId
                     customPfp = SkinPFPStore.current(this@MainActivity, installationId)
@@ -401,13 +404,31 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        activityStarted = true
         updateShizukuStatus()
     }
 
     override fun onStop() {
+        activityStarted = false
         super.onStop()
         shizukuMonitorJob?.cancel()
         shizukuMonitorJob = null
+    }
+
+    override fun onDestroy() {
+        activityStarted = false
+        shizukuMonitorJob?.cancel()
+        userServiceBindJob?.cancel()
+        runCatching { Shizuku.removeBinderReceivedListener(binderReceivedListener) }
+        runCatching { Shizuku.removeBinderDeadListener(binderDeadListener) }
+        runCatching { Shizuku.removeRequestPermissionResultListener(permissionResultListener) }
+        if (isServiceBound || bindInProgress) {
+            runCatching { Shizuku.unbindUserService(userServiceArgs, serviceConnection, false) }
+        }
+        if (isInstallServiceBound) {
+            runCatching { unbindService(installServiceConnection) }
+        }
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -2254,10 +2275,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestShizukuPermission() {
-        val binderOk = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
-        val binderAlive = binderOk && runCatching { Shizuku.getBinder()?.pingBinder() == true }.getOrDefault(false)
-        Log.i(TAG, "requestShizukuPermission: ping=$binderOk binderAlive=$binderAlive")
-        if (!binderAlive) { 
+        val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+        Log.i(TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=preflight binderAvailable=$binderAvailable")
+        if (!binderAvailable) {
             Toast.makeText(this, "Shizuku binder is unavailable. Open Shizuku and restart its service.", Toast.LENGTH_SHORT).show()
             return 
         }
@@ -2292,7 +2312,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scheduleUserServiceBindRetry() {
-        if (userServiceBindJob?.isActive == true) return
+        if (!activityStarted || userServiceBindJob?.isActive == true) return
         userServiceBindJob = lifecycleScope.launch {
             repeat(3) { attempt ->
                 delay(750L * (attempt + 1))
@@ -2328,11 +2348,13 @@ class MainActivity : ComponentActivity() {
                 // Do not report success until onServiceConnected has supplied a live binder.
                 userServiceBindJob?.cancel()
                 userServiceBindJob = lifecycleScope.launch {
-                    delay(5_000)
+                            delay(5_000)
+                    if (!activityStarted) return@launch
                     if (!isServiceBound && bindInProgress) {
                         bindInProgress = false
                         shizukuStatus = "RETR0 service did not connect. Keep Shizuku running and tap Enable Privileged Services again."
-                        Log.w(TAG, "RETR0 user-service bind timed out")
+                        Log.w(TAG, "code=SHIZUKU_USVC_TIMEOUT stage=bind_timeout binderAvailable=${runCatching { Shizuku.pingBinder() }.getOrDefault(false)} permissionGranted=${runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)}")
+                        scheduleUserServiceBindRetry()
                     }
                 }
             }
