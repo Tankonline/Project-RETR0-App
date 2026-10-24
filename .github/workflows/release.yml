@@ -93,22 +93,24 @@ jobs:
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
           ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
 
-          Project RETR0 installer v1.0.7 improves Shizuku reliability on OEM devices and continues the safer Community Hub and car-model installation work introduced in v1.0.6.
+          Project RETR0 installer v1.0.9 improves Shizuku privileged-service recovery and stale UserService rebinding on affected Android devices.
 
           ### Highlights
 
-          - Improved Shizuku UserService binding and reconnection for devices such as Infinix/XOS.
-          - Separately tracks Shizuku permission, binder availability, and RETR0 privileged-service connection.
-          - Added bind timeout, retry/backoff, binder-death handling, and clearer connection status messages.
-          - Removed misleading System Status actions when the underlying operation is unavailable.
-          - Connected real actions for Shizuku connection, mod-specific original backups, and storage navigation.
-          - Preserved replacement and add-on car-model installation with transaction backups and one-button revert.
-          - Added Community Hub D1/R2 integrity validation and stale asset invalidation.
+          - Added an explicit side-effect-free Application entry point for Shizuku UserService startup on affected Android 15 OEM devices.
+          - Added structured Infinix/XOS Shizuku diagnostics and lifecycle cleanup.
+          - Improved Shizuku UserService binding, timeout handling, retry/backoff, and stale-callback protection.
+          - Added StorageRepository and StorageViewModel cache/invalidation coverage.
+          - Improved storage refresh deduplication and retained accurate Shizuku-unavailable states.
+          - Added car-model catalog search debounce/latest-request-wins behavior and remote file path indexing.
+          - Reused the car-model API client across ViewModel operations.
+          - Removed misleading System Status actions and preserved real storage/backup navigation.
+          - Preserved replacement/add-on installation, backup verification, rollback, and revert behavior.
 
           ### Release information
 
-          - Version: 1.0.7
-          - Version code: 9
+          - Version: 1.0.9
+          - Version code: 11
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)
@@ -119,17 +121,17 @@ jobs:
 
           ### SHA-256
 
-          The checksum is attached as `app-release.apk.sha256` and is generated directly from the signed APK published with this release.
+          The checksum is attached as \`app-release.apk.sha256\` and is generated directly from the signed APK published with this release.
 
-          ```text
+          \`\`\`text
           $(cut -d ' ' -f1 app/build/outputs/apk/release/app-release.apk.sha256)  app-release.apk
-          ```
+          \`\`\`
 
           Verify the downloaded APK with:
 
-          ```bash
+          \`\`\`bash
           sha256sum app-release.apk
-          ```
+          \`\`\`
 
           See [release guidance](https://github.com/${GITHUB_REPOSITORY}/blob/${{ steps.release_ref.outputs.tag }}/docs/releasing.md) and [privacy and community policy](https://github.com/${GITHUB_REPOSITORY}/blob/${{ steps.release_ref.outputs.tag }}/docs/privacy-and-community-policy.md).
           EOF
@@ -139,8 +141,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${{ steps.release_ref.outputs.tag }}" \
-            app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/apk/release/app-release.apk.sha256 \
-            --title "Project RETR0 installer ${{ steps.release_ref.outputs.tag }}" \
-            --notes-file app/build/outputs/apk/release/release-notes.md
+          TAG="${{ steps.release_ref.outputs.tag }}"
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          CHECKSUM_PATH="app/build/outputs/apk/release/app-release.apk.sha256"
+          NOTES_PATH="app/build/outputs/apk/release/release-notes.md"
+
+          # The tag is created by the push event. Pass it explicitly because
+          # gh release create otherwise tries to create a new local tag.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${APK_PATH}" "${CHECKSUM_PATH}" --clobber
+            gh release edit "${TAG}" \
+              --title "Project RETR0 installer ${TAG}" \
+              --notes-file "${NOTES_PATH}"
+          else
+            gh release create "${TAG}" "${APK_PATH}" "${CHECKSUM_PATH}" \
+              --title "Project RETR0 installer ${TAG}" \
+              --notes-file "${NOTES_PATH}"
+          fi

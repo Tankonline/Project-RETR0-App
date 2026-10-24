@@ -272,7 +272,9 @@ class MainActivity : ComponentActivity() {
             .daemon(false)
             .debuggable(BuildConfig.DEBUG)
             .processNameSuffix("retr0")
-            .version(4)
+            // Increment when the UserService implementation or its Application setup changes.
+            // Shizuku uses this to invalidate a previously cached service process.
+            .version(5)
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
@@ -967,15 +969,22 @@ class MainActivity : ComponentActivity() {
                             text = "Enable Privileged Services",
                             icon = Icons.Filled.FlashOn
                         ) {
-                            if (!Shizuku.pingBinder()) {
-                                updateShizukuStatus()
-                                Toast.makeText(this@MainActivity, "Shizuku binder is unavailable. Open Shizuku and verify the service is running.", Toast.LENGTH_SHORT).show()
-                            } else if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                                isShizukuRunning = true
-                                isPermissionGranted = true
-                                bindRetr0Service()
-                            } else {
-                                requestShizukuPermission()
+                            val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+                            val permissionGranted = runCatching {
+                                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                            }.getOrDefault(false)
+                            Log.i(TAG, "code=SHIZUKU_ENABLE_CLICK stage=button binderAvailable=$binderAvailable permissionGranted=$permissionGranted serviceBound=$isServiceBound bindInProgress=$bindInProgress")
+                            when {
+                                !binderAvailable -> {
+                                    updateShizukuStatus()
+                                    Toast.makeText(this@MainActivity, "Shizuku binder is unavailable. Open Shizuku and start its service.", Toast.LENGTH_LONG).show()
+                                }
+                                !permissionGranted -> requestShizukuPermission()
+                                else -> {
+                                    isShizukuRunning = true
+                                    isPermissionGranted = true
+                                    bindRetr0Service(forceRebind = true)
+                                }
                             }
                         }
                     }
@@ -2328,8 +2337,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun bindRetr0Service() {
-        if (isServiceBound || bindInProgress) return
+    private fun bindRetr0Service(forceRebind: Boolean = false) {
+        if (isServiceBound) return
+        if (bindInProgress && !forceRebind) return
+        if (forceRebind) {
+            bindInProgress = false
+            userServiceBindJob?.cancel()
+            runCatching { Shizuku.unbindUserService(userServiceArgs, serviceConnection, true) }
+                .onFailure { Log.w(TAG, "Existing RETR0 user-service unbind failed during retry", it) }
+        }
         val binderReady = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
         val permissionReady = runCatching {
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED

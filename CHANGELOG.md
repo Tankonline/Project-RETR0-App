@@ -2,6 +2,18 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.0.9]
+
+### Fixed
+- Invalidated stale cached Shizuku UserService instances by incrementing the service version.
+- Added forced rebind handling when an OEM silently drops or leaves a UserService bind pending.
+- Added button-level Shizuku diagnostics for binder availability, permission state, and bind state.
+- Updated the scheduled backup UserService version to avoid stale service reuse.
+
+### Compatibility
+- Improved privileged-service recovery on affected OPPO/ColorOS and other OEM devices.
+
+
 ## [1.0.5]
 
 ### Added

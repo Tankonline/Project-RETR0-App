@@ -1222,7 +1222,9 @@ async function reconcileSkins(env) {
 }
 __name(reconcileSkins, "reconcileSkins");
 __name2(reconcileSkins, "reconcileSkins");
-var RELEASE_PART_PATTERN = /^Project_RETR0_V1\.1_Part[1-3]\.zip\.(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})$/;
+// Public release chunks are intentionally readable without the admin X-RETR0-KEY.
+// Keep the allow-list versioned so private R2 objects remain behind authentication.
+var RELEASE_PART_PATTERN = /^Project_RETR0_V1\.(?:1|2)_Part[1-3]\.zip\.(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})$/;
 var SHA256_PATTERN2 = /^[a-f0-9]{64}$/i;
 var CAR_DIRECTORY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,99}$/i;
 var SLOT_PATTERN2 = /^(?:ext|ext\d+|ext_[a-z0-9_-]+|int|int\d+|int_[a-z0-9_-]+)$/i;
