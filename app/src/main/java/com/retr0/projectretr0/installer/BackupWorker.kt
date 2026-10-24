@@ -49,7 +49,8 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .daemon(false)
             .processNameSuffix("backup")
             .debuggable(false)
-            .version(3)
+            // Keep this independent from the foreground binding cache.
+            .version(4)
 
         try {
             Shizuku.bindUserService(args, connection)
