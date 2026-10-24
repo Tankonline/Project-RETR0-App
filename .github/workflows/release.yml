@@ -109,8 +109,8 @@ jobs:
 
           ### Release information
 
-          - Version: 1.0.8
-          - Version code: 10
+          - Version: 1.0.9
+          - Version code: 11
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)
@@ -121,17 +121,17 @@ jobs:
 
           ### SHA-256
 
-          The checksum is attached as `app-release.apk.sha256` and is generated directly from the signed APK published with this release.
+          The checksum is attached as \`app-release.apk.sha256\` and is generated directly from the signed APK published with this release.
 
-          ```text
+          \`\`\`text
           $(cut -d ' ' -f1 app/build/outputs/apk/release/app-release.apk.sha256)  app-release.apk
-          ```
+          \`\`\`
 
           Verify the downloaded APK with:
 
-          ```bash
+          \`\`\`bash
           sha256sum app-release.apk
-          ```
+          \`\`\`
 
           See [release guidance](https://github.com/${GITHUB_REPOSITORY}/blob/${{ steps.release_ref.outputs.tag }}/docs/releasing.md) and [privacy and community policy](https://github.com/${GITHUB_REPOSITORY}/blob/${{ steps.release_ref.outputs.tag }}/docs/privacy-and-community-policy.md).
           EOF
@@ -141,8 +141,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${{ steps.release_ref.outputs.tag }}" \
-            app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/apk/release/app-release.apk.sha256 \
-            --title "Project RETR0 installer ${{ steps.release_ref.outputs.tag }}" \
-            --notes-file app/build/outputs/apk/release/release-notes.md
+          TAG="${{ steps.release_ref.outputs.tag }}"
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          CHECKSUM_PATH="app/build/outputs/apk/release/app-release.apk.sha256"
+          NOTES_PATH="app/build/outputs/apk/release/release-notes.md"
+
+          # The tag is created by the push event. Pass it explicitly because
+          # gh release create otherwise tries to create a new local tag.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${APK_PATH}" "${CHECKSUM_PATH}" --clobber
+            gh release edit "${TAG}" \
+              --title "Project RETR0 installer ${TAG}" \
+              --notes-file "${NOTES_PATH}"
+          else
+            gh release create "${TAG}" "${APK_PATH}" "${CHECKSUM_PATH}" \
+              --title "Project RETR0 installer ${TAG}" \
+              --notes-file "${NOTES_PATH}"
+          fi
