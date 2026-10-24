@@ -93,13 +93,15 @@ jobs:
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
           ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
 
-          Project RETR0 installer v1.0.9 improves Shizuku privileged-service recovery and stale UserService rebinding on affected Android devices.
+          Project RETR0 installer v1.1.0 improves Shizuku authorization and privileged-service startup on affected OEM devices.
 
           ### Highlights
 
           - Added an explicit side-effect-free Application entry point for Shizuku UserService startup on affected Android 15 OEM devices.
           - Added structured Infinix/XOS Shizuku diagnostics and lifecycle cleanup.
           - Improved Shizuku UserService binding, timeout handling, retry/backoff, and stale-callback protection.
+          - Added the Shizuku API_V23 permission declaration and explicit permission-result diagnostics for OEM authorization flows.
+          - Forced UserService reconnection after Shizuku authorization succeeds.
           - Added StorageRepository and StorageViewModel cache/invalidation coverage.
           - Improved storage refresh deduplication and retained accurate Shizuku-unavailable states.
           - Added car-model catalog search debounce/latest-request-wins behavior and remote file path indexing.
@@ -109,8 +111,8 @@ jobs:
 
           ### Release information
 
-          - Version: 1.0.9
-          - Version code: 11
+          - Version: 1.1.0
+          - Version code: 12
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)

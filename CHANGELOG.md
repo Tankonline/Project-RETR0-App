@@ -2,6 +2,16 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.0]
+
+### Fixed
+- Added the Shizuku API_V23 permission declaration required for the runtime authorization flow on affected OEM devices.
+- Improved Shizuku permission-result handling and forced UserService reconnection after authorization.
+- Preserved stale UserService invalidation, forced rebind recovery, and button-level diagnostics from the V1.0.9 fixes.
+
+### Compatibility
+- Improved Shizuku authorization and privileged-service startup behavior on OPPO/ColorOS devices.
+
 ## [1.0.9]
 
 ### Fixed
