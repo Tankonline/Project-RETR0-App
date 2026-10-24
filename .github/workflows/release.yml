@@ -93,22 +93,24 @@ jobs:
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
           ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
 
-          Project RETR0 installer v1.0.7 improves Shizuku reliability on OEM devices and continues the safer Community Hub and car-model installation work introduced in v1.0.6.
+          Project RETR0 installer v1.0.8 improves Android 15/XOS Shizuku UserService startup reliability and continues the storage and performance improvements from v1.0.7.
 
           ### Highlights
 
-          - Improved Shizuku UserService binding and reconnection for devices such as Infinix/XOS.
-          - Separately tracks Shizuku permission, binder availability, and RETR0 privileged-service connection.
-          - Added bind timeout, retry/backoff, binder-death handling, and clearer connection status messages.
-          - Removed misleading System Status actions when the underlying operation is unavailable.
-          - Connected real actions for Shizuku connection, mod-specific original backups, and storage navigation.
-          - Preserved replacement and add-on car-model installation with transaction backups and one-button revert.
-          - Added Community Hub D1/R2 integrity validation and stale asset invalidation.
+          - Added an explicit side-effect-free Application entry point for Shizuku UserService startup on affected Android 15 OEM devices.
+          - Added structured Infinix/XOS Shizuku diagnostics and lifecycle cleanup.
+          - Improved Shizuku UserService binding, timeout handling, retry/backoff, and stale-callback protection.
+          - Added StorageRepository and StorageViewModel cache/invalidation coverage.
+          - Improved storage refresh deduplication and retained accurate Shizuku-unavailable states.
+          - Added car-model catalog search debounce/latest-request-wins behavior and remote file path indexing.
+          - Reused the car-model API client across ViewModel operations.
+          - Removed misleading System Status actions and preserved real storage/backup navigation.
+          - Preserved replacement/add-on installation, backup verification, rollback, and revert behavior.
 
           ### Release information
 
-          - Version: 1.0.7
-          - Version code: 9
+          - Version: 1.0.8
+          - Version code: 10
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)
