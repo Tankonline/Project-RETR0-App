@@ -93,7 +93,7 @@ jobs:
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
           ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
 
-          Project RETR0 installer v1.0.8 improves Android 15/XOS Shizuku UserService startup reliability and continues the storage and performance improvements from v1.0.7.
+          Project RETR0 installer v1.0.9 improves Shizuku privileged-service recovery and stale UserService rebinding on affected Android devices.
 
           ### Highlights
 
