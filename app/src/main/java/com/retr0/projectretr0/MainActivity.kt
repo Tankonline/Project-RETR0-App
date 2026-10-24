@@ -296,12 +296,15 @@ class MainActivity : ComponentActivity() {
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
         if (requestCode == SHIZUKU_PERMISSION_REQUEST_CODE) {
+            Log.i(TAG, "code=SHIZUKU_PERMISSION_RESULT requestCode=$requestCode grantResult=$grantResult")
             updateShizukuStatus()
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                isPermissionGranted = true
                 Toast.makeText(this, "Permission granted. Connecting to RETR0...", Toast.LENGTH_SHORT).show()
-                bindRetr0Service()
+                bindRetr0Service(forceRebind = true)
             } else {
-                Toast.makeText(this, "Shizuku permission denied.", Toast.LENGTH_SHORT).show()
+                isPermissionGranted = false
+                Toast.makeText(this, "Shizuku permission denied. Open Shizuku and authorize Project RETR0.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -2295,9 +2298,10 @@ class MainActivity : ComponentActivity() {
         }.getOrDefault(false)
         if (permissionGranted) {
             isPermissionGranted = true
-            bindRetr0Service()
+            bindRetr0Service(forceRebind = true)
             return
         }
+        Log.i(TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=requesting requestCode=$SHIZUKU_PERMISSION_REQUEST_CODE")
         try {
             Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST_CODE)
         } catch (e: Exception) {

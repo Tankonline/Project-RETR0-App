@@ -13,6 +13,9 @@
     <!-- Required before launching ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Required for Shizuku's runtime authorization dialog and permission checks. -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
     <queries>
         <package android:name="com.ea.games.r3_row" />
         <package android:name="com.ea.games.r3_na" />
