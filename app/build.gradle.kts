@@ -16,8 +16,8 @@ android {
         applicationId = "com.retr0.projectretr0"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.0.7"
+        versionCode = 12
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -118,8 +118,6 @@ dependencies {
 
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
-    implementation(libs.youtubedl.android)
-    implementation(libs.youtubedl.ffmpeg)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.cronet.api)

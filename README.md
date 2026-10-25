@@ -264,49 +264,21 @@ Changing devices should therefore be treated as a separate installation context.
 
 # Music Import
 
-Project RETR0 installer includes Android integration for **yt-dlp** and **FFmpeg** through the project's youtubedl-android dependencies.
+Music is imported through an **external downloader or converter chosen by the user**, then brought into Project RETR0 installer through the Android file picker. The app does not include an in-app YouTube converter or download executable media-processing tools at runtime.
 
-These components are used to support importing media from user-provided YouTube URLs for supported game-audio workflows.
-
-## Processing pipeline
-
-A simplified workflow is:
+A typical workflow is:
 
 ```text
-YouTube URL
+External download/conversion
     │
     ▼
-yt-dlp integration
+Local audio file on the device
     │
     ▼
-Media stream / file
-    │
-    ▼
-FFmpeg processing
-    │
-    ▼
-Supported audio output
-    │
-    ▼
-Asset preparation
-    │
-    ▼
-User-authorized installation
+Project RETR0 installer → Music library → User-authorized installation
 ```
 
-The exact output and processing behaviour depends on the supported asset format and current implementation.
-
-## Bundled executable policy
-
-Project RETR0 installer is designed so that executable components required for supported media processing are **bundled with the signed APK** rather than being downloaded as executable payloads at runtime.
-
-This is important for:
-
-- Reproducibility.
-- Distribution transparency.
-- Repository policies.
-- Reduced runtime supply-chain risk.
-- Offline availability of the bundled executable components.
+Use only audio that you are permitted to download and share. Metadata and artwork may be fetched by supported app features after a local file is imported.
 
 ### Important legal note
 
@@ -405,7 +377,7 @@ The application is designed not to download executable binaries dynamically duri
 
 Required executable components are bundled into the application package and shipped as part of the signed APK.
 
-This is particularly relevant to the yt-dlp/FFmpeg workflow.
+This is particularly relevant to externally downloaded media files imported through the Android file picker.
 
 ---
 
@@ -590,8 +562,8 @@ C++ standard:  C++17
 | Privileged Android operations | Shizuku |
 | HTTP networking | OkHttp |
 | Alternative networking stack | Chromium Cronet |
-| Media acquisition | yt-dlp via youtubedl-android |
-| Media processing | FFmpeg via youtubedl-android |
+| Media acquisition | User-provided local audio files |
+| Media processing | Android file picker and local import |
 | Image loading | Coil |
 | Metadata/image handling | AndroidX ExifInterface |
 | Annotation/code generation | KSP |
@@ -926,36 +898,15 @@ Check:
 
 The following issues are currently known in the **v1.0.5** release. They do not all prevent normal use of the installer, but they are being tracked for future fixes.
 
-## YouTube audio extraction reliability
+## Music import limitations
 
-YouTube importing can fail for some videos or current YouTube delivery configurations.
+The app imports audio from local files selected by the user. Download or convert media externally before using the Android file picker; the installer does not provide an in-app YouTube conversion workflow.
 
-The current implementation uses yt-dlp through the bundled Android integration. Some YouTube formats/clients can require additional anti-bot/Proof-of-Origin (PO) token handling, and yt-dlp may report errors such as:
+## Native library packaging warnings during release builds
 
-```text
-Requested format is not available.
-```
+Some bundled native libraries may emit strip warnings during release packaging. Android Gradle packaging continues by including those libraries without symbol stripping.
 
-or warnings about an Android client requiring a GVS PO Token.
-
-**Impact:** YouTube-based music imports are not guaranteed to work for every URL at the moment.
-
-**Workaround:** Use another supported audio source/import workflow where available. Do not assume that a failure means the rest of the installer is broken.
-
-**Status:** Known issue under investigation. The installer currently retains its authenticated-cookie fallback for eligible YouTube authentication failures, but this does not guarantee successful extraction when YouTube's current client/format requirements cannot be satisfied.
-
-## Native library strip warnings during release builds
-
-Release builds can emit messages similar to:
-
-```text
-The file was not recognized as a valid object file
-Unable to strip the following libraries, packaging them as they are: libffmpeg.zip.so, libpython.zip.so.
-```
-
-These files are bundled native/runtime payloads used by the media-processing stack. Android Gradle packaging continues by including them without symbol stripping.
-
-**Impact:** No known runtime failure has been established from these warnings. The v1.0.3 production release successfully built, signed, and packaged with these messages present.
+**Impact:** No known runtime failure has been established from these warnings.
 
 **Status:** Known build warning; not currently treated as a release blocker.
 
@@ -1020,29 +971,9 @@ Project:
 
 https://github.com/RikkaApps/Shizuku
 
-## youtubedl-android
+## Local music import
 
-Android integration used for the yt-dlp/media workflow.
-
-Project:
-
-https://github.com/yausername/youtubedl-android
-
-## yt-dlp
-
-The underlying open-source media downloading project used through the Android integration.
-
-Project:
-
-https://github.com/yt-dlp/yt-dlp
-
-## FFmpeg
-
-Used for supported media processing and conversion workflows.
-
-Project:
-
-https://ffmpeg.org/
+Music is downloaded or converted externally and imported through the Android file picker. Users are responsible for complying with the source service's terms and applicable copyright law.
 
 ## AndroidX / Jetpack
 

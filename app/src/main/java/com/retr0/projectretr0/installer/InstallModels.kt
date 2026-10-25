@@ -125,23 +125,6 @@ data class LibraryMusic(
 )
 
 /**
- * Metadata for a YouTube video.
- */
-data class YouTubeInfo(
-    val title: String,
-    val thumbnailUrl: String?,
-    val url: String
-)
-
-/**
- * Result of a YouTube audio download.
- */
-data class YouTubeDownloadResult(
-    val file: java.io.File,
-    val info: YouTubeInfo
-)
-
-/**
  * Represents a single message in the AI Chat.
  */
 data class ChatMessage(

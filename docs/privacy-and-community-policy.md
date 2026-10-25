@@ -28,7 +28,7 @@ The app stores imported skins, profile pictures, installer state, backups, and c
 
 The app uses HTTPS services for Community Hub, RR3 installer manifests/content, optional avatar fallback images, and music metadata lookup. The current endpoint inventory is maintained in `docs/izzyondroid-compatibility.md`.
 
-The app does not download app updates or replacement yt-dlp executables at runtime.
+The app does not include an in-app YouTube converter or download executable media-processing tools. Users obtain audio externally and import the resulting local file through the Android file picker.
 
 ## Shizuku privileges
 

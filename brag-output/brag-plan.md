@@ -6,14 +6,14 @@ An open-source Android app that lets you swap the skins, soundtracks and saves i
 ## The angle
 **A pit stop, not a hack.** Android locked the files; RETR0 is the pit crew that gets in, swaps the part, and gets out. The video is built around the app's own verb: **SWAP** (the app literally ships `SWAP`, `GET`, `APPLY`, `REVERT` buttons). Three swaps, three real flows, then the safety net that makes it feel responsible: *Broke it? Revert it.*
 
-What makes it specific to this project and not generic: real UI copy from the app (`Shizuku is not running.` → `Shizuku is running (permission granted).`, `Paste YouTube URL here…`, `CONVERT TO LIBRARY`, `Download & apply`, `Original backup available`), the PixelMood pixel font, and the project's own tagline: **Preserve. Modify. Restore. Race.**
+What makes it specific to this project and not generic: real UI copy from the app (`Shizuku is not running.` → `Shizuku is running (permission granted).`, `Import local audio`, `Choose audio file`, `Download & apply`, `Original backup available`), the PixelMood pixel font, and the project's own tagline: **Preserve. Modify. Restore. Race.**
 
 ## Hook (first 2-3 seconds)
 Near-black screen. A line types out in pixel type: **"Android locked your game files."** Then a real status row from the app slams in red: `Shizuku is not running.` and flips green: `Shizuku is running (permission granted).` on a success sound. The problem, then the unlock, inside 3.7s.
 
 ## Key moments (the middle)
 - **Skin swap** — Community Hub gallery card *Aurora Drift* (Porsche 911 RSR, by NovaMods, 1.2k likes, 4.8k downloads, green `Fits` badge). Cursor taps `GET` → `Download & apply` sheet → status chip flips to green `Active`.
-- **Soundtrack swap** — Paste a YouTube link (typed live) → `CONVERT TO LIBRARY` with a progress bar → track lands in the library → `SWAP` onto a game track slot.
+- **Soundtrack swap** — Choose an audio file downloaded or converted externally → it lands in the local library → `SWAP` onto a game track slot.
 - **Safety net** — `BACKUP CHARACTER DATA` creates a snapshot; the `Original backup available` card is visible; cursor taps `Revert` and the active skin flips back.
 
 ## Outro / punchline
@@ -21,7 +21,7 @@ Right before the logo: **"Broke it? Revert it."** lands as the last highlight. T
 
 ## User flow worth showing
 1. **Skin:** open Community Hub → tap `GET` on a skin → `Download & apply` → skin shows `Active`.
-2. **Music:** paste YouTube URL → `CONVERT TO LIBRARY` → library track → `SWAP` into a game slot.
+2. **Music:** download or convert audio externally → choose the local file → library track → `SWAP` into a game slot.
 3. **Backup/revert:** `BACKUP CHARACTER DATA` → snapshot saved → `Revert` restores the original.
 
 (All three are real flows in `MainActivity.kt`, `ui/skins/*`, `strings.xml`.)
@@ -54,7 +54,7 @@ Built a free, open-source Android app to swap Real Racing 3 skins, soundtracks a
 - Music cue guidance: preset read (`vol-11`, ~114.84 BPM, beat every ~0.52s). Strong cues in window: **3.70s** (scene 1→2 title slam), **8.96s** (skin→music cut), **17.91s** (outro logo slam). Additional strong beats at 5.80s, 12.65s, 22.65s (past end; unused). Beat grid near 13.18 / 13.70 used for the music→revert cut, and outro words snap to the ~0.52s grid from 18.44s. Major reveals may nudge ≤0.15s toward a strong cue; small entrances ≤0.10s; ignore cues when they hurt readability.
 - Audio-reactive treatment: subtle; use music RMS/bass to make the phone's blue under-glow and the logo halo breathe slightly. No waveform or equalizer visuals.
 - SFX posture: moderate, motion-matched, professional restraint: key ticks on typing, soft taps on cursor clicks, a success chime on each "granted / Active / restored" flip, a light whoosh on scene cuts, one weighted hit on the logo slam.
-- Audio-coupled moments: hook typing, Shizuku red→green flip, cursor taps on GET / CONVERT / SWAP / Revert, YouTube URL typing, progress fill, tagline word-per-beat.
+- Audio-coupled moments: hook typing, Shizuku red→green flip, cursor taps on GET / CHOOSE AUDIO FILE / SWAP / Revert, local import, tagline word-per-beat.
 - Restraint rule: audio must never mask or rush a readable line, no SFX stacking on every element, no chime on non-success events.
 
 ## Storyboard
@@ -77,7 +77,7 @@ Music: bed continues; the 3.70 slam lands on the strong beat, `Active` chime nea
 Transition mood: clean slide → Scene 3, on the **8.96s** strong cue.
 
 ### Scene 3 — Soundtrack swap: "Swap the soundtrack." — 4.74s (8.96–13.70)
-Phone shows the YouTube converter (`YOUTUBE CONVERTER` header, hint `Convert YouTube links to MP3s in your Local Library.`). Caption **"Swap the soundtrack."** on the left (3 words). Simulated typing fills `Paste YouTube URL here…` with a generic `youtube.com/watch?v=…` URL (no real video or song title) → cursor taps `CONVERT TO LIBRARY` → progress bar fills → a library row appears (`Night Drive.mp3`) → cursor taps `SWAP` → row flies onto a game track slot (`Replace Soundtrack` dialog style) and locks in with a green check.
+Phone shows the local music import screen (`LOCAL MUSIC` header, hint `Choose an audio file downloaded externally.`). Caption **"Swap the soundtrack."** on the left (3 words). Cursor taps `CHOOSE AUDIO FILE` → a local file appears in the library (`Night Drive.mp3`) → cursor taps `SWAP` → row flies onto a game track slot (`Replace Soundtrack` dialog style) and locks in with a green check.
 Sequential/interaction: yes — typed URL, click, progress fill, click, slot lock-in. Steps are 3 distinct beats at ~0.9–1.2s spacing; the caption is static so nothing readable is rushed.
 Audio intent: playful process satisfaction.
 Audio-coupled idea: key ticks for the URL; progress uses a rising subtle tone-free tick; soft tap on SWAP; light chime on lock-in.

@@ -93,7 +93,6 @@ class Retr0InstallService : Service() {
             val trackFileName = intent.getStringExtra("TRACK_FILENAME")
             val targetTrack = intent.getStringExtra("TARGET_TRACK")
             val presetName = intent.getStringExtra("PRESET_NAME")
-            val youtubeUrl = intent.getStringExtra("YOUTUBE_URL")
             val artworkUrl = intent.getStringExtra("ARTWORK_URL")
             val artworkUri = intent.getStringExtra("ARTWORK_URI")?.let(Uri::parse)
             val artistName = intent.getStringExtra("ARTIST_NAME")
@@ -122,7 +121,6 @@ class Retr0InstallService : Service() {
                     manualGold = mGold,
                     manualRS = mRS,
                     manualMS = mMS,
-                    youtubeUrl = youtubeUrl,
                     shareHub = shareHub,
                     artworkUrl = artworkUrl,
                     artworkUri = artworkUri,
@@ -168,7 +166,6 @@ class Retr0InstallService : Service() {
         manualGold: Long = -1,
         manualRS: Long = -1,
         manualMS: Long = -1,
-        youtubeUrl: String? = null,
         shareHub: Boolean = false,
         artworkUrl: String? = null,
         artworkUri: Uri? = null,
@@ -361,65 +358,6 @@ class Retr0InstallService : Service() {
                         if ((saveId != null) && (targetTrack != null) && (customName != null)) {
                             val music = CommunityMusic(saveId, customName, "", 0, "", targetTrack)
                             installer?.downloadCommunityMusic(music)
-                        }
-                    }
-                    "YOUTUBE_DOWNLOAD", "YOUTUBE_TO_LIBRARY" -> {
-                        if (youtubeUrl != null) {
-                            // Ensure engine is ready
-                            Retr0Installer.initDownloader(applicationContext)
-                            
-                            val result = installer?.downloadYouTubeAudio(youtubeUrl)
-                            if (result == null || !result.file.isFile || result.file.length() <= 0) {
-                                val current = installer?.progress?.value
-                                if (current?.state != InstallState.FAILED) {
-                                    _serviceProgress.value = _serviceProgress.value.copy(
-                                        state = InstallState.FAILED,
-                                        errorMessage = "YT_E006 YouTube processing failed before an audio file was created.",
-                                    )
-                                }
-                                Log.e(TAG, "RETR0_YT_SERVICE_FAILED task=$taskType result=${if (result == null) "null" else "invalid_file"} installerState=${current?.state}")
-                            } else {
-                                val mp3Uri = Uri.fromFile(result.file)
-                                val finalTitle = customName ?: result.info.title
-                                val finalArtworkUrl = artworkUrl ?: result.info.thumbnailUrl
-                                val meta = MusicMetadata(
-                                    finalTitle,
-                                    artistName ?: uploaderName.orEmpty(),
-                                    finalArtworkUrl,
-                                )
-
-                                // 1. Save to permanent library first. Applying/uploading remains independent.
-                                val librarySaved = installer?.saveToLibrary(
-                                    mp3Uri,
-                                    finalTitle,
-                                    metadata = meta,
-                                    artworkUri = artworkUri,
-                                    artworkUrl = finalArtworkUrl,
-                                ) == true
-                                Log.i(MUSIC_LIBRARY_TAG, "code=ML_SVC001 stage=youtube_local_save result=$librarySaved task=$taskType uploadRequested=$shareHub")
-                                if (!librarySaved && shareHub && uploaderName != null && targetTrack != null) {
-                                    Log.w(MUSIC_LIBRARY_TAG, "code=ML_SVC002 stage=local_upload_divergence result=skipped task=$taskType localSaved=false uploadSkipped=true")
-                                }
-                                
-                                // 2. Apply to game slot independently, then report the local/upload outcomes.
-                                var gameApplied = false
-                                if (targetTrack != null) {
-                                    gameApplied = installer?.applyMusicMod(mp3Uri, targetTrack, metadata = meta) == true
-                                    if (shareHub && uploaderName != null && librarySaved) {
-                                        installer?.uploadMusic(
-                                            mp3Uri,
-                                            uploaderName,
-                                            finalTitle,
-                                            targetTrack,
-                                            artworkUri = artworkUri,
-                                            artworkUrl = artworkUrl ?: result.info.thumbnailUrl,
-                                        )
-                                    }
-                                }
-                                Log.i(MUSIC_LIBRARY_TAG, "code=ML_SVC003 stage=youtube_outcome result=reported localSaved=$librarySaved gameApplied=$gameApplied uploadAttempted=${shareHub && uploaderName != null && targetTrack != null && librarySaved}")
-                                result.file.delete()
-                                Log.i(TAG, "RETR0_YT_SERVICE_SUCCEEDED task=$taskType bytes=${result.file.length()}")
-                            }
                         }
                     }
                     "APPLY_GRAPHICS" -> {

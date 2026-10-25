@@ -61,7 +61,7 @@ class StoragePaths(context: Context) {
     val installDownloads = File(freeSpaceProbe, "retr0_install")
     /** Single-file download leftovers Retr0Installer writes straight into externalCacheDir. */
     val downloadTemps: List<File> = externalCacheDir?.let { ext ->
-        listOf("community_download.tmp", "music_download.tmp", "youtube_download.mp3").map { File(ext, it) }
+        listOf("community_download.tmp", "music_download.tmp").map { File(ext, it) }
     }.orEmpty()
 
     /** Kept when clearing: Cronet's live HTTP cache, and Coil's disk cache (cleared through Coil instead). */

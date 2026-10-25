@@ -2,13 +2,35 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.0]
+
+### Fixed
+- Added the Shizuku API_V23 permission declaration required for the runtime authorization flow on affected OEM devices.
+- Improved Shizuku permission-result handling and forced UserService reconnection after authorization.
+- Preserved stale UserService invalidation, forced rebind recovery, and button-level diagnostics from the V1.0.9 fixes.
+
+### Compatibility
+- Improved Shizuku authorization and privileged-service startup behavior on OPPO/ColorOS devices.
+
+## [1.0.9]
+
+### Fixed
+- Invalidated stale cached Shizuku UserService instances by incrementing the service version.
+- Added forced rebind handling when an OEM silently drops or leaves a UserService bind pending.
+- Added button-level Shizuku diagnostics for binder availability, permission state, and bind state.
+- Updated the scheduled backup UserService version to avoid stale service reuse.
+
+### Compatibility
+- Improved privileged-service recovery on affected OPPO/ColorOS and other OEM devices.
+
+
 ## [1.0.5]
 
 ### Added
 - Documented the current release metadata: version `1.0.5`, `versionCode 7`, package/namespace `com.retr0.projectretr0`, and Android API range from API 26 with target/compile SDK 35.
 - Documented verified Community Hub App Links for `/v1/skins/<id>`, `/v1/saves/<id>`, and `/v1/music/<id>` on the configured HTTPS host.
 - Expanded documentation for RR3 skin apply/revert workflows, verified original-file backups, named save snapshots, Smart Backup scheduling, music slots/library workflows, and community skin/save/music/profile features.
-- Documented the checked-in native extraction component and the CMake/C++17 build requirements alongside the bundled Cronet, yt-dlp, and FFmpeg dependencies.
+- Documented the checked-in native extraction component and the CMake/C++17 build requirements alongside the bundled Cronet dependency and local music-import workflow.
 
 ### Changed
 - Updated README build and release instructions to match the current Gradle configuration, signed release environment variables, APK output, and checksum step.
@@ -21,12 +43,12 @@ All notable changes to Project RETR0 installer are documented here.
 
 ### Security
 - Documented service-side path restrictions, archive-target validation, and SHA-256 verification used for supported privileged file and backup/restore operations.
-- Documented that installation identity, profile pictures, imported skins, and encrypted YouTube cookies are excluded from Android cloud backup and device transfer.
+- Documented that installation identity, profile pictures, and imported skins are excluded from Android cloud backup and device transfer.
 - Reiterated that Community Hub uploads are user-selected remote data and must be treated as untrusted content; uploaders remain responsible for distribution rights.
 
 ### Compatibility
 - Confirmed the release configuration targets Android 35 while retaining Android 8.0/API 26 as the minimum configured platform.
-- Documented device/vendor, storage, Shizuku availability, RR3 variant, and current YouTube delivery behavior as compatibility factors.
+- Documented device/vendor, storage, Shizuku availability, and RR3 variant as compatibility factors.
 
 ### Verified
 - Confirmed the release APK contains `com.retr0.projectretr0.MainActivity`.
@@ -56,7 +78,7 @@ All notable changes to Project RETR0 installer are documented here.
 - Shizuku integration for privileged file and package operations.
 - Piped/streaming extraction of game assets directly to the device.
 - Community Hub for sharing car skins, game saves, and custom music.
-- YouTube music import using bundled yt-dlp and FFmpeg.
+- Local music import from audio files downloaded or converted externally by the user.
 - Backup and revert system for RR3 game data.
 - Installation identity and profile picture management.
 - Android App Links for community content.
@@ -64,7 +86,7 @@ All notable changes to Project RETR0 installer are documented here.
 ### Changed
 - Consolidated build process into a single canonical release APK.
 - Disabled in-app self-updates to comply with IzzyOnDroid/F-Droid policies.
-- Disabled runtime yt-dlp binary updates; all dependencies are now bundled.
+- Documented that music is downloaded or converted externally and imported from local storage.
 
 ### Security
 - Configured environment-based release signing.

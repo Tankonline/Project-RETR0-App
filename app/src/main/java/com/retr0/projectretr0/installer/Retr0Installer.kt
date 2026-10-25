@@ -15,8 +15,6 @@ import com.retr0.projectretr0.data.skins.SkinInstallationIdentity
 import com.retr0.projectretr0.data.skins.SkinRequestCanonicalizer
 import com.retr0.projectretr0.data.skins.SkinApiException
 import com.retr0.projectretr0.installer.persistence.DownloadDatabase
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,52 +72,13 @@ class Retr0Installer(
         // Workers.dev proxy for globally cached release downloads.
         private const val BOOSTER_URL = COMMUNITY_API_URL
 
-        private var isDownloaderInit = false
-        private const val YOUTUBE_METADATA_TIMEOUT_MS = 45_000L
-        private const val YOUTUBE_DOWNLOAD_TIMEOUT_MS = 8 * 60_000L
-        private const val YOUTUBE_SOCKET_TIMEOUT_SECONDS = 20
-        private const val YOUTUBE_RETRIES = 2
         private const val MAX_MUSIC_ARTWORK_DOWNLOAD_BYTES = 25L * 1024 * 1024
         private val SUPPORTED_MUSIC_ARTWORK_TYPES = setOf("image/jpeg", "image/png", "image/webp")
-
-        internal enum class YouTubeErrorCode(val userMessage: String) {
-            INVALID_URL("YT_E001 Invalid YouTube URL."),
-            INITIALIZATION_FAILED("YT_E002 Local downloader could not start."),
-            METADATA_TIMEOUT("YT_E003 Timed out while reading video details."),
-            METADATA_FAILED("YT_E004 Could not read video details."),
-            DOWNLOAD_TIMEOUT("YT_E005 Timed out while downloading or converting audio."),
-            DOWNLOAD_FAILED("YT_E006 Audio download or conversion failed."),
-            OUTPUT_MISSING("YT_E007 Audio conversion completed without an MP3 output."),
-            CANCELLED("YT_E008 YouTube processing was cancelled."),
-        }
-
-        /**
-         * Initializes the YouTubeDL and FFmpeg engines locally on the device.
-         */
-        suspend fun initDownloader(context: Context): Boolean = withContext(Dispatchers.IO) {
-            if (isDownloaderInit) return@withContext true
-            try {
-                com.yausername.youtubedl_android.YoutubeDL.getInstance().init(context)
-                com.yausername.ffmpeg.FFmpeg.getInstance().init(context)
-                isDownloaderInit = true
-                Log.i(TAG, "YoutubeDL & FFmpeg initialized locally")
-                
-                // The bundled yt-dlp version is updated with normal signed app releases.
-                // Runtime executable updates are disabled so this APK stays reproducible.
-                Log.i(TAG, "Using bundled yt-dlp version")
-                
-                true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize YoutubeDL engine", e)
-                false
-            }
-        }
     }
 
     private val downloader = FileDownloader()
     private val verifier = HashVerifier()
     private val manifestManager = ManifestManager(COMMUNITY_API_URL)
-    private val youtubeCookieStore by lazy { YouTubeCookieStore(context) }
 
     @Volatile
     private var globalCachedManifest: InstallManifest? = null
@@ -1293,218 +1252,8 @@ class Retr0Installer(
         }
     }
 
-    /**
-     * Fetches metadata for a YouTube video with finite extractor/network waits.
-     */
-    suspend fun fetchYouTubeInfo(youtubeUrl: String): YouTubeInfo? = withContext(Dispatchers.IO) {
-        if (!isValidYouTubeUrl(youtubeUrl)) {
-            failYouTube(YouTubeErrorCode.INVALID_URL, "metadata", youtubeUrl)
-            return@withContext null
-        }
-        if (!isDownloaderInit && !initDownloader(context)) {
-            failYouTube(YouTubeErrorCode.INITIALIZATION_FAILED, "initialization", youtubeUrl)
-            return@withContext null
-        }
-        val startedAt = System.currentTimeMillis()
-        updateProgress(InstallState.PREPARING, "Reading YouTube video details...", eta = "Up to 45s")
-        logYouTube("METADATA_STARTED", "stage=metadata host=${youtubeHost(youtubeUrl)}")
-        return@withContext try {
-            val info = executeYouTubeWithAuthFallback(
-                youtubeUrl = youtubeUrl,
-                timeoutMs = YOUTUBE_METADATA_TIMEOUT_MS,
-                stage = YouTubeAuthFallback.Stage.METADATA,
-            ) { cookiesFile ->
-                YoutubeDLRequest(youtubeUrl).apply {
-                    addYouTubeNetworkOptions(this)
-                    addYouTubeExtractorOptions(this)
-                    addOption("--no-playlist")
-                    cookiesFile?.let { addOption("--cookies", it.absolutePath) }
-                }.let { request ->
-                    withTimeout(YOUTUBE_METADATA_TIMEOUT_MS) { YoutubeDL.getInstance().getInfo(request) }
-                }
-            }
-            logYouTube("METADATA_SUCCEEDED", "stage=metadata elapsedMs=${System.currentTimeMillis() - startedAt}")
-            YouTubeInfo(
-                title = info.title ?: "YouTube Audio",
-                thumbnailUrl = info.thumbnail,
-                url = youtubeUrl,
-            )
-        } catch (error: TimeoutCancellationException) {
-            failYouTube(YouTubeErrorCode.METADATA_TIMEOUT, "metadata", youtubeUrl, startedAt, error)
-            null
-        } catch (error: CancellationException) {
-            failYouTube(YouTubeErrorCode.CANCELLED, "metadata", youtubeUrl, startedAt, error)
-            throw error
-        } catch (error: Exception) {
-            failYouTube(YouTubeErrorCode.METADATA_FAILED, "metadata", youtubeUrl, startedAt, error)
-            null
-        }
-    }
 
-    /**
-     * Downloads audio from a YouTube URL locally using yt-dlp.
-     * Returns the local File and info if successful, null otherwise.
-     */
-    suspend fun downloadYouTubeAudio(youtubeUrl: String): YouTubeDownloadResult? = withContext(Dispatchers.IO) {
-        val tempDir = File(context.externalCacheDir ?: context.cacheDir, "youtube_work")
-        try {
-            if (!isValidYouTubeUrl(youtubeUrl)) {
-                failYouTube(YouTubeErrorCode.INVALID_URL, "validation", youtubeUrl)
-                return@withContext null
-            }
-            updateProgress(InstallState.PREPARING, "Initializing local YouTube downloader...", eta = "Starting")
-            if (!isDownloaderInit && !initDownloader(context)) {
-                failYouTube(YouTubeErrorCode.INITIALIZATION_FAILED, "initialization", youtubeUrl)
-                return@withContext null
-            }
 
-            val info = fetchYouTubeInfo(youtubeUrl) ?: return@withContext null
-            if (progress.value.state == InstallState.FAILED) return@withContext null
-
-            if (tempDir.exists()) tempDir.deleteRecursively()
-            if (!tempDir.mkdirs() && !tempDir.isDirectory) {
-                failYouTube(YouTubeErrorCode.DOWNLOAD_FAILED, "workspace", youtubeUrl)
-                return@withContext null
-            }
-
-            val startedAt = System.currentTimeMillis()
-            updateProgress(InstallState.DOWNLOADING, "Downloading YouTube audio locally...", eta = "Up to 8 min")
-            logYouTube("DOWNLOAD_STARTED", "stage=download host=${youtubeHost(youtubeUrl)}")
-            executeYouTubeWithAuthFallback(
-                youtubeUrl = youtubeUrl,
-                timeoutMs = YOUTUBE_DOWNLOAD_TIMEOUT_MS,
-                stage = YouTubeAuthFallback.Stage.DOWNLOAD,
-            ) { cookiesFile ->
-                val request = YoutubeDLRequest(youtubeUrl).apply {
-                    addOption("--format", "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio")
-                    addOption("--extract-audio")
-                    addOption("--audio-format", "mp3")
-                    addOption("--audio-quality", "0")
-                    addOption("-o", "${tempDir.absolutePath}/%(title)s.%(ext)s")
-                    addOption("--no-playlist")
-                    addOption("--no-mtime")
-                    addYouTubeNetworkOptions(this)
-                    addYouTubeExtractorOptions(this)
-                    cookiesFile?.let { addOption("--cookies", it.absolutePath) }
-                }
-                withTimeout(YOUTUBE_DOWNLOAD_TIMEOUT_MS) {
-                    YoutubeDL.getInstance().execute(request) { progress, eta, line ->
-                        updateProgress(
-                            state = InstallState.DOWNLOADING,
-                            step = if (line.contains("ffmpeg", ignoreCase = true)) "Converting YouTube audio to MP3..." else "Downloading YouTube audio: $progress%",
-                            fileProgress = progress / 100f,
-                            overallProgress = progress / 100f,
-                            eta = if (eta > 0) "${eta}s" else "Working...",
-                        )
-                    }
-                }
-            }
-
-            val downloadedFile = tempDir.listFiles()?.find { it.extension.equals("mp3", ignoreCase = true) && it.length() > 0 }
-            if (downloadedFile == null) {
-                failYouTube(YouTubeErrorCode.OUTPUT_MISSING, "output", youtubeUrl, startedAt)
-                return@withContext null
-            }
-            val finalFile = File(context.externalCacheDir ?: context.cacheDir, "youtube_download.mp3")
-            if (finalFile.exists() && !finalFile.delete()) {
-                failYouTube(YouTubeErrorCode.DOWNLOAD_FAILED, "output_replace", youtubeUrl, startedAt)
-                return@withContext null
-            }
-            if (!downloadedFile.renameTo(finalFile) || !finalFile.isFile || finalFile.length() <= 0) {
-                failYouTube(YouTubeErrorCode.OUTPUT_MISSING, "output_move", youtubeUrl, startedAt)
-                return@withContext null
-            }
-            tempDir.deleteRecursively()
-            logYouTube("DOWNLOAD_SUCCEEDED", "stage=complete elapsedMs=${System.currentTimeMillis() - startedAt} bytes=${finalFile.length()}")
-            YouTubeDownloadResult(finalFile, info)
-        } catch (error: TimeoutCancellationException) {
-            failYouTube(YouTubeErrorCode.DOWNLOAD_TIMEOUT, "download", youtubeUrl, error = error)
-            null
-        } catch (error: CancellationException) {
-            failYouTube(YouTubeErrorCode.CANCELLED, "download", youtubeUrl, error = error)
-            throw error
-        } catch (error: Exception) {
-            failYouTube(YouTubeErrorCode.DOWNLOAD_FAILED, "download", youtubeUrl, error = error)
-            null
-        } finally {
-            if (progress.value.state == InstallState.FAILED) tempDir.deleteRecursively()
-        }
-    }
-
-    private suspend fun <T> executeYouTubeWithAuthFallback(
-        youtubeUrl: String,
-        timeoutMs: Long,
-        stage: YouTubeAuthFallback.Stage,
-        operation: suspend (File?) -> T,
-    ): T {
-        require(youtubeUrl.isNotBlank() && timeoutMs > 0)
-        val retryState = YouTubeAuthFallback.RetryState(stage)
-        var temporaryCookies: File? = null
-        try {
-            return try {
-                logYouTube("ATTEMPT", "stage=${stage.name.lowercase()} auth=anonymous")
-                operation(null)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                val hasCookies = youtubeCookieStore.hasCookies()
-                val classification = YouTubeAuthFallback.classify(stage, error)
-                val attempt = retryState.nextAttempt(hasCookies, classification)
-                logYouTube(
-                    "FALLBACK_CLASSIFIED",
-                    "stage=${stage.name.lowercase()} classification=${classification.name} cookiesConfigured=$hasCookies retryAuthenticated=${attempt == YouTubeAuthFallback.Attempt.AUTHENTICATED}",
-                )
-                if (attempt != YouTubeAuthFallback.Attempt.AUTHENTICATED) throw error
-                val cookies = youtubeCookieStore.readNetscapeCookies() ?: throw error
-                temporaryCookies = withContext(Dispatchers.IO) {
-                    File.createTempFile("retr0-youtube-", ".cookies.txt", context.cacheDir)
-                }
-                temporaryCookies!!.writeText(cookies)
-                logYouTube("ATTEMPT", "stage=${stage.name.lowercase()} auth=authenticated")
-                operation(temporaryCookies)
-            }
-        } finally {
-            temporaryCookies?.let { cookieFile ->
-                val deleted = runCatching { !cookieFile.exists() || cookieFile.delete() }.getOrDefault(false)
-                logYouTube("COOKIE_TEMP_CLEANUP", "stage=${stage.name.lowercase()} deleted=$deleted")
-            }
-        }
-    }
-
-    private fun addYouTubeNetworkOptions(request: YoutubeDLRequest) {
-        request.addOption("--socket-timeout", YOUTUBE_SOCKET_TIMEOUT_SECONDS.toString())
-        request.addOption("--retries", YOUTUBE_RETRIES.toString())
-        request.addOption("--fragment-retries", YOUTUBE_RETRIES.toString())
-    }
-
-    private fun addYouTubeExtractorOptions(request: YoutubeDLRequest) {
-        // Avoid clients whose media URLs require a PO token that this local Android app cannot supply.
-        request.addOption("--extractor-args", "youtube:player_client=android_vr,web_safari")
-    }
-
-    private fun isValidYouTubeUrl(rawUrl: String): Boolean = runCatching {
-        val url = URL(rawUrl.trim())
-        url.protocol == "https" && (url.host.equals("youtube.com", true) || url.host.endsWith(".youtube.com", true) || url.host.equals("youtu.be", true))
-    }.getOrDefault(false)
-
-    private fun youtubeHost(rawUrl: String): String = runCatching { URL(rawUrl).host }.getOrDefault("invalid")
-
-    private fun logYouTube(event: String, details: String) {
-        Log.i(TAG, "RETR0_YT_$event $details")
-    }
-
-    private fun failYouTube(
-        code: YouTubeErrorCode,
-        stage: String,
-        rawUrl: String,
-        startedAt: Long? = null,
-        error: Throwable? = null,
-    ) {
-        val elapsed = startedAt?.let { " elapsedMs=${System.currentTimeMillis() - it}" }.orEmpty()
-        val errorType = error?.javaClass?.simpleName?.let { " errorType=$it" }.orEmpty()
-        Log.e(TAG, "RETR0_YT_FAILED code=${code.name} stage=$stage host=${youtubeHost(rawUrl)}$elapsed$errorType", error)
-        fail("${code.userMessage} Check your connection or try another video.")
-    }
 
     private fun copyRecursiveToPrivileged(localDir: File, privilegedDest: String): Int {
         val s = service ?: return 0

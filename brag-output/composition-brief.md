@@ -21,7 +21,7 @@ Create a short launch-style brag video for Project RETR0 installer, an open-sour
   - `PROJECT RETR0` · `for Real Racing 3`
   - `Swap the skin.` · `Swap the soundtrack.` · `Broke it? Revert it.`
   - `Aurora Drift` · `Porsche 911 RSR` · `NovaMods` · `Fits` · `GET` · `Download & apply` · `Active`
-  - `YOUTUBE CONVERTER` · `Paste YouTube URL here…` · `CONVERT TO LIBRARY` · `SWAP`
+  - `LOCAL MUSIC` · `Choose an audio file downloaded externally.` · `CHOOSE AUDIO FILE` · `SWAP`
   - `BACKUP CHARACTER DATA` · `Original backup available` · `Revert`
   - `Preserve. Modify. Restore. Race.`
   - `Free · Open source · GPL-3.0`
@@ -39,7 +39,7 @@ Create a short launch-style brag video for Project RETR0 installer, an open-sour
   - Abstract filler visuals
   - Unrelated visual redesign (stay faithful to the app's dark card UI)
   - **Any EA / Real Racing 3 logo or key art** (do not use `rr3_banner.jpg`); draw stylised abstract livery covers instead
-  - Real song titles or real YouTube video IDs (use `youtube.com/watch?v=…` and `Night Drive.mp3`)
+  - Real song titles or downloaded media identifiers (use a generic local filename such as `Night Drive.mp3`)
 
 ## Visual Identity
 - Background: `#0B0D12` (surfaces `#161A22`, `#1E232E`, cover `#1A2030`; border `rgba(255,255,255,0.08)`)

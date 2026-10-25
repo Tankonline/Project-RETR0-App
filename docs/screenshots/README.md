@@ -10,7 +10,7 @@ Place high-resolution screenshots of Project RETR0 installer here. These are use
 4. **Shizuku Authorization:** The prompt or status showing Shizuku is authorized.
 5. **Backup/Revert:** The interface for managing game data backups.
 6. **Community Hub:** Browsing skins, saves, or music.
-7. **Music Import:** The YouTube converter or local import screen.
+7. **Music Import:** The local audio import and metadata editing screen.
 8. **Settings/About:** Version information and links.
 
 ## Requirements
