@@ -15,8 +15,8 @@ Description: |-
     operations require the user to configure and grant Shizuku access.
 
     The app does not self-update. App updates are distributed through the
-    selected repository. yt-dlp and FFmpeg are bundled and updated through
-    normal signed app releases.
+    selected repository. Music is downloaded or converted externally and
+    imported from local device storage through the Android file picker.
 
 RepoType: git
 Repo: https://github.com/Tankonline/Project-RETR0-App.git

@@ -30,7 +30,7 @@ Service: Hosted on Cloudflare (Workers and R2).
 When installing RR3 assets, the app fetches manifests and compressed content from remote storage services.
 
 ### Music Import
-- **yt-dlp/YouTube:** The app fetches media and metadata from YouTube URLs provided by the user.
+- **Local audio files:** Users select externally downloaded audio files from device storage.
 - **iTunes Search API:** Used for optional music metadata lookup.
 
 ### Avatars
@@ -41,7 +41,6 @@ Service: `api.dicebear.com`.
 
 The app bundles several third-party libraries and tools:
 - **Shizuku:** Used for privileged file operations. Access must be explicitly granted by the user.
-- **yt-dlp and FFmpeg:** Used for local media processing.
 - **Cronet:** Chromium's network stack for high-performance downloads.
 
 Users are encouraged to review the privacy policies of any external services they choose to interact with (e.g., YouTube, Discord).

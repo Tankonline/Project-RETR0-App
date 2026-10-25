@@ -118,8 +118,6 @@ dependencies {
 
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
-    implementation(libs.youtubedl.android)
-    implementation(libs.youtubedl.ffmpeg)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.cronet.api)

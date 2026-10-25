@@ -33,7 +33,7 @@
 - [ ] Asset installation via streaming extraction.
 - [ ] Backup and revert workflows.
 - [ ] Community Hub: list, download, upload, like, report, delete.
-- [ ] Music import: YouTube URL conversion (yt-dlp/FFmpeg).
+- [ ] Music import: local audio selection, metadata/artwork editing, library save, and slot swapping.
 - [ ] Profile picture management (identity-bound).
 - [ ] App Links (deep linking) verification.
 

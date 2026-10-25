@@ -6,6 +6,4 @@
     <exclude domain="file" path="pfp/" />
     <!-- Imported assets and installer staging files can be regenerated or re-downloaded. -->
     <exclude domain="file" path="skins/" />
-    <!-- Local YouTube cookies are encrypted device-bound auth material and must not be backed up. -->
-    <exclude domain="file" path="youtube_cookies.enc" />
 </full-backup-content>

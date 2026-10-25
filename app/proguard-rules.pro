@@ -20,9 +20,6 @@
 -keep class com.retr0.projectretr0.installer.LibraryMusic { *; }
 -keep class com.retr0.projectretr0.installer.SaveProfile { *; }
 
-# yt-dlp & FFmpeg
--keep class com.yausername.youtubedl_android.** { *; }
--keep class com.yausername.ffmpeg.** { *; }
 
 # Gson / JSON (if used for manifest parsing)
 -keepattributes Signature

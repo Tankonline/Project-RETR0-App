@@ -175,18 +175,14 @@ class MainActivity : ComponentActivity() {
     private var renameProfileName by mutableStateOf("")
     private var renameProfileError by mutableStateOf<String?>(null)
 
-    // Music Import Workflow State
+    // Local Music Import Workflow State
     private var showMusicImportDialog by mutableStateOf(false)
-    private var currentMusicImportType by mutableStateOf("YOUTUBE") // "YOUTUBE" or "LOCAL"
-    private var musicImportYtUrl by mutableStateOf("")
     private var musicImportLocalUri by mutableStateOf<Uri?>(null)
     private var musicImportArtworkUri by mutableStateOf<Uri?>(null)
     private var musicImportSearchQuery by mutableStateOf("")
     private var musicImportResults by mutableStateOf<List<MusicMetadata>>(emptyList())
     private var isMusicSearching by mutableStateOf(false)
     private var selectedMetadata by mutableStateOf<MusicMetadata?>(null)
-    private var youtubeCookiesConfigured by mutableStateOf(false)
-    private val youtubeCookieStore by lazy { YouTubeCookieStore(this) }
 
     // Slot Swapping State
     private var showLibraryPickerForSlot by mutableStateOf<String?>(null) // legacy library picker state
@@ -202,6 +198,7 @@ class MainActivity : ComponentActivity() {
     private var isAiChatThinking by mutableStateOf(false)
     
     private var shizukuMonitorJob: Job? = null
+    private var storageStatusJob: Job? = null
     private var userServiceBindJob: Job? = null
     private var userServiceBinder: IBinder? = null
     private var bindInProgress = false
@@ -226,8 +223,13 @@ class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             Log.i(TAG, "code=SHIZUKU_USVC_CONNECTED stage=callback name=$name binder=${binder != null}")
-            if (!activityStarted) {
-                Log.w(TAG, "code=SHIZUKU_USVC_STALE_CALLBACK stage=callback_ignored")
+            // The callback can arrive during the launch/splash transition, before
+            // onStart() has marked the activity visible. It is still a valid bind;
+            // rejecting it here leaves Shizuku connected but the app unbound until
+            // the five-second timeout expires.
+            val activityDestroyed = isDestroyed
+            if (isFinishing || activityDestroyed) {
+                Log.w(TAG, "code=SHIZUKU_USVC_STALE_CALLBACK stage=callback_ignored finishing=$isFinishing destroyed=$activityDestroyed")
                 return
             }
             if (binder == null || !binder.isBinderAlive) {
@@ -340,6 +342,7 @@ class MainActivity : ComponentActivity() {
             Retr0Installer(this@MainActivity).preFetchManifest()
             isSystemStatusLoading = true
             updateShizukuStatus()
+            updateStorageStatus()
             withContext(Dispatchers.IO) {
                 runCatching {
                     installationId = identity.installationId
@@ -352,9 +355,7 @@ class MainActivity : ComponentActivity() {
                 isSmartBackupEnabled = prefs.getBoolean("smart_backup", false)
                 lastBackupStatus = prefs.getString("last_backup_status", "Never") ?: "Never"
                 
-                // Initialize local YouTube downloader engine
-                // Retr0Installer.initDownloader(this@MainActivity)
-            }
+                          }
             if (canAttemptServiceBind()) {
                 Log.i(TAG, "Auto-binding service...")
                 bindRetr0Service()
@@ -424,6 +425,7 @@ class MainActivity : ComponentActivity() {
         activityStarted = false
         shizukuMonitorJob?.cancel()
         userServiceBindJob?.cancel()
+        storageStatusJob?.cancel()
         runCatching { Shizuku.removeBinderReceivedListener(binderReceivedListener) }
         runCatching { Shizuku.removeBinderDeadListener(binderDeadListener) }
         runCatching { Shizuku.removeRequestPermissionResultListener(permissionResultListener) }
@@ -442,8 +444,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateStorageStatus() {
-        isSystemStatusLoading = true
-        lifecycleScope.launch {
+        storageStatusJob?.cancel()
+        storageStatusJob = lifecycleScope.launch {
+            isSystemStatusLoading = true
             val bytes = withContext(Dispatchers.IO) {
                 StorageUtils.getAvailableSpace(externalCacheDir ?: cacheDir)
             }
@@ -886,7 +889,6 @@ class MainActivity : ComponentActivity() {
         val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> 
             uri?.let { 
                 musicImportLocalUri = it
-                currentMusicImportType = "LOCAL"
                 musicImportSearchQuery = "" // Reset
                 musicImportResults = emptyList()
                 selectedMetadata = null
@@ -1649,7 +1651,6 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun MusicHubSection(musicPicker: androidx.activity.result.ActivityResultLauncher<String>) {
         var communityTabIndex by remember { mutableIntStateOf(0) }
-        var ytUrl by remember { mutableStateOf("") }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1708,33 +1709,6 @@ class MainActivity : ComponentActivity() {
                     currentMode = AppMode.MUSIC_SLOTS 
                 }
                 
-                Column(Modifier.fillMaxWidth().background(RetroSurfaceAlt, RoundedCornerShape(12.dp))
-                        .border(1.dp, RetroBorder, RoundedCornerShape(12.dp)).padding(11.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.SmartDisplay, null, tint = RetroDanger, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("YouTube converter", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    BasicTextField(value = ytUrl, onValueChange = { ytUrl = it }, singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = RetroText),
-                        modifier = Modifier.fillMaxWidth().background(RetroBg, RoundedCornerShape(9.dp))
-                            .border(1.dp, RetroBorder, RoundedCornerShape(9.dp)).padding(11.dp),
-                        decorationBox = { inner -> if (ytUrl.isEmpty()) Text("Paste YouTube URL here…", color = RetroTextMuted, style = MaterialTheme.typography.bodyMedium); inner() })
-                    Spacer(Modifier.height(8.dp))
-                    PrimaryButton("Start Matching") { 
-                        if (ytUrl.isNotBlank()) {
-                            musicImportYtUrl = ytUrl
-                            currentMusicImportType = "YOUTUBE"
-                            musicImportSearchQuery = ""
-                            musicImportResults = emptyList()
-                            selectedMetadata = null
-                            showMusicImportDialog = true
-                        } else {
-                            Toast.makeText(this@MainActivity, "Paste a URL first.", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
             }
         }
     }
@@ -2205,7 +2179,6 @@ class MainActivity : ComponentActivity() {
         manualGold: String? = null,
         manualRS: String? = null,
         manualMS: String? = null,
-        youtubeUrl: String? = null,
         shareHub: Boolean = false,
         artworkUrl: String? = null,
         artworkUri: Uri? = null,
@@ -2232,7 +2205,6 @@ class MainActivity : ComponentActivity() {
                 putExtra("TRACK_FILENAME", trackFileName)
                 putExtra("TARGET_TRACK", targetTrack)
                 putExtra("PRESET_NAME", presetName)
-                putExtra("YOUTUBE_URL", youtubeUrl)
                 putExtra("ARTWORK_URL", artworkUrl)
                 putExtra("ARTWORK_URI", artworkUri?.toString())
                 putExtra("ARTIST_NAME", artistName)
@@ -2251,15 +2223,29 @@ class MainActivity : ComponentActivity() {
     private fun startShizukuMonitor() {
         shizukuMonitorJob?.cancel()
         shizukuMonitorJob = lifecycleScope.launch {
+            var lastBinder: Boolean? = null
+            var lastPermission: Boolean? = null
             while (isActive) {
-                updateShizukuStatus()
-                delay(1.seconds)
+                val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+                val permissionGranted = binderAvailable && runCatching {
+                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                }.getOrDefault(false)
+                if (binderAvailable != lastBinder || permissionGranted != lastPermission) {
+                    Log.i(TAG, "Shizuku state changed: binderAvailable=$binderAvailable permissionGranted=$permissionGranted serviceBound=$isServiceBound")
+                    lastBinder = binderAvailable
+                    lastPermission = permissionGranted
+                }
+                updateShizukuStatus(binderAvailable, permissionGranted)
+                delay(2.seconds)
             }
         }
     }
 
-    private fun updateShizukuStatus() {
-        val binderOk = try { Shizuku.pingBinder() } catch (e: Throwable) {
+    private fun updateShizukuStatus(
+        binderOverride: Boolean? = null,
+        permissionOverride: Boolean? = null,
+    ) {
+        val binderOk = binderOverride ?: try { Shizuku.pingBinder() } catch (e: Throwable) {
             Log.w(TAG, "Shizuku binder ping failed", e)
             false
         }
@@ -2275,10 +2261,10 @@ class MainActivity : ComponentActivity() {
             isSystemStatusLoading = false
             return 
         }
-        val permGranted = try { 
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED 
+        val permGranted = permissionOverride ?: try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (_: Exception) {
-            false 
+            false
         }
         Log.i(TAG, "updateShizukuStatus: permGranted=$permGranted")
         isPermissionGranted = permGranted
@@ -2823,21 +2809,6 @@ class MainActivity : ComponentActivity() {
         val artworkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             musicImportArtworkUri = uri
         }
-        val cookiesPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            uri ?: return@rememberLauncherForActivityResult
-            lifecycleScope.launch(Dispatchers.IO) {
-                runCatching {
-                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
-                        youtubeCookieStore.saveNetscapeCookies(reader.readText())
-                    } ?: error("Unable to open cookies file")
-                }.onSuccess {
-                    withContext(Dispatchers.Main) { youtubeCookiesConfigured = true }
-                }.onFailure {
-                    withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Invalid cookies file.", Toast.LENGTH_SHORT).show() }
-                }
-            }
-        }
-
         Dialog(onDismissRequest = { closeDialog() }) {
             RetroCard(
                 Modifier
@@ -2852,7 +2823,7 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text(
-                        if (currentMusicImportType == "YOUTUBE") "YouTube Converter" else "Local Music Import",
+                        "Local Music Import",
                         style = MaterialTheme.typography.titleLarge,
                         color = RetroText
                     )
@@ -3000,17 +2971,6 @@ class MainActivity : ComponentActivity() {
 
                             HorizontalDivider(color = RetroBorder)
 
-                            if (currentMusicImportType == "YOUTUBE") {
-                                Text("YouTube authentication fallback", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
-                                Text("Anonymous attempts are always tried first. Cookies stay encrypted on this device and are never uploaded.", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlineButton("${if (youtubeCookiesConfigured) "Replace" else "Import"} cookies", Modifier.weight(1f)) { cookiesPicker.launch(arrayOf("text/*", "application/octet-stream")) }
-                                    if (youtubeCookiesConfigured) {
-                                        TextButton(onClick = { youtubeCookieStore.remove(); youtubeCookiesConfigured = false }) { Text("Remove") }
-                                    }
-                                }
-                            }
-
                             Text("Artwork", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlineButton("Choose image", Modifier.weight(1f)) { artworkPicker.launch("image/*") }
@@ -3078,31 +3038,18 @@ class MainActivity : ComponentActivity() {
 
                             PrimaryButton("Apply Profile & Process") {
                                 if (isManualMetadata && musicImportArtworkUri == null) return@PrimaryButton
-                                if (currentMusicImportType == "YOUTUBE") {
-                                    startBackgroundInstall(
-                                        "YOUTUBE_TO_LIBRARY",
-                                        youtubeUrl = musicImportYtUrl,
-                                        customName = meta.trackName,
-                                        uploaderName = uploaderName,
-                                        targetTrack = targetTrackSlot,
-                                        shareHub = shareOnHub,
-                                        artworkUrl = meta.artworkUrl,
-                                        artworkUri = musicImportArtworkUri,
-                                        artistName = meta.artistName,
-                                    )
-                                } else {
-                                    startBackgroundInstall(
-                                        "MUSIC_MOD",
-                                        uri = musicImportLocalUri,
-                                        customName = meta.trackName,
-                                        uploaderName = uploaderName,
-                                        trackFileName = targetTrackSlot,
-                                        targetTrack = targetTrackSlot,
-                                        shareHub = shareOnHub,
-                                        artworkUrl = meta.artworkUrl,
-                                        artworkUri = musicImportArtworkUri
-                                    )
-                                }
+                                startBackgroundInstall(
+                                    "MUSIC_MOD",
+                                    uri = musicImportLocalUri,
+                                    customName = meta.trackName,
+                                    uploaderName = uploaderName,
+                                    trackFileName = targetTrackSlot,
+                                    targetTrack = targetTrackSlot,
+                                    shareHub = shareOnHub,
+                                    artworkUrl = meta.artworkUrl,
+                                    artworkUri = musicImportArtworkUri,
+                                    artistName = meta.artistName,
+                                )
                                 closeDialog()
                             }
                         }

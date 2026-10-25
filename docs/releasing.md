@@ -4,7 +4,7 @@
 
 Each release produces one signed APK, `app-release.apk`. That same artifact may be attached to the GitHub Release and used for the IzzyOnDroid submission. The app does not contain a separate GitHub or F-Droid product flavor.
 
-The APK does not self-update. Users receive app updates from GitHub or IzzyOnDroid. yt-dlp and FFmpeg remain bundled in the APK; update their pinned dependency versions as part of a normal signed app release.
+The APK does not self-update. Users receive app updates from GitHub or IzzyOnDroid. Music is obtained externally and imported from local storage; no in-app YouTube converter or bundled media downloader is released.
 
 ## Prerequisites
 
@@ -44,7 +44,7 @@ The workflow at `.github/workflows/release.yml` validates unit tests, builds `:a
 ## Release procedure
 
 1. Update `versionCode` and `versionName`.
-2. Update bundled dependency versions, including yt-dlp, only after reviewing upstream release notes and license/provenance changes.
+2. Review local music-import documentation and any dependency changes for license/provenance implications.
 3. Run the full release checklist.
 4. Build from a clean checkout and verify the APK checksum independently.
 5. Commit all release changes and create an annotated source tag matching `v<versionName>`.
@@ -64,7 +64,7 @@ The workflow at `.github/workflows/release.yml` validates unit tests, builds `:a
 - Distribution: one signed APK for GitHub and IzzyOnDroid
 - Shizuku is required for privileged installation operations.
 - Back up game data before applying asset changes. Use the app's revert flow where available.
-- yt-dlp and FFmpeg are bundled. Their version is updated through normal signed app releases.
+- Music is downloaded or converted externally and imported from local storage; the app does not provide an in-app YouTube converter.
 - Community Hub and profile-picture features use the documented remote service.
 - Known limitations: `<list>`
 - SHA-256: `<checksum>`

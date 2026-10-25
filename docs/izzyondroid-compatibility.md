@@ -4,7 +4,7 @@
 
 This document records the dependency, network, native-code, and runtime-behavior review for the single Project RETR0 installer APK distributed through GitHub and proposed for IzzyOnDroid.
 
-The app does not perform an in-app APK self-update. App updates are delivered through the distribution source. The app also uses the yt-dlp version bundled in the APK and does not download a replacement executable at runtime.
+The app does not perform an in-app APK self-update. App updates are delivered through the distribution source. Music is downloaded or converted externally and imported from local device storage; the app does not bundle or update a YouTube converter.
 
 ## Build reproducibility
 
@@ -25,7 +25,6 @@ The app does not perform an in-app APK self-update. App updates are delivered th
 | OkHttp | Community and installer HTTP networking | square/okhttp source, Apache-2.0 | Standard dependency. HTTPS endpoints only should be maintained. |
 | Cronet embedded | Streaming installer downloads | Chromium source, BSD-style licensing | Bundled native dependency. Confirm the exact Maven artifact source and license notices before submission. |
 | Coil Compose | Local and remote image loading | coil-kt/coil source, Apache-2.0 | Standard dependency; remote image hosts are disclosed below. |
-| youtubedl-android and FFmpeg | User-initiated music import/download processing | junkfood02/youtubedl-android and its bundled components | High-review-risk dependency. Confirm source, codec licensing, and the bundled executable provenance. Runtime yt-dlp updates are disabled. |
 | `libsonic-extractor.so` and C/C++ sources | Archive extraction support | Checked-in native source/CMake configuration must remain auditable | Confirm each native library source and license before submission. |
 
 ## Network and external behavior
@@ -46,7 +45,6 @@ All streaming installer downloads are restricted to HTTPS by `StreamDownloader`.
 - RR3 assets, community downloads, and user-selected music/media are user-driven application content operations, not app updates.
 - The app may use Shizuku to perform user-requested privileged file and package operations. It does not receive Shizuku access automatically.
 - The app does not self-update its APK.
-- The app does not replace its bundled yt-dlp executable at runtime.
 - Community content can be uploaded, downloaded, liked, reported, and deleted by its owner through the Community Hub service.
 - Installation identity, profile pictures, and imported skins are excluded from cloud backup and device transfer by the app backup rules.
 

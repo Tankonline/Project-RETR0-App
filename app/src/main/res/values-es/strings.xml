@@ -46,7 +46,6 @@
     <string name="section_maintenance">MANTENIMIENTO</string>
     <string name="section_diagnostics">DIAGNÓSTICOS</string>
     <string name="section_manual_import">IMPORTACIÓN MANUAL</string>
-    <string name="section_youtube_converter">CONVERTIDOR DE YOUTUBE</string>
     <string name="section_discord">¿Te gusta el instalador?</string>
 
     <!-- Section Subtitles -->
@@ -55,7 +54,6 @@
     <string name="hint_save_hub">Crea y cambia entre instantáneas de datos de personaje.</string>
     <string name="hint_maintenance">Restaura los archivos originales del motor desde la carpeta APK del juego.</string>
     <string name="hint_manual_import">Importa archivos externos directamente al juego.</string>
-    <string name="hint_youtube_converter">Convierte enlaces de YouTube a MP3 en tu biblioteca local.</string>
     <string name="hint_discord">Únete a nuestra comunidad para ver más de Proyecto RETR0</string>
     <string name="discord_invite_url">https://discord.gg/DfX8ArtfgX</string>
 
@@ -104,8 +102,6 @@
     <string name="btn_close">CERRAR</string>
 
     <!-- Dialogs -->
-    <string name="dialog_youtube_title">YouTube a Biblioteca</string>
-    <string name="dialog_youtube_desc">Descarga y convierte este enlace a un MP3 permanente en tu biblioteca local.</string>
     <string name="dialog_import_title">Importar a Biblioteca</string>
     <string name="dialog_share_title">Compartir con la Comunidad</string>
     <string name="dialog_share_desc">Verifica las estadísticas de este archivo:</string>
@@ -141,13 +137,6 @@
     <string name="label_gold">Oro</string>
     <string name="label_rs">Moneda R$</string>
     <string name="label_ms">Moneda M$</string>
-    <string name="label_youtube_placeholder">Pega el enlace de YouTube aquí…</string>
-    <string name="youtube_auth_fallback_title">Alternativa de autenticación de YouTube</string>
-    <string name="youtube_auth_fallback_description">Primero se intentan las solicitudes anónimas. Las cookies permanecen cifradas en este dispositivo y nunca se suben.</string>
-    <string name="youtube_cookies_import">Importar cookies</string>
-    <string name="youtube_cookies_replace">Reemplazar cookies</string>
-    <string name="youtube_cookies_remove">Eliminar</string>
-    <string name="youtube_cookies_invalid">Archivo de cookies no válido.</string>
 
     <!-- Graphics Tiers -->
     <string name="tier_low">Bajo</string>
