@@ -1458,59 +1458,47 @@ class Retr0Installer(
     suspend fun applyGraphicsPreset(presetName: String): Boolean = withContext(Dispatchers.IO) {
         val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
-            updateProgress(InstallState.PREPARING, "Preparing graphics swap...")
-            
+            updateProgress(InstallState.PREPARING, "Stopping RR3 before graphics swap...")
+            val selectedRr3Path = rr3PathForPackage(s)
+            val rr3Package = if (selectedRr3Path == RR3_NA) "com.ea.games.r3_na" else "com.ea.games.r3_row"
+            if (s.isPackageRunning(rr3Package)) s.forceStopPackage(rr3Package)
+            if (s.isPackageRunning(rr3Package)) {
+                fail("RR3 is still running; graphics were not changed.")
+                return@withContext false
+            }
+
             val rr3Path = getRr3Path()
             val resEds = "$rr3Path/files/apk/res/eds"
             val resFeats = "$rr3Path/files/apk/res/feats"
-            
             val depotEds = "$rr3Path/files/.depot/eds"
             val depotFeats = "$rr3Path/files/.depot/feats"
-
             val sourcePlist = "$resEds/$presetName.plist"
             val sourceFeats = "$resFeats/$presetName.feats"
-
             val hasPlist = s.exists(sourcePlist)
             val hasFeats = s.exists(sourceFeats)
-
             if (!hasPlist && !hasFeats) {
                 fail("Preset source not found: $presetName (.plist or .feats)")
                 return@withContext false
             }
 
-            val tiers = listOf(
-                "AndroidLow", "AndroidMid", "AndroidMid2", 
-                "AndroidHigh", "AndroidXtraHigh", "AndroidUltraWide", "SimRigTV"
-            )
-
+            val tiers = listOf("AndroidLow", "AndroidMid", "AndroidMid2", "AndroidHigh", "AndroidXtraHigh", "AndroidUltraWide", "SimRigTV")
             updateProgress(InstallState.INSTALLING, "Injecting $presetName configuration...")
-            
-            var successCount = 0
-            tiers.forEach { tier ->
-                // Apply Plist (if exists)
-                if (hasPlist) {
-                    val destPlist = "$depotEds/$tier.plist"
-                    if (s.copyFile(sourcePlist, destPlist)) {
-                        successCount++
-                    }
-                }
-                
-                // Apply Feats (if exists)
-                if (hasFeats) {
-                    val destFeats = "$depotFeats/$tier.feats"
-                    if (s.copyFile(sourceFeats, destFeats)) {
-                        if (!hasPlist) successCount++ // Count as success if feats-only
-                    }
-                }
+            if (hasPlist && !s.exists(depotEds)) s.createDirectory(depotEds)
+            if (hasFeats && !s.exists(depotFeats)) s.createDirectory(depotFeats)
+
+            val targets = buildList {
+                if (hasPlist) tiers.mapTo(this) { "$depotEds/$it.plist" }
+                if (hasFeats) tiers.mapTo(this) { "$depotFeats/$it.feats" }
+            }
+            val sourceByTarget = targets.associateWith { target -> if (target.endsWith(".plist")) sourcePlist else sourceFeats }
+            val copied = targets.count { target -> s.copyFile(sourceByTarget.getValue(target), target) }
+            if (copied != targets.size) {
+                fail("Graphics swap was incomplete ($copied/${targets.size} files). Original files were not restored automatically.")
+                return@withContext false
             }
 
-            if (successCount > 0) {
-                updateProgress(InstallState.SUCCESS, "GRAPHICS APPLIED", "$presetName active across all tiers")
-                return@withContext true
-            }
-            
-            fail("Failed to apply graphics preset.")
-            false
+            updateProgress(InstallState.SUCCESS, "GRAPHICS APPLIED", "$presetName active across all tiers; restart RR3 to load it")
+            true
         } catch (e: Exception) {
             fail("Graphics Error: ${e.message}")
             false
@@ -1523,38 +1511,49 @@ class Retr0Installer(
     suspend fun restoreOriginalGraphics(): Boolean = withContext(Dispatchers.IO) {
         val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
+            updateProgress(InstallState.PREPARING, "Stopping RR3 before graphics restore...")
+            val selectedRr3Path = rr3PathForPackage(s)
+            val rr3Package = if (selectedRr3Path == RR3_NA) "com.ea.games.r3_na" else "com.ea.games.r3_row"
+            if (s.isPackageRunning(rr3Package)) s.forceStopPackage(rr3Package)
+            if (s.isPackageRunning(rr3Package)) {
+                fail("RR3 is still running; original graphics were not restored.")
+                return@withContext false
+            }
+
             val rr3Path = getRr3Path()
             val resPath = "$rr3Path/files/apk/res"
             val depotPath = "$rr3Path/files/.depot"
-
             if (!s.exists(resPath)) {
                 fail("Original graphics source (apk/res) not found.")
                 return@withContext false
             }
 
             updateProgress(InstallState.INSTALLING, "Restoring original graphics...")
-            
-            // Restore EDS
-            if (s.exists("$resPath/eds")) {
-                s.delete("$depotPath/eds")
-                s.createDirectory("$depotPath/eds")
-                s.copyDirectory("$resPath/eds", "$depotPath/eds")
+            val directories = listOf("eds", "feats")
+            for (directory in directories) {
+                val source = "$resPath/$directory"
+                val destination = "$depotPath/$directory"
+                if (!s.exists(source)) continue
+                if (!s.delete(destination) || !s.createDirectory(destination) || !s.copyDirectory(source, destination)) {
+                    fail("Could not restore original graphics directory: $directory")
+                    return@withContext false
+                }
             }
 
-            // Restore FEATS
-            if (s.exists("$resPath/feats")) {
-                s.delete("$depotPath/feats")
-                s.createDirectory("$depotPath/feats")
-                s.copyDirectory("$resPath/feats", "$depotPath/feats")
-            }
-
-            updateProgress(InstallState.SUCCESS, "ORIGINAL GRAPHICS RESTORED")
+            updateProgress(InstallState.SUCCESS, "ORIGINAL GRAPHICS RESTORED", "Restart RR3 to reload the factory configuration")
             true
         } catch (e: Exception) {
             fail("Restore Error: ${e.message}")
             false
         }
     }
+
+    private fun rr3PathForPackage(s: IRetr0UserService): String =
+        when {
+            s.exists(RR3_ROW) -> RR3_ROW
+            s.exists(RR3_NA) -> RR3_NA
+            else -> RR3_ROW
+        }
 
     /**
      * Replaces a game music track with a user-provided file.
