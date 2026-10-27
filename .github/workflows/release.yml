@@ -88,12 +88,14 @@ jobs:
         shell: bash
         run: |
           APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          RELEASE_TAG="${{ steps.release_ref.outputs.tag }}"
+          VERSION_NAME="${RELEASE_TAG#v}"
           test -f "$APK_PATH"
           sha256sum "$APK_PATH" > app/build/outputs/apk/release/app-release.apk.sha256
           cat > app/build/outputs/apk/release/release-notes.md <<EOF
-          ## Project RETR0 installer ${{ steps.release_ref.outputs.tag }}
+          ## Project RETR0 installer ${RELEASE_TAG}
 
-          Project RETR0 installer v1.1.0 improves Shizuku authorization and privileged-service startup on affected OEM devices.
+          Project RETR0 installer ${VERSION_NAME} improves Shizuku authorization and privileged-service startup on affected OEM devices.
 
           ### Highlights
 
@@ -111,8 +113,8 @@ jobs:
 
           ### Release information
 
-          - Version: 1.1.0
-          - Version code: 12
+          - Version: ${VERSION_NAME}
+          - Version code: derived from the selected release tag
           - Source commit: ${GITHUB_SHA}
           - Distribution: one signed APK for GitHub and IzzyOnDroid
           - Minimum Android version: Android 8.0 (API 26)
