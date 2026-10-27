@@ -7,7 +7,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -179,6 +187,28 @@ fun DangerButton(text: String, modifier: Modifier = Modifier, icon: ImageVector?
             Spacer(Modifier.width(8.dp))
         }
         Text(text, color = RetroDanger, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+/** Amber: repairs and experimental options. Not for destructive actions (use [DangerButton]). */
+@Composable
+fun WarningButton(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, onClick: () -> Unit) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(RetroWarningTint)
+            .border(1.dp, RetroWarning.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 13.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(icon, null, tint = RetroWarning, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(text, color = RetroWarning, style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -394,5 +424,140 @@ fun RetroSearchField(
                 inner()
             }
         )
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  DASHBOARD NAVIGATION — sub-screen header, hub card, list row.      */
+/* ------------------------------------------------------------------ */
+
+/** Title bar for a screen opened from Home: back arrow, title, optional subtitle and trailing actions. */
+@Composable
+fun RetroScreenHeader(
+    title: String,
+    onBack: () -> Unit,
+    subtitle: String? = null,
+    subtitleColor: Color = RetroTextMuted,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = RetroAccent)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineMedium, color = RetroText)
+            subtitle?.let { Text(it, style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = subtitleColor) }
+        }
+        trailing?.invoke(this)
+    }
+}
+
+/** A Home feature-hub card (Mods, Music, Graphics, Saves): icon tile, title and a live status line. */
+@Composable
+fun RetroHubCard(
+    title: String,
+    status: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    tint: Color = RetroAccent,
+    statusColor: Color = RetroTextMuted,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(RetroSurface)
+            .border(1.dp, RetroBorder, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .defaultMinSize(minHeight = 108.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(36.dp).background(tint.copy(alpha = 0.14f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp)) }
+            Spacer(Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = RetroTextMuted, modifier = Modifier.size(18.dp))
+        }
+        Column {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = RetroText)
+            Text(status, style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = statusColor, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** A slim navigation row (Home "System" list). */
+@Composable
+fun RetroListRow(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    tint: Color = RetroAccent,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(32.dp).background(tint.copy(alpha = 0.14f), RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp)) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = RetroText)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = RetroTextMuted, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** One option of a single-choice group: radio, title, description and an optional badge. */
+@Composable
+fun RetroRadioRow(
+    title: String,
+    description: String,
+    selected: Boolean,
+    enabled: Boolean,
+    badge: String? = null,
+    onSelect: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) RetroAccentTint else Color.Transparent)
+            .border(1.dp, if (selected) RetroAccent.copy(alpha = 0.6f) else RetroBorder, RoundedCornerShape(12.dp))
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)
+            .padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+            enabled = enabled,
+            colors = RadioButtonDefaults.colors(selectedColor = RetroAccent, unselectedColor = RetroTextMuted),
+        )
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, color = if (selected) Color.White else RetroText)
+                badge?.let {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                        color = RetroSuccess,
+                        modifier = Modifier.background(RetroSuccessTint, RoundedCornerShape(8.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            Text(description, style = MaterialTheme.typography.bodySmall, color = RetroTextMuted)
+        }
     }
 }

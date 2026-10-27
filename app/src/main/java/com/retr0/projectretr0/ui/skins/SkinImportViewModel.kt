@@ -7,6 +7,8 @@ import com.retr0.projectretr0.data.skins.SkinRepository
 import com.retr0.projectretr0.data.skins.SkinUploadImage
 import com.retr0.projectretr0.data.skins.local.LocalSkinImport
 import com.retr0.projectretr0.data.skins.local.LocalSkinRepository
+import com.retr0.projectretr0.domain.skins.SkinTransactionCoordinator
+import com.retr0.projectretr0.IRetr0UserService
 import com.retr0.projectretr0.data.skins.manifest.SkinManifestStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +24,7 @@ class SkinImportViewModel(
     private companion object {
         const val TAG = "SKIN_IMPORT"
         const val CODE_FINISH_START = "SKIN_IMPORT_E001"
+        const val CODE_BACKUP_FAILED = "SKIN_IMPORT_E010"
         const val CODE_LOCAL_SAVE_FAILED = "SKIN_IMPORT_E002"
         const val CODE_COVER_STATE_MISSING = "SKIN_IMPORT_E003"
         const val CODE_SAVED_DIRECTORY_MISSING = "SKIN_IMPORT_E004"
@@ -34,7 +37,14 @@ class SkinImportViewModel(
     private val mutableProgress = MutableStateFlow<ImportProgress>(ImportProgress.Idle)
     val progress: StateFlow<ImportProgress> = mutableProgress.asStateFlow()
 
-    suspend fun finish(state: ImportState, title: String, creator: String, description: String): Result<String> = runCatching {
+    suspend fun finish(
+        state: ImportState,
+        title: String,
+        creator: String,
+        description: String,
+        service: IRetr0UserService? = null,
+        transactionCoordinator: SkinTransactionCoordinator? = null,
+    ): Result<String> = runCatching {
         Log.i(TAG, "code=$CODE_FINISH_START stage=finish_start upload=${state.upload} imageCount=${state.images.size}")
         val source = requireNotNull(state.source) { "Choose a skin file" }
         requireNotNull(state.target) { "Choose a target" }
@@ -101,6 +111,14 @@ class SkinImportViewModel(
             } catch (error: Throwable) {
                 Log.e(TAG, "code=$CODE_COMMUNITY_UPLOAD_FAILED stage=community_upload_failed type=${error::class.java.simpleName} message=${error.message}", error)
                 throw error
+            }
+        }
+        if (state.apply) {
+            val connectedService = requireNotNull(service) { "$CODE_BACKUP_FAILED: Privileged service is unavailable; the game file was not changed" }
+            val coordinator = requireNotNull(transactionCoordinator) { "$CODE_BACKUP_FAILED: Apply coordinator is unavailable; the game file was not changed" }
+            mutableProgress.value = ImportProgress.Running(95, "Backing up original target and applying skin")
+            coordinator.apply(saved.id, connectedService).getOrElse { error ->
+                throw IllegalStateException("$CODE_BACKUP_FAILED: ${error.message ?: "Unable to create original backup; the game file was not changed"}", error)
             }
         }
         mutableProgress.value = ImportProgress.Complete(saved.id, state.apply)

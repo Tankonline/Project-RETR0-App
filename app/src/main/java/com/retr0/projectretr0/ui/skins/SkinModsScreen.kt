@@ -100,6 +100,7 @@ private sealed interface ModsRoute { data object Root : ModsRoute; data object I
             ::back,
             browserSource = ShizukuSkinTargetBrowserSource(if (isServiceConnected) service else null),
             onTargetBrowserVisibilityChange = { visible -> onFullScreenChange(visible || currentRoute is ModsRoute.Import) },
+            service = if (isServiceConnected) service else null,
         )
         is ModsRoute.Details -> LocalSkinDetails(currentRoute.id, ::back, { sheet = applyRequest(currentRoute.id) }, { sheet = revertRequest(currentRoute.id) })
         is ModsRoute.TargetScan -> TargetScanRoute(currentRoute.id, localRepository, service, gamePackage, ::back)

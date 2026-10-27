@@ -60,5 +60,14 @@ interface IRetr0UserService {
 
     boolean restoreSkinBackup(String backupPath, String targetPath, String expectedBackupSha256) = 29;
 
+    // Graphics Hub. Replies are "OK ..." or "FAIL stage=... reason=...".
+    String publishGraphicsFile(String sourcePath, String targetPath, String expectedSha256) = 31;
+
+    String deleteGraphicsFile(String targetPath) = 32;
+
+    int getGraphicsApiVersion() = 33;
+
+    String graphicsDiagnostics(String packageRoot) = 34;
+
     void destroy() = 16777114;
 }

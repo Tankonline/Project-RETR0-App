@@ -1,10 +1,12 @@
 package com.retr0.projectretr0.data.skins
 
 import android.content.Context
+import com.retr0.projectretr0.data.skins.manifest.SkinManifest
 import com.retr0.projectretr0.ui.skins.CommunitySkin
 import com.retr0.projectretr0.ui.skins.Compatibility
 import com.retr0.projectretr0.ui.skins.GamePackage
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 
 open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) {
@@ -42,9 +44,35 @@ open class SkinRepository(private val source: SkinDataSource = SkinApiClient()) 
             require(image.file.isFile && image.file.length() > 0L) { "Screenshot ${image.position} is missing or empty" }
             uploadScreenshot(created.id, image.position, image.file, image.contentType, image.caption)
         }
-        manifest?.let { uploadManifest(created.id, it) }
+        manifest?.let {
+            val rewrittenManifest = SkinManifest.fromJson(org.json.JSONObject(it))
+                .withSkinId(created.id)
+                .withBinaryMetadata(binary.name, binary.length(), draft.binarySha256)
+                .copy(cover = loadUploadedCoverMetadata(cover))
+                .toJson()
+                .toString()
+            uploadManifest(created.id, rewrittenManifest)
+        }
         publish(created.id)
         return created
+    }
+
+    private fun loadUploadedCoverMetadata(cover: File): com.retr0.projectretr0.data.skins.manifest.ManifestFile {
+        val digest = MessageDigest.getInstance("SHA-256")
+        cover.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return com.retr0.projectretr0.data.skins.manifest.ManifestFile(
+            path = cover.name,
+            contentType = "image/webp",
+            sizeBytes = cover.length(),
+            sha256 = digest.digest().joinToString("") { "%02x".format(it) },
+        )
     }
 
     private suspend fun <T> authenticated(operation: suspend () -> T): T {

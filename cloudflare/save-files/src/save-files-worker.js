@@ -38,10 +38,12 @@ async function handleV1(request, env, ctx, requestId) {
       ...headers
     }
   }), "respond");
+  let operation = "route_dispatch";
   const fail = /* @__PURE__ */ __name2((status, code, message, details) => respond({ error: { code, message, ...details ? { details } : {} }, requestId }, status), "fail");
   if (!env.SKINS_DB || !env.COMMUNITY_BUCKET) return fail(503, "service_unavailable", "Skin storage is unavailable");
   try {
     if (url.pathname === "/v1/installations" && request.method === "POST") {
+      operation = "installation_register";
       const bodyBytes2 = await boundedBody(request, MAX_JSON_BYTES);
       if (!bodyBytes2) return fail(400, "invalid_body", "A JSON request body is required");
       const body = parseJson(bodyBytes2);
@@ -165,8 +167,12 @@ async function handleV1(request, env, ctx, requestId) {
     if (bodyBytes === null) return fail(413, "body_too_large", "Request body exceeds the route limit");
     const identity = await authenticate(request, env.SKINS_DB, url, bodyBytes);
     if (!identity.ok) return fail(identity.status, identity.code, identity.message);
-    if (listRoute && request.method === "POST") return createSkin(bodyBytes, request, env.SKINS_DB, env, url, identity.installationId, requestId, respond, fail);
+    if (listRoute && request.method === "POST") {
+      operation = "skin_draft_create";
+      return createSkin(bodyBytes, request, env.SKINS_DB, env, url, identity.installationId, requestId, respond, fail);
+    }
     if (!route) return fail(404, "not_found", "Route not found");
+    operation = `skin_${route.action}`;
     if (route.action === "binary" && request.method === "PUT") return uploadBinary(bodyBytes, env, route.id, identity.installationId, requestId, respond, fail);
     if (route.action === "cover" && request.method === "PUT") return uploadImage(bodyBytes, request, env, route, identity.installationId, "cover", requestId, respond, fail);
     if (route.action === "screenshot" && request.method === "PUT") return uploadImage(bodyBytes, request, env, route, identity.installationId, "screenshot", requestId, respond, fail);
@@ -178,8 +184,8 @@ async function handleV1(request, env, ctx, requestId) {
     if (route.action === "details" && request.method === "DELETE") return softDeleteSkin(env, ctx, route.id, identity.installationId, requestId, respond, fail);
     return fail(405, "method_not_allowed", "Method not allowed");
   } catch (error) {
-    console.error(JSON.stringify({ event: "v1_request_failed", requestId, method: request.method, path: url.pathname, error: error instanceof Error ? error.message : String(error) }));
-    return fail(500, "internal_error", "The request could not be completed");
+    console.error(JSON.stringify({ event: "v1_request_failed", requestId, operation, method: request.method, path: url.pathname, code: "internal_error", error: error instanceof Error ? error.message : String(error) }));
+    return fail(500, "internal_error", "The request could not be completed", { operation });
   }
 }
 __name(handleV1, "handleV1");
@@ -766,16 +772,37 @@ function validateManifest(manifest, skinId, byteLength) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return { ok: false, code: "invalid_manifest", message: "Manifest must be a JSON object" };
   if (manifest.skinId !== skinId) return { ok: false, code: "manifest_skin_mismatch", message: "Manifest skinId does not match the draft" };
   if (byteLength > MAX_JSON_BYTES) return { ok: false, code: "manifest_too_large", message: "Manifest exceeds the size limit" };
-  if (!manifest.binary || typeof manifest.binary !== "object") return { ok: false, code: "manifest_binary_missing", message: "Manifest binary metadata is required" };
-  if (!manifest.cover || typeof manifest.cover !== "object") return { ok: false, code: "manifest_cover_missing", message: "Manifest cover metadata is required" };
-  const paths = [manifest.binary.path, manifest.cover.path, ...(Array.isArray(manifest.screenshots) ? manifest.screenshots.map((item) => item?.path) : [])];
-  if (paths.some((path) => typeof path !== "string" || !isSafeManifestPath(path))) return { ok: false, code: "manifest_invalid_path", message: "Manifest paths must be safe relative paths" };
+  // Canonical Android manifests store assets at the root. Accept the previous
+  // `files` wrapper only when the root has no asset fields, then validate the
+  // normalized shape without weakening any required metadata checks.
+  const assets = manifest.files && typeof manifest.files === "object" && !Array.isArray(manifest.files)
+    ? (manifest.binary === undefined && manifest.cover === undefined && manifest.screenshots === undefined ? manifest.files : manifest)
+    : manifest;
+  if (!assets.binary || typeof assets.binary !== "object" || Array.isArray(assets.binary)) return { ok: false, code: "manifest_binary_missing", message: "Manifest binary metadata is required" };
+  if (!assets.cover || typeof assets.cover !== "object" || Array.isArray(assets.cover)) return { ok: false, code: "manifest_cover_missing", message: "Manifest cover metadata is required" };
+  const requiredFile = (value, code) => {
+    if (!value || typeof value.path !== "string" || !isSafeManifestPath(value.path) || !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes <= 0 || !SHA256_PATTERN.test(String(value.sha256 || "")) || typeof value.contentType !== "string" || !value.contentType) return { ok: false, code, message: "Manifest file metadata is incomplete" };
+    return null;
+  };
+  const binaryError = requiredFile(assets.binary, "manifest_binary_invalid");
+  if (binaryError) return binaryError;
+  const coverError = requiredFile(assets.cover, "manifest_cover_invalid");
+  if (coverError) return coverError;
+  const screenshots = assets.screenshots === undefined ? [] : assets.screenshots;
+  if (!Array.isArray(screenshots) || screenshots.length > 4) return { ok: false, code: "manifest_screenshots_invalid", message: "Manifest screenshots are invalid" };
+  const positions = new Set();
+  for (const screenshot of screenshots) {
+    if (!Number.isInteger(screenshot?.position) || screenshot.position < 1 || screenshot.position > 4 || positions.has(screenshot.position)) return { ok: false, code: "manifest_screenshots_invalid", message: "Manifest screenshot positions are invalid" };
+    positions.add(screenshot.position);
+    const screenshotError = requiredFile(screenshot, "manifest_screenshot_invalid");
+    if (screenshotError) return screenshotError;
+  }
   return { ok: true };
 }
 __name(validateManifest, "validateManifest");
 __name2(validateManifest, "validateManifest");
 function isSafeManifestPath(path) {
-  return path.length > 0 && path.length <= 255 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..") && !path.split("/").includes("");
+  return path.length > 0 && path.length <= 255 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..") && !path.split("/").includes("") && !/^[A-Za-z]:/.test(path);
 }
 __name(isSafeManifestPath, "isSafeManifestPath");
 __name2(isSafeManifestPath, "isSafeManifestPath");

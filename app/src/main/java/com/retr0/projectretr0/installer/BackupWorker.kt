@@ -48,9 +48,11 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val args = Shizuku.UserServiceArgs(ComponentName(applicationContext.packageName, Retr0UserService::class.java.name))
             .daemon(false)
             .processNameSuffix("backup")
+            // Own Shizuku key, so the app replacing its helper at launch never kills a running backup.
+            .tag("retr0-backup")
             .debuggable(false)
             // Keep this independent from the foreground binding cache.
-            .version(4)
+            .version(6)
 
         try {
             Shizuku.bindUserService(args, connection)

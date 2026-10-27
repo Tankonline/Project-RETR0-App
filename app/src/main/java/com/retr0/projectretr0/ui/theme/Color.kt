@@ -23,7 +23,13 @@ val RetroAccent      = Color(0xFF3B82F6)
 val RetroAccentTint  = Color(0x243B82F6) // ~14%
 
 // ---- Semantic ----
+// red = destructive only · amber = repairs + experimental · green = healthy/active · blue = primary
 val RetroSuccess     = Color(0xFF34D399)
+val RetroSuccessTint = Color(0x1F34D399)
+val RetroWarning     = Color(0xFFF5A524)
+val RetroWarningTint = Color(0x1AF5A524)
+val RetroWarningText = Color(0xFFF8C77A)
+val RetroWarningBody = Color(0xFFC9A877)
 val RetroDanger      = Color(0xFFF87171)
 val RetroDangerTint  = Color(0x14F87171)
 val RetroDangerText  = Color(0xFFF8A3A9)

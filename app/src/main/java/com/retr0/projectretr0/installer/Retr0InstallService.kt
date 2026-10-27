@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.retr0.projectretr0.installer.graphics.HdrLevel
 import java.io.File
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -50,7 +51,10 @@ class Retr0InstallService : Service() {
     private var installer: Retr0Installer? = null
     
     private var wakeLock: PowerManager.WakeLock? = null
-    private var isTaskRunning = false
+    /** Mirrored into [InstallServiceState] so the UI knows not to restart the Shizuku helper mid-task. */
+    private var isTaskRunning: Boolean
+        get() = InstallServiceState.busy
+        set(value) { InstallServiceState.busy = value }
     private var lastNotificationAt = 0L
     private var lastNotificationState = InstallState.IDLE
     private var pendingNotificationJob: Job? = null
@@ -93,6 +97,9 @@ class Retr0InstallService : Service() {
             val trackFileName = intent.getStringExtra("TRACK_FILENAME")
             val targetTrack = intent.getStringExtra("TARGET_TRACK")
             val presetName = intent.getStringExtra("PRESET_NAME")
+            // Hub A/B/C selection ("A", "B" or "C"); absent = none given (backup restores then stay byte for byte).
+            val hdrLevel = intent.getStringExtra("HDR_LEVEL")?.let { v -> HdrLevel.entries.firstOrNull { it.name == v } }
+            val backupId = intent.getStringExtra("BACKUP_ID")
             val artworkUrl = intent.getStringExtra("ARTWORK_URL")
             val artworkUri = intent.getStringExtra("ARTWORK_URI")?.let(Uri::parse)
             val artistName = intent.getStringExtra("ARTIST_NAME")
@@ -117,6 +124,8 @@ class Retr0InstallService : Service() {
                     trackFileName = trackFileName,
                     targetTrack = targetTrack,
                     presetName = presetName,
+                    hdrLevel = hdrLevel,
+                    backupId = backupId,
                     manualLevel = mLevel,
                     manualGold = mGold,
                     manualRS = mRS,
@@ -162,6 +171,8 @@ class Retr0InstallService : Service() {
         trackFileName: String? = null,
         targetTrack: String? = null,
         presetName: String? = null,
+        hdrLevel: HdrLevel? = null,
+        backupId: String? = null,
         manualLevel: Int = -1,
         manualGold: Long = -1,
         manualRS: Long = -1,
@@ -225,7 +236,7 @@ class Retr0InstallService : Service() {
                 when (taskType) {
                     "INSTALL" -> installer?.installMod()
                     "SAFE_TEST" -> installer?.runSafeTest()
-                    "REPAIR" -> installer?.runAssetRepair()
+                    "REPAIR" -> installer?.runAssetRepair(hdrLevel ?: HdrLevel.B)
                     "CHARACTER" -> uri?.let { installer?.importCharacterData(it) }
                     "DOC" -> uri?.let { installer?.importSaveDirectory(it) }
                     "BACKUP" -> profileName?.let { installer?.createSnapshot(it) }
@@ -361,10 +372,16 @@ class Retr0InstallService : Service() {
                         }
                     }
                     "APPLY_GRAPHICS" -> {
-                        presetName?.let { installer?.applyGraphicsPreset(it) }
+                        presetName?.let { installer?.applyGraphicsPreset(it, hdrLevel ?: HdrLevel.B) }
                     }
                     "RESTORE_GRAPHICS" -> {
-                        installer?.restoreOriginalGraphics()
+                        installer?.restoreOriginalGraphics(hdrLevel ?: HdrLevel.B)
+                    }
+                    "RESTORE_GRAPHICS_BACKUP" -> {
+                        installer?.restoreGraphicsBackup(backupId ?: "latest", hdrLevel)
+                    }
+                    "SET_GRAPHICS_HDR" -> {
+                        hdrLevel?.let { installer?.setGraphicsHdrLevel(it) }
                     }
                 "REVERT_AUDIO" -> {
                     if (targetTrack != null) {

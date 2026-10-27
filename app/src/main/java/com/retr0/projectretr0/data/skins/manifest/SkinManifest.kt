@@ -35,20 +35,32 @@ data class SkinManifest(
             put("communityId", communityId ?: JSONObject.NULL); put("sourceFilename", sourceFilename)
         })
         put("target", JSONObject().apply { put("relativePath", targetRelativePath ?: JSONObject.NULL) })
-        put("files", JSONObject().apply {
-            put("binary", binary.toJson())
-            put("cover", cover?.toJson() ?: JSONObject.NULL)
-            put("screenshots", JSONArray(screenshots.map { it.toJson() }))
-        })
+        // Asset metadata is canonical at the root. The parser still accepts the
+        // historical `files` wrapper so manifests already stored on-device remain readable.
+        put("binary", binary.toJson())
+        put("cover", cover?.toJson() ?: JSONObject.NULL)
+        put("screenshots", JSONArray(screenshots.map { it.toJson() }))
     }
+
+    fun withSkinId(id: String): SkinManifest = copy(skinId = id)
+
+    fun withBinaryMetadata(
+        path: String,
+        sizeBytes: Long,
+        sha256: String,
+        contentType: String = "application/octet-stream",
+    ): SkinManifest = copy(
+        binary = binary.copy(path = path, sizeBytes = sizeBytes, sha256 = sha256, contentType = contentType),
+    )
 
     companion object {
         fun fromJson(root: JSONObject): SkinManifest {
             val metadata = root.optJSONObject("metadata") ?: root
             val source = root.optJSONObject("source") ?: JSONObject()
             val target = root.optJSONObject("target") ?: JSONObject()
-            val files = root.optJSONObject("files") ?: throw IllegalArgumentException("Manifest files are missing")
-            val screenshotArray = files.optJSONArray("screenshots") ?: JSONArray()
+            val files = root.optJSONObject("files")
+            val assets = files ?: root
+            val screenshotArray = assets.optJSONArray("screenshots") ?: JSONArray()
             val screenshots = (0 until screenshotArray.length()).map { ManifestScreenshot.fromJson(screenshotArray.getJSONObject(it)) }
             return SkinManifest(
                 manifestVersion = root.optInt("manifestVersion", 1),
@@ -59,8 +71,8 @@ data class SkinManifest(
                 slotKey = metadata.optString("slotKey"), textureFormat = metadata.optString("textureFormat"),
                 gamePackage = metadata.optString("gamePackage"), sourceFilename = source.optString("sourceFilename"),
                 targetRelativePath = target.optString("relativePath").takeIf { it.isNotBlank() },
-                binary = ManifestFile.fromJson(files.getJSONObject("binary")),
-                cover = files.optJSONObject("cover")?.let(ManifestFile::fromJson), screenshots = screenshots,
+                binary = ManifestFile.fromJson(assets.getJSONObject("binary")),
+                cover = assets.optJSONObject("cover")?.let(ManifestFile::fromJson), screenshots = screenshots,
                 communityId = source.optString("communityId").takeIf { it.isNotBlank() && it != "null" },
             )
         }

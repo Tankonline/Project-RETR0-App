@@ -3,6 +3,7 @@ package com.retr0.projectretr0
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
+import com.retr0.projectretr0.installer.graphics.GraphicsPathValidator
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -167,12 +168,19 @@ class Retr0UserService : IRetr0UserService.Stub() {
         val srcDir = File(source)
         if (!srcDir.exists() || !srcDir.isDirectory) return false
         
-        return try {
-            // Optimization for large folders: use native 'cp -a'
-            val process = Runtime.getRuntime().exec(arrayOf("cp", "-a", "$source/.", destination))
-            process.waitFor() == 0
+        // Plain recursive copy: 'cp -a' would also copy owner/mode/timestamps, which can
+        // leave files the game can't rewrite under Android/data.
+        val nativeOk = try {
+            Runtime.getRuntime().exec(arrayOf("cp", "-r", "$source/.", destination)).waitFor() == 0
         } catch (_: Exception) {
+            false
+        }
+        if (nativeOk) return true
+        return try {
             srcDir.copyRecursively(File(destination), overwrite = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "copyDirectory failed: $source -> $destination", e)
+            false
         }
     }
 
@@ -279,6 +287,138 @@ class Retr0UserService : IRetr0UserService.Stub() {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             hashFile(target) == expectedBackupSha256.lowercase()
         }.getOrElse { Log.e(TAG, "Skin restore failed", it); false }
+    }
+
+    // ------------------------------------------------------------------ Graphics Hub
+    // Every reply is "OK ..." or "FAIL stage=<stage> reason=<reason> ..." so the app can log the
+    // exact root cause. Lines are also logged here under RETR0_GRAPHICS (marked "svc").
+
+    /** Why a graphics path is not acceptable, or null when it is. */
+    private fun graphicsPathProblem(path: String, allowTemp: Boolean): String? {
+        if (!isPathAllowed(path)) return "path_not_allowed"
+        val matches = GraphicsPathValidator.isTarget(path) || (allowTemp && GraphicsPathValidator.isTempFile(path))
+        if (!matches) return "not_a_graphics_path"
+        val file = File(path)
+        val parent = file.parentFile ?: return "no_parent"
+        if (Files.isSymbolicLink(parent.toPath())) return "parent_is_symlink"
+        if (!parent.exists()) return "parent_missing"
+        if (!parent.isDirectory) return "parent_not_directory"
+        if (Files.isSymbolicLink(file.toPath())) return "target_is_symlink"
+        if (file.isDirectory) return "target_is_directory"
+        return null
+    }
+
+    /** "uid=.. gid=.. mode=.." for a path, using lstat so symlinks are not followed. */
+    private fun statInfo(file: File): String = try {
+        val st = android.system.Os.lstat(file.path)
+        "uid=${st.st_uid} gid=${st.st_gid} mode=${Integer.toOctalString(st.st_mode and 0xFFF)}"
+    } catch (e: Exception) {
+        "stat_failed=${e.javaClass.simpleName}"
+    }
+
+    private fun gfxLog(error: Boolean, code: String, text: String) {
+        val line = "code=$code svc uid=${android.os.Process.myUid()} $text"
+        if (error) Log.e(GraphicsPathValidator.LOG_TAG, line) else Log.i(GraphicsPathValidator.LOG_TAG, line)
+    }
+
+    private fun quote(text: String?): String = "\"" + text.orEmpty().replace('"', '\'').replace('\n', ' ') + "\""
+
+    override fun getGraphicsApiVersion(): Int = GraphicsPathValidator.SERVICE_API
+
+    override fun publishGraphicsFile(sourcePath: String, targetPath: String, expectedSha256: String): String {
+        val startedAt = SystemClock.elapsedRealtime()
+        val target = File(targetPath)
+        val name = "${target.parentFile?.name}/${target.name}"
+        val temp = File(target.parentFile, GraphicsPathValidator.tempNameFor(target.name, System.nanoTime()))
+        fun fail(stage: String, reason: String, extra: String = ""): String {
+            val parent = target.parentFile
+            val folder = "folder[${parent?.let(::statInfo)} canWrite=${parent?.canWrite()} freeMB=${(parent?.usableSpace ?: 0L) / (1024 * 1024)}]"
+            val targetInfo = "targetFile[exists=${target.exists()}${if (target.exists()) " " + statInfo(target) else ""}]"
+            val reply = "FAIL stage=$stage reason=$reason${if (extra.isBlank()) "" else " $extra"} target=$name $folder $targetInfo ms=${SystemClock.elapsedRealtime() - startedAt}"
+            gfxLog(true, "GFX_S031", reply)
+            return reply
+        }
+        graphicsPathProblem(targetPath, allowTemp = false)?.let { return fail("validate_target", it) }
+        if (!isPathAllowed(sourcePath)) return fail("validate_source", "source_not_allowed", "source=${quote(sourcePath)}")
+        if (!expectedSha256.isSha256()) return fail("validate_args", "bad_expected_sha")
+        val expected = expectedSha256.lowercase()
+        val source = File(sourcePath)
+        try {
+            if (!source.exists()) return fail("validate_source", "source_missing", "source=${source.name}")
+            if (Files.isSymbolicLink(source.toPath())) return fail("validate_source", "source_is_symlink", "source=${source.name}")
+            if (!source.isFile) return fail("validate_source", "source_not_file", "source=${source.name}")
+            val sourceHash = try {
+                hashFile(source)
+            } catch (e: Exception) {
+                return fail("read_source", "${e.javaClass.simpleName}: ${quote(e.message)}", "source=${source.name}")
+            }
+            if (sourceHash != expected) {
+                return fail("validate_source", "source_hash_mismatch", "expected=${expected.take(8)} actual=${sourceHash.take(8)} bytes=${source.length()}")
+            }
+            try {
+                FileInputStream(source).use { input -> FileOutputStream(temp).use { output -> input.copyTo(output); output.fd.sync() } }
+            } catch (e: Exception) {
+                return fail("write_temp", "${e.javaClass.simpleName}: ${quote(e.message)}", "temp=${temp.name} tempExists=${temp.exists()} tempBytes=${temp.length()}")
+            }
+            val tempHash = runCatching { hashFile(temp) }.getOrDefault("")
+            if (tempHash != expected) {
+                return fail("verify_temp", "temp_hash_mismatch", "expected=${expected.take(8)} actual=${tempHash.take(8).ifEmpty { "none" }} sourceBytes=${source.length()} tempBytes=${temp.length()}")
+            }
+            try {
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (e: Exception) {
+                return fail("rename", "${e.javaClass.simpleName}: ${quote(e.message)}", "temp=${temp.name} tempExists=${temp.exists()}")
+            }
+            val finalHash = runCatching { hashFile(target) }.getOrDefault("")
+            if (finalHash != expected) {
+                return fail("verify_target", "target_hash_mismatch", "expected=${expected.take(8)} actual=${finalHash.take(8).ifEmpty { "none" }}")
+            }
+            val reply = "OK bytes=${target.length()} ${statInfo(target)} ms=${SystemClock.elapsedRealtime() - startedAt}"
+            gfxLog(false, "GFX_S030", "target=$name $reply")
+            return reply
+        } catch (e: Exception) {
+            return fail("unexpected", "${e.javaClass.simpleName}: ${quote(e.message)}")
+        } finally {
+            if (temp.exists()) temp.delete()
+        }
+    }
+
+    override fun deleteGraphicsFile(targetPath: String): String {
+        val file = File(targetPath)
+        val name = "${file.parentFile?.name}/${file.name}"
+        fun fail(stage: String, reason: String): String {
+            val reply = "FAIL stage=$stage reason=$reason target=$name exists=${file.exists()}${if (file.exists()) " " + statInfo(file) else ""}"
+            gfxLog(true, "GFX_S033", reply)
+            return reply
+        }
+        graphicsPathProblem(targetPath, allowTemp = true)?.let { return fail("validate_target", it) }
+        if (!file.exists()) return "OK already_absent"
+        if (!file.isFile) return fail("validate_target", "not_a_regular_file")
+        return try {
+            if (file.delete()) {
+                gfxLog(false, "GFX_S032", "target=$name deleted=true")
+                "OK deleted"
+            } else {
+                fail("delete", "delete_returned_false folder[${file.parentFile?.let(::statInfo)} canWrite=${file.parentFile?.canWrite()}]")
+            }
+        } catch (e: Exception) {
+            fail("delete", "${e.javaClass.simpleName}: ${quote(e.message)}")
+        }
+    }
+
+    override fun graphicsDiagnostics(packageRoot: String): String {
+        val allowedRoots = listOf("/storage/emulated/0/Android/data/com.ea.games.r3_row", "/storage/emulated/0/Android/data/com.ea.games.r3_na")
+        if (packageRoot !in allowedRoots) return "diagnostics=refused"
+        fun dir(rel: String): String {
+            val f = File(packageRoot, rel)
+            if (!f.exists()) return "$rel[missing]"
+            val count = f.list()?.size ?: -1
+            return "$rel[${statInfo(f)} canWrite=${f.canWrite()} entries=$count symlink=${Files.isSymbolicLink(f.toPath())}]"
+        }
+        val selinux = runCatching { File("/proc/self/attr/current").readText().trim().trim('\u0000') }.getOrDefault("?")
+        val free = File(packageRoot).usableSpace / (1024 * 1024)
+        return "svcUid=${android.os.Process.myUid()} selinux=$selinux sdk=${android.os.Build.VERSION.SDK_INT} freeMB=$free " +
+            listOf("files/.depot/eds", "files/.depot/feats", "files/apk/res/eds", "files/apk/res/feats").joinToString(" ") { dir(it) }
     }
 
     private fun isValidSkinTarget(path: String): Boolean {
@@ -579,9 +719,20 @@ class Retr0UserService : IRetr0UserService.Stub() {
 
     override fun isPackageRunning(packageName: String): Boolean {
         return try {
+            val pidof = runCatching {
+                val process = Runtime.getRuntime().exec(arrayOf("pidof", packageName))
+                val output = process.inputStream.bufferedReader().readText().trim()
+                process.waitFor() == 0 && output.isNotEmpty()
+            }.getOrNull()
+            if (pidof == true) return true
+            // Fallback / confirmation: match the process-name column exactly (main or ":sub" processes).
             val process = Runtime.getRuntime().exec(arrayOf("ps", "-A"))
             val output = process.inputStream.bufferedReader().readText()
-            output.contains(packageName)
+            process.waitFor()
+            output.lineSequence().any { line ->
+                val name = line.trim().substringAfterLast(' ')
+                name == packageName || name.startsWith("$packageName:")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to check if $packageName is running", e)
             false

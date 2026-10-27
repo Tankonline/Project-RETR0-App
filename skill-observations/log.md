@@ -127,3 +127,33 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Derive action availability from the remote lifecycle and operation state, while showing local install/revert state as independent messaging and controls.
 
 **Principle:** Independent state machines should not share disabling conditions merely because they are rendered on the same details screen.
+
+### Observation 9: Treat graphics configuration swaps as transactional and lifecycle-aware
+
+**Status:** OPEN
+**Date:** 2026-10-25
+**Session context:** Investigating an RR3 black screen after applying and reverting a graphics preset.
+**Skill:** Android development workflow
+**Type:** open-source
+**Phase/Area:** Privileged game-file mutation and recovery
+
+**Issue:** The graphics workflow copied files directly into active game configuration directories without stopping RR3, did not verify every copy, and treated directory deletion/copy results as successful enough to report completion. A failed or partially applied configuration could therefore remain active after a nominal revert.
+
+**Suggested improvement:** Stop the target process before mutation, resolve the package/path pair once, verify all expected file operations, and fail visibly on partial restore rather than reporting success.
+
+**Principle:** Destructive multi-file updates should be lifecycle-aware, all-or-nothing from the caller's perspective, and verified before reporting success.
+
+### Observation 10: Asset repair must use the same lifecycle and verification contract as graphics restore
+
+**Status:** OPEN
+**Date:** 2026-10-25
+**Session context:** Auditing the complete Graphics Hub and adjacent RR3 asset-repair path for black-screen causes.
+**Skill:** Android development workflow
+**Type:** open-source
+**Phase/Area:** Game asset repair and recovery
+
+**Issue:** The asset-repair path had a separate implementation from graphics restore and previously ignored delete and copy return values. That allowed a partial `eds` or `feats` repair to be reported as successful, leaving RR3 with an incomplete configuration.
+
+**Suggested improvement:** Share the same package resolution, process-stop precondition, directory preparation, checked copy steps, and failure reporting across all game configuration repair paths.
+
+**Principle:** Recovery paths should enforce the same safety and verification invariants as the mutation path they repair.

@@ -35,9 +35,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.retr0.projectretr0.data.skins.SkinRepository
 import com.retr0.projectretr0.data.skins.local.LocalSkinRepository
+import com.retr0.projectretr0.domain.skins.SkinTransactionCoordinator
 import com.retr0.projectretr0.ui.components.*
 import com.retr0.projectretr0.ui.theme.*
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -46,7 +48,7 @@ data class ImportState(val step: Int = 1, val source: SelectedSkinSource? = null
 private const val CROP_WIZARD_LOG_TAG = "SkinCropWizard"
 
 @Composable
-fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 1, modifier: Modifier = Modifier, browserSource: SkinTargetBrowserSource = SkinTargetBrowserSource { _, _ -> BrowserResult.Error("Privileged service is disconnected.") }, onTargetBrowserVisibilityChange: (Boolean) -> Unit = {}) {
+fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 1, modifier: Modifier = Modifier, browserSource: SkinTargetBrowserSource = SkinTargetBrowserSource { _, _ -> BrowserResult.Error("Privileged service is disconnected.") }, onTargetBrowserVisibilityChange: (Boolean) -> Unit = {}, service: com.retr0.projectretr0.IRetr0UserService? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(ImportState(step = initialStep)) }
@@ -61,7 +63,11 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
     var manualImageCropRequest by remember { mutableStateOf<ImageCropRequest?>(null) }
     val imageCache = remember(context) { SkinImportCache(context) }
     val imageProcessor = remember(context, imageCache) { SkinImageProcessor(context.contentResolver, imageCache) }
-    val viewModel = remember(context) { SkinImportViewModel(LocalSkinRepository(context), SkinRepository(context)) }
+    val localRepository = remember(context) { LocalSkinRepository(context) }
+    val viewModel = remember(context, localRepository) { SkinImportViewModel(localRepository, SkinRepository(context)) }
+    val transactionCoordinator = remember(context, localRepository) {
+        SkinTransactionCoordinator(localRepository, File("/storage/emulated/0/Documents/ProjectRETR0/SkinBackups"))
+    }
     val importProgress by viewModel.progress.collectAsState()
     var finishing by remember { mutableStateOf(false) }
     DisposableEffect(imageCache) { onDispose { } }
@@ -192,7 +198,7 @@ fun SkinImportWizard(onBack: () -> Unit, onDone: () -> Unit, initialStep: Int = 
                 4 -> { SectionHeader("Options", Icons.Filled.Tune); UploadOptionsCard(state.apply, state.upload, { state = state.copy(apply = it) }, { state = state.copy(upload = it) }); if (state.upload) CommunityGuidelinesCard(state.guidelines) { state = state.copy(guidelines = it) }; SectionHeader("Summary", Icons.Filled.Summarize); RetroCard { DataRow("Skin", name); DataRow("Source", state.source?.fileName ?: "Not selected"); DataRow("Vehicle", "${state.vehicle} · Exterior livery"); DataRow("Package", state.gamePackage.short); DataRow("Target", state.target?.relativePath ?: "Not selected"); DataRow("Cover", if (state.images.any { it.role == SkinImageRole.COVER }) "Selected" else "Not selected"); DataRow("Screenshots", state.images.count { it.role == SkinImageRole.SCREENSHOT }.toString()) }; when (val progress = importProgress) { is ImportProgress.Running -> { LinearProgressIndicator({ progress.percent / 100f }, Modifier.fillMaxWidth()); Text(progress.message, color = RetroTextMuted) }; is ImportProgress.Failed -> Text(progress.message, color = RetroDanger); else -> Unit } }
             }; Spacer(Modifier.height(12.dp))
         }
-        Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton(if (state.step == 1) "Cancel" else "Back", Modifier.weight(1f)) { if (!finishing) { if (state.step == 1) { imageCache.cleanup(); onBack() } else state = state.copy(step = state.step - 1) } }; Box(Modifier.weight(1f)) { PrimaryButton(if (state.step < 4) "Continue" else if (finishing) "Saving..." else "Finish", Modifier.fillMaxWidth()) { if (valid && !finishing) { if (state.step < 4) state = state.copy(step = state.step + 1) else scope.launch { finishing = true; viewModel.finish(state, name, creator, description).onSuccess { imageCache.cleanup(); onDone() }; finishing = false } } } } }
+        Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SecondaryButton(if (state.step == 1) "Cancel" else "Back", Modifier.weight(1f)) { if (!finishing) { if (state.step == 1) { imageCache.cleanup(); onBack() } else state = state.copy(step = state.step - 1) } }; Box(Modifier.weight(1f)) { PrimaryButton(if (state.step < 4) "Continue" else if (finishing) "Saving..." else "Finish", Modifier.fillMaxWidth()) { if (valid && !finishing) { if (state.step < 4) state = state.copy(step = state.step + 1) else scope.launch { finishing = true; viewModel.finish(state, name, creator, description, service, transactionCoordinator).onSuccess { imageCache.cleanup(); onDone() }; finishing = false } } } } }
     }
 }
 

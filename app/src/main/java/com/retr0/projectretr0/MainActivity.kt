@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -78,6 +80,10 @@ import com.retr0.projectretr0.ui.skins.CarSkinsTab
 import com.retr0.projectretr0.ui.skins.GamePackage
 import com.retr0.projectretr0.ui.theme.*
 import com.retr0.projectretr0.installer.persistence.DownloadDatabase
+import com.retr0.projectretr0.installer.graphics.GraphicsPathValidator
+import com.retr0.projectretr0.installer.graphics.HdrLevel
+import com.retr0.projectretr0.installer.graphics.HdrScan
+import com.retr0.projectretr0.installer.graphics.HdrState
 import kotlinx.coroutines.*
 import java.util.concurrent.TimeUnit
 import java.io.File
@@ -101,6 +107,21 @@ class MainActivity : ComponentActivity() {
         private const val CODE_PACKAGE_VERIFIED = "PKG_MIGRATION_I002"
         private const val CODE_PACKAGE_MISMATCH = "PKG_MIGRATION_E001"
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 1000
+
+        /** Shizuku key for the app's own helper. The scheduled backup uses its own tag, so neither can kill the other. */
+        const val MAIN_HELPER_TAG = "retr0-main"
+
+        /**
+         * Process-wide: true once this app process has replaced any existing helper with a fresh one.
+         * Activity recreation (rotation, reopening while a job runs) must not kill a helper in use.
+         */
+        @Volatile var freshHelperRequested = false
+
+        /** Screens whose back arrow system Back follows (Music slots handles its own back inside folders). */
+        val BACKABLE_MODES = setOf(AppMode.MUSIC, AppMode.GRAPHICS, AppMode.SAVES, AppMode.DIAGNOSTICS, AppMode.EXPERIMENTAL_GRAPHICS, AppMode.STORAGE)
+
+        /** The Android quality presets shown in the Graphics screen (label to preset id). */
+        val ANDROID_PRESETS = listOf("Low" to "AndroidLow", "Medium" to "AndroidMid", "Medium 2" to "AndroidMid2", "High" to "AndroidHigh", "Xtra High" to "AndroidXtraHigh", "Ultra Wide" to "AndroidUltraWide")
     }
 
     enum class AppMode {
@@ -111,10 +132,55 @@ class MainActivity : ComponentActivity() {
         AI_CHAT,
         EXPERIMENTAL_GRAPHICS,
         MUSIC_SLOTS,
-        STORAGE
+        STORAGE,
+        // Dashboard hubs promoted to their own screens (opened from the Home cards / System list).
+        MUSIC,
+        GRAPHICS,
+        SAVES,
+        DIAGNOSTICS,
     }
 
     private var currentMode by mutableStateOf(AppMode.SELECTION)
+
+    /** Where each screen's back arrow returns to, recorded when the screen is opened with [openMode]. */
+    private val modeReturn = mutableStateMapOf<AppMode, AppMode>()
+
+    /** Opens [target] and remembers the current screen so Back returns to it. */
+    private fun openMode(target: AppMode) {
+        if (target == currentMode) return
+        modeReturn[target] = currentMode
+        Log.i(TAG, "code=NAV_I001 stage=open from=${currentMode.name} to=${target.name}")
+        currentMode = target
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(NavStateCodec.KEY_MODE, currentMode.name)
+        outState.putString(NavStateCodec.KEY_RETURN, NavStateCodec.encodeReturns(modeReturn))
+        Log.i(TAG, "code=NAV_I003 stage=save mode=${currentMode.name} returns=${modeReturn.size}")
+    }
+
+    /** Reopens the screen that was showing when Android closed or rebuilt the app. A deep link handled later still wins. */
+    private fun restoreNavState(saved: Bundle?) {
+        if (saved == null) return
+        val rawMode = saved.getString(NavStateCodec.KEY_MODE)
+        val mode = NavStateCodec.decodeMode(rawMode)
+        if (mode == null) {
+            Log.w(TAG, "code=NAV_W001 stage=restore result=fallback saved=${rawMode ?: "none"} mode=${currentMode.name}")
+            return
+        }
+        modeReturn.clear()
+        modeReturn.putAll(NavStateCodec.decodeReturns(saved.getString(NavStateCodec.KEY_RETURN)))
+        currentMode = mode
+        Log.i(TAG, "code=NAV_I004 stage=restore mode=${mode.name} returns=${modeReturn.size}")
+    }
+
+    /** Back from the current screen: to the screen that opened it, else [fallback]. */
+    private fun goBack(fallback: AppMode = AppMode.DASHBOARD) {
+        val to = modeReturn.remove(currentMode) ?: fallback
+        Log.i(TAG, "code=NAV_I002 stage=back from=${currentMode.name} to=${to.name}")
+        currentMode = to
+    }
     private var service: IRetr0UserService? = null
     private var isServiceBound by mutableStateOf(value = false)
     private var isShizukuRunning by mutableStateOf(value = false)
@@ -149,6 +215,12 @@ class MainActivity : ComponentActivity() {
     private var backedUpSlots by mutableStateOf<Set<String>>(emptySet())
     
     private var availablePresets by mutableStateOf<List<String>>(emptyList())
+    /** Graphics Hub "Full HDR" switch: off = HDR fix level B, on = level C. Saved in retr0_prefs. */
+    /** HDR level used for applies and restores (the Hub's A/B/C switches). Synced to what the scan finds. */
+    private var graphicsHdrLevel by mutableStateOf(HdrLevel.B)
+    /** Last scan of the game files; null = not scanned yet or unavailable. */
+    private var graphicsHdrScan by mutableStateOf<HdrScan?>(null)
+    private var graphicsHdrScanning by mutableStateOf(false)
     
     private var isSystemStatusLoading by mutableStateOf(value = true)
     private var installationId by mutableStateOf("Loading...")
@@ -203,6 +275,8 @@ class MainActivity : ComponentActivity() {
     private var userServiceBinder: IBinder? = null
     private var bindInProgress = false
     private var activityStarted = false
+    /** How many times an outdated Shizuku helper was killed and re-bound in this activity. */
+    private var staleHelperRestarts = 0
 
     private val installServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -236,6 +310,33 @@ class MainActivity : ComponentActivity() {
                 handleUserServiceLost("Shizuku returned an invalid RETR0 binder")
                 scheduleUserServiceBindRetry()
                 return
+            }
+            // Shizuku can keep an older helper process alive after an update (e.g. Android Studio
+            // "Apply Changes" or a cached service record). Ask the helper its API version and, if it
+            // is outdated, kill it and bind a fresh one built from the installed APK.
+            val helperApi = runCatching { IRetr0UserService.Stub.asInterface(binder).getGraphicsApiVersion() }.getOrDefault(0)
+            if (helperApi < GraphicsPathValidator.SERVICE_API) {
+                if (staleHelperRestarts < 1) {
+                    staleHelperRestarts++
+                    Log.w(GraphicsPathValidator.LOG_TAG, "code=GFX_W100 stage=helper_version_check helperApi=$helperApi required=${GraphicsPathValidator.SERVICE_API} action=restart_helper")
+                    bindInProgress = false
+                    userServiceBindJob?.cancel()
+                    val connection: ServiceConnection = this
+                    runCatching { Shizuku.unbindUserService(userServiceArgs, connection, true) }
+                        .onFailure { Log.w(TAG, "Stale RETR0 helper unbind failed", it) }
+                    lifecycleScope.launch {
+                        delay(1_000)
+                        bindRetr0Service()
+                    }
+                    return
+                }
+                // A fresh helper process still reports old code: the installed APK's compiled code is
+                // stale. Android Studio's optimized deploy does this; Shizuku documents that "Always
+                // install with package manager" must be enabled for user services to get new code.
+                Log.e(GraphicsPathValidator.LOG_TAG, "code=GFX_E100 stage=helper_version_check helperApi=$helperApi required=${GraphicsPathValidator.SERVICE_API} action=restart_failed cause=stale_installed_code hint=android_studio_always_install_with_package_manager")
+                Toast.makeText(this@MainActivity, "The RETR0 Shizuku helper is still old code. In Android Studio enable \"Always install with package manager\" (Run > Edit Configurations > app) and run again.", Toast.LENGTH_LONG).show()
+            } else {
+                Log.i(GraphicsPathValidator.LOG_TAG, "code=GFX_I100 stage=helper_version_check helperApi=$helperApi required=${GraphicsPathValidator.SERVICE_API} restarts=$staleHelperRestarts result=ok")
             }
             userServiceBinder = binder
             runCatching {
@@ -274,9 +375,53 @@ class MainActivity : ComponentActivity() {
             .daemon(false)
             .debuggable(BuildConfig.DEBUG)
             .processNameSuffix("retr0")
+            .tag(MAIN_HELPER_TAG)
             // Increment when the UserService implementation or its Application setup changes.
             // Shizuku uses this to invalidate a previously cached service process.
-            .version(5)
+            .version(7)
+    }
+
+    /** Untagged args used by builds before the helper had a tag; only used to remove that old helper. */
+    private val legacyUserServiceArgs by lazy {
+        Shizuku.UserServiceArgs(ComponentName(packageName, Retr0UserService::class.java.name))
+            .processNameSuffix("retr0")
+    }
+
+    /** "Refresh privileged services": kill the current helper and bind a new one. */
+    private fun restartPrivilegedHelper() {
+        if (InstallServiceState.busy) {
+            Toast.makeText(this, "Wait for the current task to finish first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Log.i(GraphicsPathValidator.LOG_TAG, "code=GFX_I102 stage=manual_helper_restart")
+        bindInProgress = false
+        userServiceBindJob?.cancel()
+        runCatching { Shizuku.unbindUserService(userServiceArgs, serviceConnection, true) }
+        runCatching { Shizuku.unbindUserService(legacyUserServiceArgs, null, true) }
+        handleUserServiceLost("Restarting RETR0 privileged service...")
+        staleHelperRestarts = 0
+        freshHelperRequested = true
+        lifecycleScope.launch {
+            delay(1_000)
+            bindRetr0Service()
+        }
+    }
+
+    /**
+     * Once per launch: kill any helper left over from an earlier run (including the old
+     * untagged one) so this session always talks to a freshly started helper.
+     */
+    private fun replaceHelperOncePerProcess() {
+        if (freshHelperRequested) return
+        freshHelperRequested = true
+        val legacy = runCatching { Shizuku.unbindUserService(legacyUserServiceArgs, null, true) }
+        val main = runCatching { Shizuku.unbindUserService(userServiceArgs, null, true) }
+        Log.i(
+            GraphicsPathValidator.LOG_TAG,
+            "code=GFX_I101 stage=fresh_helper action=remove_existing legacyRemoved=${legacy.isSuccess} mainRemoved=${main.isSuccess}" +
+                (legacy.exceptionOrNull()?.let { " legacyError=${it.javaClass.simpleName}" } ?: "") +
+                (main.exceptionOrNull()?.let { " mainError=${it.javaClass.simpleName}" } ?: ""),
+        )
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
@@ -314,6 +459,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // A real launch (not a rotation/recreate) gets a fresh Shizuku helper, even when the app
+        // process survived because the background service kept it alive. Never mid-task.
+        if (savedInstanceState == null && !InstallServiceState.busy) freshHelperRequested = false
+        Log.i(GraphicsPathValidator.LOG_TAG, "code=GFX_I103 stage=activity_create freshLaunch=${savedInstanceState == null} taskRunning=${InstallServiceState.busy} willReplaceHelper=${!freshHelperRequested}")
         val runtimePackage = packageName
         if (runtimePackage == EXPECTED_PACKAGE) {
             Log.i(PACKAGE_LOG_TAG, "code=$CODE_PACKAGE_VERIFIED stage=package_verified package=$runtimePackage")
@@ -321,6 +470,7 @@ class MainActivity : ComponentActivity() {
             Log.e(PACKAGE_LOG_TAG, "code=$CODE_PACKAGE_MISMATCH stage=package_mismatch expected=$EXPECTED_PACKAGE actual=$runtimePackage")
         }
         Log.i(TAG, "MainActivity.onCreate")
+        restoreNavState(savedInstanceState)
 
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
@@ -353,6 +503,9 @@ class MainActivity : ComponentActivity() {
 
                 val prefs = getSharedPreferences("retr0_prefs", MODE_PRIVATE)
                 isSmartBackupEnabled = prefs.getBoolean("smart_backup", false)
+                // Older builds stored a "Full HDR" on/off switch: on = level C, off = level B.
+                graphicsHdrLevel = prefs.getString("graphics_hdr_level", null)?.let { v -> HdrLevel.entries.firstOrNull { it.name == v } }
+                    ?: if (prefs.getBoolean("graphics_full_hdr", false)) HdrLevel.C else HdrLevel.B
                 lastBackupStatus = prefs.getString("last_backup_status", "Never") ?: "Never"
                 
                           }
@@ -608,12 +761,16 @@ class MainActivity : ComponentActivity() {
             bottomBar = {
                 if (currentMode != AppMode.EXPERIMENTAL_GRAPHICS && currentMode != AppMode.SELECTION && !skinsFullScreen) {
                     RetroBottomBar(
-                        selectedIndex = when(currentMode) {
-                            AppMode.DASHBOARD -> 0
+                        selectedIndex = when (currentMode) {
+                            // Home and the screens opened from it.
+                            AppMode.DASHBOARD, AppMode.MUSIC, AppMode.MUSIC_SLOTS, AppMode.GRAPHICS, AppMode.SAVES, AppMode.DIAGNOSTICS -> 0
                             AppMode.COMMUNITY -> 1
-                            AppMode.SKIN_MODS, AppMode.STORAGE -> 2
+                            AppMode.SKIN_MODS -> 2
+                            // Storage opens from Home (status strip) or from Mods; highlight whichever opened it.
+                            AppMode.STORAGE -> if (modeReturn[AppMode.STORAGE] == AppMode.SKIN_MODS) 2 else 0
                             AppMode.AI_CHAT -> 3
-                            else -> 0
+                            // The bar is hidden on these.
+                            AppMode.SELECTION, AppMode.EXPERIMENTAL_GRAPHICS -> 0
                         },
                         items = listOf(
                             RetroNavItem("Home", Icons.Filled.Home) { currentMode = AppMode.DASHBOARD },
@@ -632,6 +789,11 @@ class MainActivity : ComponentActivity() {
                     .consumeWindowInsets(innerPadding),
                 color = MaterialTheme.colorScheme.background
             ) {
+                val tasksIdle = installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED
+                // System back on screens opened from Home goes back instead of closing the app.
+                BackHandler(enabled = currentMode in BACKABLE_MODES) {
+                    goBack(if (currentMode == AppMode.STORAGE) AppMode.SKIN_MODS else AppMode.DASHBOARD)
+                }
                 when (currentMode) {
                     AppMode.SELECTION -> GameSelectionScreen()
                     AppMode.DASHBOARD -> RR3Dashboard(installProgress)
@@ -642,7 +804,7 @@ class MainActivity : ComponentActivity() {
                         LaunchedEffect(Unit) { modsOpenOnBackups = false }
                         ModsHomeScreen(
                             kind = modsKind, onKind = { modsKind = it }, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service,
-                            onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onStorage = { currentMode = AppMode.STORAGE }, onConnect = ::requestShizukuPermission, onFullScreenChange = { skinsFullScreen = it },
+                            onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onStorage = { openMode(AppMode.STORAGE) }, onConnect = ::requestShizukuPermission, onFullScreenChange = { skinsFullScreen = it },
                             initialSkinSection = if (openBackups) SkinModsSection.BACKUPS else SkinModsSection.OVERVIEW,
                             initialCarSection = if (openBackups) CarModelsSection.BACKUPS else CarModelsSection.OVERVIEW,
                         )
@@ -650,7 +812,7 @@ class MainActivity : ComponentActivity() {
                     AppMode.STORAGE -> StorageScreen(
                         service = service, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW,
                         operationsIdle = !isClearingTempFiles && (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED),
-                        onBack = { currentMode = AppMode.SKIN_MODS },
+                        onBack = { goBack(AppMode.SKIN_MODS) },
                         onReviewBackups = { modsOpenOnBackups = true; currentMode = AppMode.SKIN_MODS },
                         onStorageChanged = ::updateStorageStatus,
                         onConnect = ::requestShizukuPermission,
@@ -660,6 +822,10 @@ class MainActivity : ComponentActivity() {
                         (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED)
                     )
                     AppMode.MUSIC_SLOTS -> MusicSlotsScreen()
+                    AppMode.MUSIC -> MusicHubScreen(installProgress)
+                    AppMode.GRAPHICS -> GraphicsHubScreen(installProgress, tasksIdle)
+                    AppMode.SAVES -> SaveHubScreen(installProgress, tasksIdle)
+                    AppMode.DIAGNOSTICS -> DiagnosticsScreen(installProgress, tasksIdle && !isInstallServiceConnecting)
                 }
             }
         }
@@ -879,33 +1045,8 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun RR3Dashboard(installProgress: InstallProgress) {
         val isUiIdle = installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED
-
-        val characterPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> 
-            uri?.let { startBackgroundInstall("CHARACTER", uri = it) } 
-        }
-        val docPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> 
-            uri?.let { startBackgroundInstall("DOC", uri = it) } 
-        }
-        val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> 
-            uri?.let { 
-                musicImportLocalUri = it
-                musicImportSearchQuery = "" // Reset
-                musicImportResults = emptyList()
-                selectedMetadata = null
-                showMusicImportDialog = true
-            }
-        }
-        val audioFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            val target = pendingAudioFileTarget
-            pendingAudioFileTarget = null
-            if (uri != null && target != null) {
-                startBackgroundInstall(
-                    actionType = "APPLY_FROM_FILE",
-                    uri = uri,
-                    targetTrack = target,
-                )
-            }
-        }
+        // The Graphics card shows the applied preset and HDR level, so scan when Home opens and after each task.
+        LaunchedEffect(isUiIdle, service) { if (isUiIdle) refreshGraphicsHdrScan() }
 
         Column(
             Modifier.fillMaxSize().background(RetroBg)
@@ -923,133 +1064,59 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // System Status
-            RetroCard {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { 
-                    if (!isShizukuRunning || !isPermissionGranted) {
-                        requestShizukuPermission()
-                    }
-                }) {
-                    Box(Modifier.size(9.dp).background(if(isShizukuRunning) RetroSuccess else RetroDanger, CircleShape))
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(if(isShizukuRunning) "Shizuku running" else "Shizuku not running", style = MaterialTheme.typography.bodyLarge, color = RetroText)
-                        Text(
-                            when {
-                                !isShizukuRunning -> "Shizuku unavailable"
-                                !isPermissionGranted -> "Tap to grant permission"
-                                isServiceBound -> "Permission granted • RETR0 connected"
-                                else -> "Permission granted • RETR0 not connected"
-                            },
-                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
-                            color = if (isServiceBound) RetroSuccess else RetroTextMuted
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(availableSpace, style = MaterialTheme.typography.bodyLarge, color = RetroText)
-                        Text("available", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
-                    }
-                }
-            }
+            // Main actions (and the privileged-service controls) are hidden while a task runs.
+            val showButtons = isUiIdle && !isInstallServiceConnecting
+
+            DashboardStatusStrip(showButtons)
 
             AnimatedVisibility(visible = installProgress.state != InstallState.IDLE) {
                 InstallProgressSection(installProgress)
             }
-            
+
             if (isInstallServiceConnecting && installProgress.state == InstallState.IDLE) {
                 Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), Alignment.Center) {
                     CircularProgressIndicator(color = RetroAccent)
                 }
             }
 
-            // Main Actions
-            val showButtons = (installProgress.state == InstallState.IDLE || installProgress.state == InstallState.SUCCESS || installProgress.state == InstallState.FAILED) && !isInstallServiceConnecting
-            
             AnimatedVisibility(visible = showButtons) {
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    val privileged = isShizukuRunning && isPermissionGranted
-
-                    if (!isServiceBound) {
-                        PrimaryButton(
-                            text = "Enable Privileged Services",
-                            icon = Icons.Filled.FlashOn
-                        ) {
-                            val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
-                            val permissionGranted = runCatching {
-                                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-                            }.getOrDefault(false)
-                            Log.i(TAG, "code=SHIZUKU_ENABLE_CLICK stage=button binderAvailable=$binderAvailable permissionGranted=$permissionGranted serviceBound=$isServiceBound bindInProgress=$bindInProgress")
-                            when {
-                                !binderAvailable -> {
-                                    updateShizukuStatus()
-                                    Toast.makeText(this@MainActivity, "Shizuku binder is unavailable. Open Shizuku and start its service.", Toast.LENGTH_LONG).show()
-                                }
-                                !permissionGranted -> requestShizukuPermission()
-                                else -> {
-                                    isShizukuRunning = true
-                                    isPermissionGranted = true
-                                    bindRetr0Service(forceRebind = true)
-                                }
-                            }
-                        }
+                    PrimaryButton("Launch Real Racing 3", icon = Icons.Filled.PlayArrow) { launchGame() }
+                    SecondaryButton("Update Project RETR0", Modifier.fillMaxWidth(), icon = Icons.Filled.Download) {
+                        startInstallServiceAction("START_INSTALL")
                     }
+                }
+            }
 
-                    AccentTintButton(
-                        text = "Launch Real Racing 3", 
-                        icon = Icons.Filled.PlayArrow, 
-                        fill = RetroSuccess.copy(alpha = 0.15f), 
-                        stroke = RetroSuccess.copy(alpha = 0.4f), 
-                        contentColor = RetroSuccess,
-                        modifier = Modifier.fillMaxWidth().height(60.dp)
-                    ) {
-                        launchGame()
+            // Feature hubs
+            Column {
+                SectionHeader("Hubs", Icons.Filled.Dashboard)
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.height(IntrinsicSize.Max)) {
+                        // Mods has no card: it's already in the bottom bar.
+                        RetroHubCard(
+                            title = "Diagnostics", icon = Icons.Filled.Troubleshoot,
+                            status = "Checks, logs and game repair",
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        ) { openMode(AppMode.DIAGNOSTICS) }
+                        RetroHubCard(
+                            title = "Music", icon = Icons.Filled.MusicNote,
+                            status = when (val n = libraryMusic.size) { 0 -> "Swap soundtracks"; 1 -> "1 track in library"; else -> "$n tracks in library" },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        ) { openMode(AppMode.MUSIC) }
                     }
-
-                    if (privileged) {
-                        PrimaryButton("Install Project RETR0", icon = Icons.Filled.Download) { 
-                            service?.let { binder ->
-                                val intent = Intent(this@MainActivity, Retr0InstallService::class.java).apply {
-                                    action = "START_INSTALL"
-                                    val bundle = Bundle()
-                                bundle.putBinder("USER_SERVICE_BINDER", binder.asBinder())
-                                    putExtras(bundle)
-                                }
-                                startForegroundService(intent)
-                                bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
-                            } ?: run {
-                                Toast.makeText(this@MainActivity, "Connect Privileged Services first.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    } else {
-                        SecondaryButton("Install Project RETR0", icon = Icons.Filled.Download, modifier = Modifier.fillMaxWidth()) { 
-                            service?.let { binder ->
-                                val intent = Intent(this@MainActivity, Retr0InstallService::class.java).apply {
-                                    action = "START_INSTALL"
-                                    val bundle = Bundle()
-                                bundle.putBinder("USER_SERVICE_BINDER", binder.asBinder())
-                                    putExtras(bundle)
-                                }
-                                startForegroundService(intent)
-                                bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
-                            } ?: run {
-                                Toast.makeText(this@MainActivity, "Connect Privileged Services first.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        SecondaryButton("Pipeline test", Modifier.weight(1f), icon = Icons.Filled.VerifiedUser) { 
-                            service?.let { binder ->
-                                val intent = Intent(this@MainActivity, Retr0InstallService::class.java).apply {
-                                    action = "START_SAFE_TEST"
-                                    val bundle = Bundle()
-                                bundle.putBinder("USER_SERVICE_BINDER", binder.asBinder())
-                                    putExtras(bundle)
-                                }
-                                startForegroundService(intent)
-                                bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
-                            }
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.height(IntrinsicSize.Max)) {
+                        val (gfxStatus, gfxColor) = graphicsCardStatus()
+                        RetroHubCard(
+                            title = "Graphics", icon = Icons.Filled.Tune, status = gfxStatus, statusColor = gfxColor,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        ) { openMode(AppMode.GRAPHICS) }
+                        RetroHubCard(
+                            title = "Saves", icon = Icons.Filled.Save,
+                            status = "${saveProfiles.size} snapshot${if (saveProfiles.size == 1) "" else "s"} · Auto ${if (isSmartBackupEnabled) "on" else "off"}",
+                            statusColor = if (isSmartBackupEnabled) RetroSuccess else RetroTextMuted,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        ) { openMode(AppMode.SAVES) }
                     }
                 }
             }
@@ -1058,51 +1125,271 @@ class MainActivity : ComponentActivity() {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionHeader("Community & support", Icons.Filled.Favorite)
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    AccentTintButton("Discord", Icons.Filled.Forum, RetroDiscordTint, RetroDiscord.copy(alpha = 0.4f), RetroDiscord, Modifier.weight(1f)) { 
+                    AccentTintButton("Discord", Icons.Filled.Forum, RetroDiscordTint, RetroDiscord.copy(alpha = 0.4f), RetroDiscord, Modifier.weight(1f)) {
                         startActivity(Intent(Intent.ACTION_VIEW, getString(R.string.discord_invite_url).toUri()))
                     }
-                    AccentTintButton("Subscribe", Icons.Filled.Star, RetroGoldTint, RetroGold.copy(alpha = 0.45f), RetroGold, Modifier.weight(1f)) { 
+                    AccentTintButton("Subscribe", Icons.Filled.Star, RetroGoldTint, RetroGold.copy(alpha = 0.45f), RetroGold, Modifier.weight(1f)) {
                         startActivity(Intent(Intent.ACTION_VIEW, "https://www.youtube.com/@Retrospect69".toUri()))
                     }
                 }
             }
 
-            // Music Hub
+            IdentityFooter()
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+
+    /** Home status strip: Shizuku state, helper/HDR chips, tappable free-space figure (opens Storage) and the helper controls. */
+    @Composable
+    private fun DashboardStatusStrip(showControls: Boolean) {
+        RetroCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.weight(1f).clickable { if (!isShizukuRunning || !isPermissionGranted) requestShizukuPermission() },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(9.dp).background(if (isShizukuRunning) RetroSuccess else RetroDanger, CircleShape))
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(if (isShizukuRunning) "Shizuku running" else "Shizuku not running", style = MaterialTheme.typography.bodyLarge, color = RetroText)
+                        Text(
+                            when {
+                                !isShizukuRunning -> "Shizuku unavailable"
+                                !isPermissionGranted -> "Tap to grant permission"
+                                else -> "Permission granted"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp),
+                            color = RetroTextMuted,
+                        )
+                    }
+                }
+                Column(
+                    Modifier.clip(RoundedCornerShape(10.dp)).clickable { openMode(AppMode.STORAGE) }.padding(horizontal = 6.dp, vertical = 2.dp),
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    Text(availableSpace, style = MaterialTheme.typography.bodyLarge, color = RetroText)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("free · Storage", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroAccent)
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Open Storage", tint = RetroAccent, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StatusChip(if (isServiceBound) "RETR0 connected" else "RETR0 not connected", if (isServiceBound) RetroSuccess else RetroTextMuted)
+                val scan = graphicsHdrScan
+                when (val level = scan?.state?.level) {
+                    null -> if (scan != null) StatusChip("No HDR fix", RetroWarning)
+                    else -> StatusChip("HDR ${level.name}", if (scan.mixed) RetroWarning else RetroSuccess)
+                }
+                Spacer(Modifier.weight(1f))
+                if (showControls && isServiceBound) {
+                    Row(
+                        Modifier.clip(RoundedCornerShape(20.dp)).clickable { restartPrivilegedHelper() }.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Refresh, null, tint = RetroAccent, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Refresh", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroAccent)
+                    }
+                }
+            }
+            if (showControls && !isServiceBound) {
+                Spacer(Modifier.height(10.dp))
+                AccentTintButton("Enable privileged services", Icons.Filled.FlashOn, RetroAccentTint, RetroAccent.copy(alpha = 0.4f), RetroAccent, Modifier.fillMaxWidth()) {
+                    val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+                    val permissionGranted = runCatching {
+                        Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                    }.getOrDefault(false)
+                    Log.i(TAG, "code=SHIZUKU_ENABLE_CLICK stage=button binderAvailable=$binderAvailable permissionGranted=$permissionGranted serviceBound=$isServiceBound bindInProgress=$bindInProgress")
+                    when {
+                        !binderAvailable -> {
+                            updateShizukuStatus()
+                            Toast.makeText(this@MainActivity, "Shizuku binder is unavailable. Open Shizuku and start its service.", Toast.LENGTH_LONG).show()
+                        }
+                        !permissionGranted -> requestShizukuPermission()
+                        else -> {
+                            isShizukuRunning = true
+                            isPermissionGranted = true
+                            bindRetr0Service(forceRebind = true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun StatusChip(text: String, color: Color) {
+        Row(
+            Modifier.background(color.copy(alpha = 0.12f), RoundedCornerShape(20.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(6.dp).background(color, CircleShape))
+            Spacer(Modifier.width(5.dp))
+            Text(text, style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = color, maxLines = 1)
+        }
+    }
+
+    /** Status line + colour for the Home Graphics card, from the last scan of the game files. */
+    private fun graphicsCardStatus(): Pair<String, Color> {
+        val scan = graphicsHdrScan ?: return (if (graphicsHdrScanning) "Checking..." else "Connect to read") to RetroTextMuted
+        val preset = scan.activePreset?.let { formatDeviceName(it) } ?: "Device default"
+        return when {
+            scan.state.level == null -> "$preset · no HDR fix" to RetroWarning
+            scan.mixed -> "$preset · mixed HDR" to RetroWarning
+            else -> "$preset · HDR ${scan.state.name}" to RetroSuccess
+        }
+    }
+
+    /** Starts the install service with [action] ("START_INSTALL", "START_SAFE_TEST"), as the Dashboard buttons always have. */
+    private fun startInstallServiceAction(action: String) {
+        service?.let { binder ->
+            val intent = Intent(this@MainActivity, Retr0InstallService::class.java).apply {
+                this.action = action
+                val bundle = Bundle()
+                bundle.putBinder("USER_SERVICE_BINDER", binder.asBinder())
+                putExtras(bundle)
+            }
+            startForegroundService(intent)
+            bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
+        } ?: run {
+            Toast.makeText(this@MainActivity, "Connect Privileged Services first.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Home footer: installation identity with copy and Reset. */
+    @Composable
+    private fun IdentityFooter() {
+        RetroCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box {
+                    SkinAvatar(avatarUrl = null, name = "Me", size = 32.dp, localFile = customPfp?.file, localAvatarRevision = customPfp?.revision)
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(16.dp)
+                            .background(RetroAccent, CircleShape)
+                            .clickable { showPfpEditor = true },
+                        Alignment.Center,
+                    ) { Icon(Icons.Filled.Edit, "Change profile picture", tint = Color.White, modifier = Modifier.size(10.dp)) }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Installation identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isServiceBound) "Secured" else "Local", color = if (isServiceBound) RetroSuccess else RetroTextDim, style = MaterialTheme.typography.labelSmall)
+                    }
+                    Text(
+                        installationId,
+                        color = RetroText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = "Copy ID",
+                    tint = RetroAccent,
+                    modifier = Modifier.size(18.dp).clickable {
+                        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Installation ID", installationId)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(this@MainActivity, "ID copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Text(
+                    "Reset identity",
+                    color = RetroDanger,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.clickable { showResetIdentityDialog = true }.padding(4.dp)
+                )
+            }
+        }
+    }
+
+    /** Shared scrolling layout for the screens opened from Home: header, task progress, content. */
+    @Composable
+    private fun HubScreenScaffold(
+        title: String,
+        subtitle: String,
+        installProgress: InstallProgress,
+        subtitleColor: Color = RetroTextMuted,
+        content: @Composable ColumnScope.() -> Unit,
+    ) {
+        Column(
+            Modifier.fillMaxSize().background(RetroBg)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            RetroScreenHeader(title, onBack = { goBack() }, subtitle = subtitle, subtitleColor = subtitleColor)
+            // Tasks started here report progress here too (they used to run on Home, under its progress card).
+            AnimatedVisibility(visible = installProgress.state != InstallState.IDLE) {
+                InstallProgressSection(installProgress)
+            }
+            content()
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    @Composable
+    fun MusicHubScreen(installProgress: InstallProgress) {
+        val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            uri?.let {
+                musicImportLocalUri = it
+                musicImportSearchQuery = "" // Reset
+                musicImportResults = emptyList()
+                selectedMetadata = null
+                showMusicImportDialog = true
+            }
+        }
+        HubScreenScaffold("Music", "Swap game soundtracks and build a library", installProgress) {
             MusicHubSection(musicPicker)
+        }
+    }
 
-            // Graphics Hub
+    @Composable
+    fun GraphicsHubScreen(installProgress: InstallProgress, isUiIdle: Boolean) {
+        HubScreenScaffold("Graphics", "Override your device tier for hidden quality", installProgress) {
             GraphicsHubSection(isUiIdle)
+        }
+    }
 
-            // Save Hub
+    @Composable
+    fun SaveHubScreen(installProgress: InstallProgress, isUiIdle: Boolean) {
+        val characterPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            uri?.let { startBackgroundInstall("CHARACTER", uri = it) }
+        }
+        val docPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            uri?.let { startBackgroundInstall("DOC", uri = it) }
+        }
+        HubScreenScaffold("Saves", "Snapshots, backups and save import", installProgress) {
             SaveHubSection(isUiIdle)
 
-            // Manual Import
+            // Import (was "Manual import" on Home)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionHeader("Manual import", Icons.Filled.FileUpload)
-                Text("Import external files into the game.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
+                SectionHeader("Import save", Icons.Filled.FileUpload)
+                Text("Import external save files into the game.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     SecondaryButton("Character2.dat", Modifier.weight(1f), icon = Icons.AutoMirrored.Filled.InsertDriveFile) { characterPicker.launch("application/octet-stream") }
                     SecondaryButton(".doc folder", Modifier.weight(1f), icon = Icons.Filled.Folder) { docPicker.launch(null) }
                 }
             }
+        }
+    }
 
-            // Maintenance
+    /** Checks, logs, the pipeline test and the game-asset repair (was "RR3 crash / error fix" on Home). */
+    @Composable
+    fun DiagnosticsScreen(installProgress: InstallProgress, actionsReady: Boolean) {
+        HubScreenScaffold("Diagnostics", "Checks, logs and game repair", installProgress) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionHeader("Maintenance", Icons.Filled.Build)
-                Text("Repair game assets or remove temporary installer downloads.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
-                DangerButton("RR3 crash / error fix", icon = Icons.Filled.ReportProblem) { startBackgroundInstall("REPAIR") }
-                SecondaryButton(
-                    text = "Storage",
-                    modifier = Modifier.fillMaxWidth(),
-                    icon = Icons.Filled.Storage,
-                ) {
-                    currentMode = AppMode.STORAGE
-                }
-            }
-
-            // Diagnostics
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionHeader("Diagnostics", Icons.Filled.Troubleshoot)
+                SectionHeader("Checks", Icons.Filled.Troubleshoot)
                 val diags = listOf(
                     "Directory access" to { runRemoteCall { it.testRR3Access() } },
                     "Write access (legacy)" to { runRemoteCall { it.testRR3Write() } },
@@ -1114,72 +1401,30 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     SecondaryButton("Generate logs", modifier = Modifier.fillMaxWidth()) { generateLogs() }
-                    SecondaryButton("Show device ID", modifier = Modifier.fillMaxWidth()) { 
+                    SecondaryButton("Show device ID", modifier = Modifier.fillMaxWidth()) {
                         @Suppress("HardwareIds")
                         val id = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-                        Toast.makeText(this@MainActivity, "ID: $id", Toast.LENGTH_LONG).show() 
+                        Toast.makeText(this@MainActivity, "ID: $id", Toast.LENGTH_LONG).show()
                     }
                 }
             }
 
-            SectionHeader("Community Identity", Icons.Filled.Fingerprint)
-            // Installation Identity
-            RetroCard {
+            // Hidden while a task runs, as it was on Home.
+            if (actionsReady) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box {
-                            SkinAvatar(avatarUrl = null, name = "Me", size = 32.dp, localFile = customPfp?.file, localAvatarRevision = customPfp?.revision)
-                            Box(
-                                Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .size(16.dp)
-                                    .background(RetroAccent, CircleShape)
-                                    .clickable { showPfpEditor = true },
-                                Alignment.Center,
-                            ) { Icon(Icons.Filled.Edit, "Change profile picture", tint = Color.White, modifier = Modifier.size(10.dp)) }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Installation Identity", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
-                            Text(if (isServiceBound) "Secured" else "Local", color = if (isServiceBound) RetroSuccess else RetroTextDim, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
-                        .background(RetroBg, RoundedCornerShape(11.dp))
-                        .border(1.dp, RetroBorder, RoundedCornerShape(11.dp))
-                        .padding(horizontal = 12.dp, vertical = 10.dp)) {
-                        Text(
-                            installationId,
-                            modifier = Modifier.weight(1f),
-                            color = RetroText,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Icon(
-                            Icons.Filled.ContentCopy,
-                            contentDescription = "Copy ID",
-                            tint = RetroAccent,
-                            modifier = Modifier.size(18.dp).clickable {
-                                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Installation ID", installationId)
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(this@MainActivity, "ID copied to clipboard", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                    }
-                    
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Text(
-                            "Reset Identity",
-                            color = RetroDanger,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.clickable { showResetIdentityDialog = true }.padding(4.dp)
-                        )
+                    SectionHeader("Pipeline", Icons.Filled.VerifiedUser)
+                    Text("Dry-run the install pipeline without changing the game.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
+                    SecondaryButton("Pipeline test", Modifier.fillMaxWidth(), icon = Icons.Filled.VerifiedUser) {
+                        // Silently does nothing without the helper, as before.
+                        if (service != null) startInstallServiceAction("START_SAFE_TEST")
                     }
                 }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("Repair", Icons.Filled.Build)
+                Text("Fixes crashes and errors by restoring the game's graphics assets (keeps your HDR level).", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
+                WarningButton("Repair game assets", icon = Icons.Filled.Build) { startBackgroundInstall("REPAIR", hdrLevel = graphicsHdrLevel) }
             }
         }
     }
@@ -1653,11 +1898,8 @@ class MainActivity : ComponentActivity() {
         var communityTabIndex by remember { mutableIntStateOf(0) }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionHeader("Music hub", Icons.Filled.MusicNote)
-                Text("Swap game soundtracks and build a library.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
-            }
-            
+            SectionHeader("Tracks", Icons.Filled.MusicNote)
+
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 RetroCard {
                     SegmentedTabs(listOf("Core","Extended","Library"), communityTabIndex) { communityTabIndex = it }
@@ -1706,7 +1948,7 @@ class MainActivity : ComponentActivity() {
                 
                 SecondaryButton("View all game track slots", Modifier.fillMaxWidth(), icon = Icons.AutoMirrored.Filled.List) { 
                     refreshMusicSlots()
-                    currentMode = AppMode.MUSIC_SLOTS 
+                    openMode(AppMode.MUSIC_SLOTS)
                 }
                 
             }
@@ -1785,33 +2027,116 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Reads the HDR level in the game files so the A/B/C switches show what is really applied. */
+    private fun refreshGraphicsHdrScan() {
+        val s = service ?: return
+        if (graphicsHdrScanning) return
+        graphicsHdrScanning = true
+        lifecycleScope.launch {
+            val scan = runCatching { Retr0Installer(this@MainActivity, s).scanGraphicsHdr() }.getOrNull()
+            graphicsHdrScan = scan
+            scan?.state?.level?.let { found ->
+                if (found != graphicsHdrLevel) {
+                    graphicsHdrLevel = found
+                    getSharedPreferences("retr0_prefs", MODE_PRIVATE).edit().putString("graphics_hdr_level", found.name).apply()
+                }
+            }
+            Log.i(GraphicsPathValidator.LOG_TAG, "code=GFX_I018 stage=hdr_switches scan=${scan?.state ?: "unavailable"} mixed=${scan?.mixed} selected=${graphicsHdrLevel.name}")
+            graphicsHdrScanning = false
+        }
+    }
+
+    /**
+     * HDR fix level as a single-choice radio group (A, B, C). Picking a level applies it straight away; it
+     * can't be cleared. The selected row comes from scanning the game files, not from the last tap.
+     */
+    @Composable
+    fun HdrLevelSwitches(isUiIdle: Boolean) {
+        // Rescan when the screen opens and whenever a task finishes (any apply/restore may change the level).
+        LaunchedEffect(isUiIdle, service) { if (isUiIdle) refreshGraphicsHdrScan() }
+        val scan = graphicsHdrScan
+        val applied = scan?.state?.level
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("HDR black-screen fix", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), color = RetroText)
+            val (status, warn) = when {
+                graphicsHdrScanning && scan == null -> "Checking the game files..." to false
+                scan == null -> "Couldn't read the game files. Connect Shizuku to see the current level." to true
+                scan.state == HdrState.NONE -> "No HDR fix applied. Most presets show a black screen on Adreno 840 phones. Pick a level." to true
+                scan.mixed -> "Presets have different HDR settings. Pick a level to set them all the same." to true
+                scan.state == HdrState.CUSTOM -> "Custom HDR settings found. Pick a level to replace them." to true
+                scan.state == HdrState.UNKNOWN -> "Couldn't decode the graphics files (different RR3 version?)." to true
+                else -> "Level ${scan.state.name} is applied (${scan.tiers.size} presets checked, ${scan.featsReadable}/${scan.featsChecked} feature files readable)." to false
+            }
+            Text(status, style = MaterialTheme.typography.bodySmall, color = if (warn) RetroWarningText else RetroTextMuted)
+            val rows = listOf(
+                HdrLevel.A to "HDR post-process only. May still be black on Adreno 840.",
+                HdrLevel.B to "Recommended. Adds tonemap and gamma; fixes the black screen.",
+                HdrLevel.C to "All HDR effects: adds HDR reflections and auto exposure.",
+            )
+            Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                rows.forEach { (level, help) ->
+                    RetroRadioRow(
+                        title = "Level ${level.name}",
+                        description = help,
+                        selected = applied == level,
+                        enabled = isUiIdle && service != null,
+                        badge = if (applied == level) "Applied" else null,
+                    ) {
+                        // Selecting the applied level does nothing; picking another applies it (the others go off).
+                        if (applied == level) return@RetroRadioRow
+                        graphicsHdrLevel = level
+                        getSharedPreferences("retr0_prefs", MODE_PRIVATE).edit().putString("graphics_hdr_level", level.name).apply()
+                        Log.i(GraphicsPathValidator.LOG_TAG, "code=GFX_I014 stage=hdr_level_select level=${level.name} was=${scan?.state ?: "unknown"}")
+                        startBackgroundInstall("SET_GRAPHICS_HDR", hdrLevel = level)
+                    }
+                }
+            }
+        }
+    }
+
     @Composable
     fun GraphicsHubSection(isUiIdle: Boolean) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionHeader("Graphics hub", Icons.Filled.Tune)
-                Text("Override your device tier for hidden quality.", style = MaterialTheme.typography.bodyMedium, color = RetroTextMuted)
-            }
-            
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val tiers = listOf("Low" to "AndroidLow","Medium" to "AndroidMid","Medium 2" to "AndroidMid2","High" to "AndroidHigh","Xtra High" to "AndroidXtraHigh","Ultra Wide" to "AndroidUltraWide")
-                tiers.chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        row.forEach { (label, id) ->
-                            RetroChip(label, selected = false, modifier = Modifier.weight(1f)) { 
-                                if (isUiIdle) startBackgroundInstall("APPLY_GRAPHICS", presetName = id) 
-                            }
+        val active = graphicsHdrScan?.activePreset
+        RetroCard { HdrLevelSwitches(isUiIdle) }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SectionHeader("Quality preset", Icons.Filled.Tune)
+            Text(
+                when {
+                    graphicsHdrScan == null -> "Pick a preset to apply it to every Android tier."
+                    active == null -> "Active: device default (no preset applied to every tier)."
+                    else -> "Active: ${formatDeviceName(active)}"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (active != null) RetroSuccess else RetroTextMuted,
+            )
+            ANDROID_PRESETS.chunked(2).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEach { (label, id) ->
+                        RetroChip(label, selected = id == active, subtitle = if (id == active) "Active" else null, modifier = Modifier.weight(1f)) {
+                            if (isUiIdle) startBackgroundInstall("APPLY_GRAPHICS", presetName = id, hdrLevel = graphicsHdrLevel)
                         }
                     }
                 }
-                RetroChip("SimRigTV", selected = false, centered = true, modifier = Modifier.fillMaxWidth()) { 
-                    if (isUiIdle) startBackgroundInstall("APPLY_GRAPHICS", presetName = "SimRigTV") 
-                }
-                OutlineButton("Restore original graphics") { 
-                    if (isUiIdle) startBackgroundInstall("RESTORE_GRAPHICS") 
-                }
-                DangerButton("Other options (experimental)", icon = Icons.Filled.WarningAmber) { currentMode = AppMode.EXPERIMENTAL_GRAPHICS }
             }
+            RetroChip("SimRigTV", selected = active == "SimRigTV", subtitle = if (active == "SimRigTV") "Active" else null, centered = true, modifier = Modifier.fillMaxWidth()) {
+                if (isUiIdle) startBackgroundInstall("APPLY_GRAPHICS", presetName = "SimRigTV", hdrLevel = graphicsHdrLevel)
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SectionHeader("Restore", Icons.Filled.Restore)
+            OutlineButton("Restore original graphics") {
+                if (isUiIdle) startBackgroundInstall("RESTORE_GRAPHICS", hdrLevel = graphicsHdrLevel)
+            }
+            OutlineButton("Restore previous graphics") {
+                if (isUiIdle) startBackgroundInstall("RESTORE_GRAPHICS_BACKUP", backupId = "latest", hdrLevel = graphicsHdrLevel)
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SectionHeader("Experimental", Icons.Filled.Science)
+            WarningButton("Other options (experimental)", icon = Icons.Filled.WarningAmber) { openMode(AppMode.EXPERIMENTAL_GRAPHICS) }
         }
     }
 
@@ -1822,7 +2147,7 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Save, null, tint = RetroAccent, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("SAVE HUB", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
+                    Text("SNAPSHOTS", style = MaterialTheme.typography.labelSmall, color = RetroTextMuted)
                     Spacer(Modifier.weight(1f))
                     Text("Auto", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
                     Spacer(Modifier.width(6.dp))
@@ -1981,22 +2306,16 @@ class MainActivity : ComponentActivity() {
                 .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = RetroTextDim, modifier = Modifier.clickable { currentMode = AppMode.DASHBOARD }); Spacer(Modifier.width(12.dp))
+            RetroScreenHeader("Experimental", onBack = { goBack() }, subtitle = "Other engine options · iOS · tvOS · Mac tiers", subtitleColor = RetroWarningText)
+
+            Row(Modifier.fillMaxWidth().background(RetroWarningTint, RoundedCornerShape(14.dp)).border(1.dp, RetroWarning.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(14.dp)) {
+                Icon(Icons.Filled.WarningAmber, null, tint = RetroWarning, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(11.dp))
                 Column {
-                    Text("Experimental Hub", style = MaterialTheme.typography.titleLarge, color = RetroText)
-                    Text("iOS · tvOS · Mac tiers", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroDangerText)
+                    Text("Non-Android presets", style = MaterialTheme.typography.titleMedium.copy(fontSize = 13.sp), color = RetroWarningText)
+                    Text("May cause glitches, crashes or severe performance drops. Use at your own risk.", style = MaterialTheme.typography.bodyMedium, color = RetroWarningBody)
                 }
             }
-            
-            Row(Modifier.fillMaxWidth().background(RetroDangerTint, RoundedCornerShape(14.dp)).border(1.dp, RetroDanger.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(14.dp)) {
-                Icon(Icons.Filled.WarningAmber, null, tint = RetroDanger, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(11.dp))
-                Column {
-                    Text("Non-Android presets", style = MaterialTheme.typography.titleMedium.copy(fontSize = 13.sp), color = RetroDangerText)
-                    Text("May cause glitches, crashes or severe performance drops. Use at your own risk.", style = MaterialTheme.typography.bodyMedium, color = RetroDangerBody)
-                }
-            }
-            
+
             RetroSearchField(value = query, onValueChange = { query = it }, placeholder = "Search presets…", icon = Icons.Filled.Search)
             
             val familyIcon = mapOf(
@@ -2024,8 +2343,9 @@ class MainActivity : ComponentActivity() {
                             filteredItems.chunked(2).forEach { row ->
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     row.forEach { p -> 
-                                        RetroChip(formatDeviceName(p), modifier = Modifier.weight(1f)) { 
-                                            if (enabled) startBackgroundInstall("APPLY_GRAPHICS", presetName = p) 
+                                        val isActive = p == graphicsHdrScan?.activePreset
+                                        RetroChip(formatDeviceName(p), selected = isActive, subtitle = if (isActive) "Active" else null, modifier = Modifier.weight(1f)) { 
+                                            if (enabled) startBackgroundInstall("APPLY_GRAPHICS", presetName = p, hdrLevel = graphicsHdrLevel) 
                                         } 
                                     }
                                     if (row.size == 1) Spacer(Modifier.weight(1f))
@@ -2175,6 +2495,8 @@ class MainActivity : ComponentActivity() {
         trackFileName: String? = null,
         targetTrack: String? = null,
         presetName: String? = null,
+        hdrLevel: HdrLevel? = null,
+        backupId: String? = null,
         manualLevel: String? = null,
         manualGold: String? = null,
         manualRS: String? = null,
@@ -2205,6 +2527,8 @@ class MainActivity : ComponentActivity() {
                 putExtra("TRACK_FILENAME", trackFileName)
                 putExtra("TARGET_TRACK", targetTrack)
                 putExtra("PRESET_NAME", presetName)
+                putExtra("HDR_LEVEL", hdrLevel?.name)
+                putExtra("BACKUP_ID", backupId)
                 putExtra("ARTWORK_URL", artworkUrl)
                 putExtra("ARTWORK_URI", artworkUri?.toString())
                 putExtra("ARTIST_NAME", artistName)
@@ -2348,6 +2672,7 @@ class MainActivity : ComponentActivity() {
         bindInProgress = true
         shizukuStatus = "Connecting to RETR0 privileged service..."
         Log.i(TAG, "Binding RETR0 user service package=$packageName component=${Retr0UserService::class.java.name}")
+        replaceHelperOncePerProcess()
         runCatching { Shizuku.bindUserService(userServiceArgs, serviceConnection) }
             .onSuccess {
                 // Some OEMs accept the request but delay (or drop) the callback.
@@ -2498,7 +2823,7 @@ class MainActivity : ComponentActivity() {
                     if (explorerPath.isNotEmpty() && query.isBlank()) {
                         explorerPath = explorerPath.dropLast(1)
                     } else {
-                        currentMode = AppMode.DASHBOARD 
+                        goBack(AppMode.MUSIC)
                     }
                 }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = RetroAccent)
