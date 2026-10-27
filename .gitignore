@@ -38,3 +38,11 @@ app/build/
 **/.wrangler/
 /external_backup/
 
+# Sensitive files and generated dependencies
+node_modules/
+*.pem
+*.key
+*.mobileprovision
+credentials*
+
+worker-configuration.d.ts

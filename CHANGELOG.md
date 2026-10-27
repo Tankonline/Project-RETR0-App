@@ -2,6 +2,12 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.1]
+
+### Release notes
+- Prepared the Android app release metadata for V1.1.1 (`versionCode 13`).
+- Retained the existing V1.1.0 Shizuku authorization and privileged-service reliability improvements.
+
 ## [1.1.0]
 
 ### Fixed
