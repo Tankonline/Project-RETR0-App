@@ -80,8 +80,8 @@ class SkinApiClient(
     override suspend fun uploadBinary(id: String, file: File): SkinMutationResponse = uploadFile(skinUrl(id, "binary"), file, "application/octet-stream")
     override suspend fun uploadCover(id: String, file: File, contentType: String): SkinMutationResponse = uploadFile(skinUrl(id, "cover"), file, contentType)
     override suspend fun uploadManifest(id: String, manifest: String): SkinMutationResponse = io {
-        val bytes = manifest.toByteArray()
-        Log.i("SKIN_API", "manifest_upload_start skinId=$id bytes=${bytes.size}")
+        val bytes = manifest.toByteArray(Charsets.UTF_8)
+        Log.i("SKIN_API", "manifest_upload_start method=PUT path=/v1/skins/$id/manifest bytes=${bytes.size}")
         executeSigned("PUT", manifestUrl(id), bytes.toRequestBody(JSON), SkinRequestCanonicalizer.sha256(bytes), parser = SkinApiParser::parseMutation)
     }
     override suspend fun uploadScreenshot(id: String, position: Int, file: File, contentType: String, caption: String): SkinMutationResponse {
@@ -123,7 +123,13 @@ class SkinApiClient(
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val error = SkinApiParser.parseError(body)
-                throw SkinApiException(error?.message ?: "Skin service returned ${response.code}", response.code, error?.code, error?.requestId ?: response.header("X-Request-ID"), error?.duplicateId)
+                val requestId = error?.requestId ?: response.header("X-Request-ID")
+                Log.e(
+                    "SKIN_API",
+                    "request_failed method=${request.method} path=${request.url.encodedPath} status=${response.code} " +
+                        "errorCode=${error?.code ?: "unknown"} requestId=${requestId ?: "unknown"}",
+                )
+                throw SkinApiException(error?.message ?: "Skin service returned ${response.code}", response.code, error?.code, requestId, error?.duplicateId)
             }
             runCatching { parser(body) }.getOrElse { throw SkinApiException("Invalid skin service response", response.code, requestId = response.header("X-Request-ID"), cause = it) }
         }
@@ -137,12 +143,9 @@ class SkinApiClient(
         return v1("skins", id.lowercase(), *segments)
     }
 
-    /** The deployed skin manifest route is outside the /v1 API namespace. */
     private fun manifestUrl(id: String): HttpUrl {
         require(UUID.matches(id)) { "Skin ID must be a UUID" }
-        return baseUrl.toHttpUrl().newBuilder()
-            .addPathSegments("skins/${id.lowercase()}/manifest")
-            .build()
+        return v1("skins", id.lowercase(), "manifest")
     }
     private fun encodedPathAndQuery(url: HttpUrl) = url.encodedPath + (url.encodedQuery?.let { "?$it" } ?: "")
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }

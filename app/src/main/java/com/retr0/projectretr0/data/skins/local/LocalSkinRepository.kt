@@ -65,7 +65,7 @@ class LocalSkinRepository private constructor(
                     "SKIN_IMPORT",
                     "code=SKIN_IMPORT_I002 stage=image_saved role=${image.role} path=${promoted.file.absolutePath} exists=${promoted.file.isFile} bytes=${promoted.size}",
                 )
-                SkinImageEntity(image.id, id, image.role.name, position, request.captions[image.id].orEmpty(), promoted.file.absolutePath, image.mimeType, image.width, image.height, promoted.size, promoted.sha256)
+                SkinImageEntity(UUID.randomUUID().toString(), id, image.role.name, position, request.captions[image.id].orEmpty(), promoted.file.absolutePath, image.mimeType, image.width, image.height, promoted.size, promoted.sha256)
             }
             val entity = LocalSkinEntity(id, request.communityId, request.title.trim(), request.creator.trim(), request.vehicle, request.carDirectory, request.slotKey, request.source.format, canonicalFilename, verified.file.absolutePath, verified.size, verified.sha256, request.target?.absolutePath, request.target?.relativePath, request.gamePackage, System.currentTimeMillis())
             onProgress(75, "Saving library record")

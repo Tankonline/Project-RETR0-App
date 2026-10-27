@@ -142,3 +142,18 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Stop the target process before mutation, resolve the package/path pair once, verify all expected file operations, and fail visibly on partial restore rather than reporting success.
 
 **Principle:** Destructive multi-file updates should be lifecycle-aware, all-or-nothing from the caller's perspective, and verified before reporting success.
+
+### Observation 10: Asset repair must use the same lifecycle and verification contract as graphics restore
+
+**Status:** OPEN
+**Date:** 2026-10-25
+**Session context:** Auditing the complete Graphics Hub and adjacent RR3 asset-repair path for black-screen causes.
+**Skill:** Android development workflow
+**Type:** open-source
+**Phase/Area:** Game asset repair and recovery
+
+**Issue:** The asset-repair path had a separate implementation from graphics restore and previously ignored delete and copy return values. That allowed a partial `eds` or `feats` repair to be reported as successful, leaving RR3 with an incomplete configuration.
+
+**Suggested improvement:** Share the same package resolution, process-stop precondition, directory preparation, checked copy steps, and failure reporting across all game configuration repair paths.
+
+**Principle:** Recovery paths should enforce the same safety and verification invariants as the mutation path they repair.

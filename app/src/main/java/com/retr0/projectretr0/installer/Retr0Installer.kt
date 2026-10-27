@@ -14,6 +14,14 @@ import com.retr0.projectretr0.data.skins.SaveApiClient
 import com.retr0.projectretr0.data.skins.SkinInstallationIdentity
 import com.retr0.projectretr0.data.skins.SkinRequestCanonicalizer
 import com.retr0.projectretr0.data.skins.SkinApiException
+import com.retr0.projectretr0.installer.graphics.GraphicsBackupInfo
+import com.retr0.projectretr0.installer.graphics.GraphicsHubEngine
+import com.retr0.projectretr0.installer.graphics.GraphicsLogcat
+import com.retr0.projectretr0.installer.graphics.GraphicsPaths
+import com.retr0.projectretr0.installer.graphics.GraphicsResult
+import com.retr0.projectretr0.installer.graphics.HdrLevel
+import com.retr0.projectretr0.installer.graphics.HdrScan
+import com.retr0.projectretr0.installer.graphics.ShizukuGraphicsFileOps
 import com.retr0.projectretr0.installer.persistence.DownloadDatabase
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,7 +68,7 @@ class Retr0Installer(
         private const val MANIFEST_URL = "https://pub-f87b4daf1b344ca39c9ba6de6812a777.r2.dev"
         private const val RR3_ROW = "/storage/emulated/0/Android/data/com.ea.games.r3_row"
         private const val RR3_NA = "/storage/emulated/0/Android/data/com.ea.games.r3_na"
-        
+
         // PERSISTENT HUB: Stored in public Documents to survive uninstalls/updates
         private const val SAVE_HUB_PATH = "/storage/emulated/0/Documents/ProjectRETR0/Backups"
         private const val MUSIC_HUB_PATH = "/storage/emulated/0/Documents/ProjectRETR0/MusicBackups"
@@ -450,21 +458,30 @@ class Retr0Installer(
         }
     }
 
-    fun runAssetRepair(): Boolean {
+    /** Crash / error fix: factory graphics with exactly HDR [level] (the Hub's selection, B by default). */
+    fun runAssetRepair(level: HdrLevel = HdrLevel.B): Boolean {
         val s = service ?: run { fail("Not connected."); return false }
         return try {
-            val rr3Path = getRr3Path()
+            val rr3Package = resolveGraphicsPackage(s)
+            logGraphicsRequest("asset_repair", rr3Package, "hdr=${level.name}")
+            if (rr3Package == null) { fail("RR3 data folder not found. [GFX_E011]"); return false }
+            if (s.isPackageRunning(rr3Package)) s.forceStopPackage(rr3Package)
+            if (s.isPackageRunning(rr3Package)) {
+                fail("RR3 is still running; assets were not changed.")
+                return false
+            }
             if (!s.ping()) { fail("Not connected."); return false }
-            val depotPath = "$rr3Path/files/.depot"
-            val resPath = "$rr3Path/files/apk/res"
-            updateProgress(InstallState.PREPARING, "Cleaning assets...")
-            s.delete("$depotPath/eds")
-            s.delete("$depotPath/feats")
+            // Graphics config (.depot/eds + .depot/feats) goes back to the factory apk/res files
+            // through the Graphics Hub engine: verified backup first, atomic per-file writes, rollback.
             updateProgress(InstallState.INSTALLING, "Restoring assets...")
-            if (s.exists("$resPath/eds")) s.copyDirectory("$resPath/eds", "$depotPath/eds")
-            if (s.exists("$resPath/feats")) s.copyDirectory("$resPath/feats", "$depotPath/feats")
-            updateProgress(InstallState.SUCCESS, "ASSET REPAIR COMPLETE")
-            true
+            when (val result = graphicsEngine(s).restoreFactory(rr3Package, level, ::graphicsProgress)) {
+                is GraphicsResult.Success -> {
+                    updateProgress(InstallState.SUCCESS, "ASSET REPAIR COMPLETE")
+                    true
+                }
+                is GraphicsResult.Blocked -> { fail("${result.message} [${result.code}]"); false }
+                is GraphicsResult.Failed -> { fail("${result.message} [${result.code}]"); false }
+            }
         } catch (e: Exception) {
             fail("Repair error: ${e.message}"); false
         }
@@ -1427,133 +1444,140 @@ class Retr0Installer(
         }
     }
 
+    // ------------------------------------------------------------------ Graphics Hub
+
+    private fun graphicsEngine(s: IRetr0UserService) =
+        GraphicsHubEngine(ShizukuGraphicsFileOps(s), GraphicsPaths(), log = GraphicsLogcat)
+
+    /** First line of every Graphics Hub request: who asked for what, on which build and device. */
+    private fun logGraphicsRequest(action: String, pkg: String?, detail: String = "") {
+        Log.i(
+            GraphicsLogcat.TAG,
+            "code=GFX_I000 stage=request action=$action pkg=${pkg ?: "none"} $detail app=${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) " +
+                "device=${Build.MANUFACTURER}/${Build.MODEL} sdk=${Build.VERSION.SDK_INT}".replace("  ", " "),
+        )
+    }
+
     /**
-     * Scans the factory original res folder for all available graphics profiles.
+     * Picks the RR3 package the graphics flows should act on. When both ROW and NA folders exist,
+     * prefers the one with a complete graphics setup, then the most recently used depot.
      */
+    private fun resolveGraphicsPackage(s: IRetr0UserService): String? {
+        val all = listOf(GraphicsPaths.ROW to RR3_ROW, GraphicsPaths.NA to RR3_NA)
+        val candidates = all.filter { s.exists(it.second) }
+        val chosen: String?
+        val reason: String
+        when {
+            candidates.isEmpty() -> { chosen = null; reason = "no_rr3_folder" }
+            candidates.size == 1 -> { chosen = candidates.first().first; reason = "only_one_installed" }
+            else -> {
+                val complete = candidates.filter { s.exists("${it.second}/files/.depot/eds") && s.exists("${it.second}/files/apk/res/eds") }
+                val pool = complete.ifEmpty { candidates }
+                chosen = pool.maxByOrNull { s.getLastModified("${it.second}/files/.depot") }!!.first
+                reason = if (complete.size == 1) "only_one_complete" else "most_recent_depot"
+            }
+        }
+        Log.i(
+            GraphicsLogcat.TAG,
+            "code=GFX_I010 stage=package_select installed=${candidates.joinToString(",") { it.first.substringAfterLast('.') }.ifEmpty { "none" }} " +
+                "chosen=${chosen?.substringAfterLast('.') ?: "none"} reason=$reason",
+        )
+        return chosen
+    }
+
+    /** Turns an engine result into installer progress. The error code is shown so users can quote it. */
+    private fun reportGraphics(result: GraphicsResult, successTitle: String): Boolean = when (result) {
+        is GraphicsResult.Success -> {
+            updateProgress(InstallState.SUCCESS, successTitle, result.message)
+            true
+        }
+        is GraphicsResult.Blocked -> { fail("${result.message} [${result.code}]"); false }
+        is GraphicsResult.Failed -> { fail("${result.message} [${result.code}]"); false }
+    }
+
+    private fun graphicsProgress(step: String) = updateProgress(InstallState.INSTALLING, step)
+
+    /** Graphics presets available in the factory apk/res folders (complete .plist + .feats pairs only). */
     suspend fun getAvailablePresets(): List<String> = withContext(Dispatchers.IO) {
         val s = service ?: return@withContext emptyList()
-        try {
-            val rr3Path = getRr3Path()
-            val resEds = "$rr3Path/files/apk/res/eds"
-            val resFeats = "$rr3Path/files/apk/res/feats"
-            
-            val presets = mutableSetOf<String>()
-            
-            s.listFiles(resEds)?.forEach { 
-                if (it.endsWith(".plist")) presets.add(it.removeSuffix(".plist"))
-            }
-            
-            s.listFiles(resFeats)?.forEach { 
-                if (it.endsWith(".feats")) presets.add(it.removeSuffix(".feats"))
-            }
-            
-            presets.asSequence().sorted().toList()
-        } catch (_: Exception) { emptyList() }
+        runCatching {
+            val pkg = resolveGraphicsPackage(s) ?: return@runCatching emptyList()
+            graphicsEngine(s).availablePresets(pkg)
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun listGraphicsBackups(): List<GraphicsBackupInfo> = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext emptyList()
+        runCatching {
+            val pkg = resolveGraphicsPackage(s) ?: return@runCatching emptyList()
+            graphicsEngine(s).listBackups(pkg)
+        }.getOrDefault(emptyList())
+    }
+
+    /** Shared start of every graphics action: connection, request log, package choice. */
+    private inline fun withGraphicsPackage(action: String, detail: String, preparing: String, block: (IRetr0UserService, String) -> Boolean): Boolean {
+        val s = service ?: run {
+            Log.e(GraphicsLogcat.TAG, "code=GFX_E009 stage=request action=$action reason=shizuku_not_connected")
+            fail("Not connected. [GFX_E009]")
+            return false
+        }
+        updateProgress(InstallState.PREPARING, preparing)
+        val pkg = resolveGraphicsPackage(s)
+        logGraphicsRequest(action, pkg, detail)
+        if (pkg == null) {
+            fail("RR3 data folder not found. [GFX_E011]")
+            return false
+        }
+        return block(s, pkg)
     }
 
     /**
-     * Overwrites all standard quality tiers with the selected preset.
-     * Source: apk/res (Factory Original)
+     * Applies the selected preset to every Android tier with exactly HDR [level] (the Hub's A/B/C
+     * selection, B by default). Verified backup first; rolls back automatically on failure.
      */
-    suspend fun applyGraphicsPreset(presetName: String): Boolean = withContext(Dispatchers.IO) {
-        val s = service ?: run { fail("Not connected."); return@withContext false }
-        try {
-            updateProgress(InstallState.PREPARING, "Stopping RR3 before graphics swap...")
-            val selectedRr3Path = rr3PathForPackage(s)
-            val rr3Package = if (selectedRr3Path == RR3_NA) "com.ea.games.r3_na" else "com.ea.games.r3_row"
-            if (s.isPackageRunning(rr3Package)) s.forceStopPackage(rr3Package)
-            if (s.isPackageRunning(rr3Package)) {
-                fail("RR3 is still running; graphics were not changed.")
-                return@withContext false
-            }
-
-            val rr3Path = getRr3Path()
-            val resEds = "$rr3Path/files/apk/res/eds"
-            val resFeats = "$rr3Path/files/apk/res/feats"
-            val depotEds = "$rr3Path/files/.depot/eds"
-            val depotFeats = "$rr3Path/files/.depot/feats"
-            val sourcePlist = "$resEds/$presetName.plist"
-            val sourceFeats = "$resFeats/$presetName.feats"
-            val hasPlist = s.exists(sourcePlist)
-            val hasFeats = s.exists(sourceFeats)
-            if (!hasPlist && !hasFeats) {
-                fail("Preset source not found: $presetName (.plist or .feats)")
-                return@withContext false
-            }
-
-            val tiers = listOf("AndroidLow", "AndroidMid", "AndroidMid2", "AndroidHigh", "AndroidXtraHigh", "AndroidUltraWide", "SimRigTV")
-            updateProgress(InstallState.INSTALLING, "Injecting $presetName configuration...")
-            if (hasPlist && !s.exists(depotEds)) s.createDirectory(depotEds)
-            if (hasFeats && !s.exists(depotFeats)) s.createDirectory(depotFeats)
-
-            val targets = buildList {
-                if (hasPlist) tiers.mapTo(this) { "$depotEds/$it.plist" }
-                if (hasFeats) tiers.mapTo(this) { "$depotFeats/$it.feats" }
-            }
-            val sourceByTarget = targets.associateWith { target -> if (target.endsWith(".plist")) sourcePlist else sourceFeats }
-            val copied = targets.count { target -> s.copyFile(sourceByTarget.getValue(target), target) }
-            if (copied != targets.size) {
-                fail("Graphics swap was incomplete ($copied/${targets.size} files). Original files were not restored automatically.")
-                return@withContext false
-            }
-
-            updateProgress(InstallState.SUCCESS, "GRAPHICS APPLIED", "$presetName active across all tiers; restart RR3 to load it")
-            true
-        } catch (e: Exception) {
-            fail("Graphics Error: ${e.message}")
-            false
+    suspend fun applyGraphicsPreset(presetName: String, level: HdrLevel = HdrLevel.B): Boolean = withContext(Dispatchers.IO) {
+        withGraphicsPackage("apply", "preset=$presetName hdr=${level.name}", "Stopping RR3 before graphics swap...") { s, pkg ->
+            reportGraphics(graphicsEngine(s).applyUniversalWithHdr(pkg, presetName, level, ::graphicsProgress), "GRAPHICS APPLIED")
         }
     }
 
     /**
-     * Restores the original graphics configuration from the factory apk/res folder.
+     * Restores .depot/eds and .depot/feats from the factory apk/res files, after a verified backup.
+     * Factory files have HDR off and go black on some GPUs, so each preset is set to exactly HDR
+     * [level] (the Hub's selection, B by default). Each preset keeps its own settings otherwise.
      */
-    suspend fun restoreOriginalGraphics(): Boolean = withContext(Dispatchers.IO) {
-        val s = service ?: run { fail("Not connected."); return@withContext false }
-        try {
-            updateProgress(InstallState.PREPARING, "Stopping RR3 before graphics restore...")
-            val selectedRr3Path = rr3PathForPackage(s)
-            val rr3Package = if (selectedRr3Path == RR3_NA) "com.ea.games.r3_na" else "com.ea.games.r3_row"
-            if (s.isPackageRunning(rr3Package)) s.forceStopPackage(rr3Package)
-            if (s.isPackageRunning(rr3Package)) {
-                fail("RR3 is still running; original graphics were not restored.")
-                return@withContext false
-            }
-
-            val rr3Path = getRr3Path()
-            val resPath = "$rr3Path/files/apk/res"
-            val depotPath = "$rr3Path/files/.depot"
-            if (!s.exists(resPath)) {
-                fail("Original graphics source (apk/res) not found.")
-                return@withContext false
-            }
-
-            updateProgress(InstallState.INSTALLING, "Restoring original graphics...")
-            val directories = listOf("eds", "feats")
-            for (directory in directories) {
-                val source = "$resPath/$directory"
-                val destination = "$depotPath/$directory"
-                if (!s.exists(source)) continue
-                if (!s.delete(destination) || !s.createDirectory(destination) || !s.copyDirectory(source, destination)) {
-                    fail("Could not restore original graphics directory: $directory")
-                    return@withContext false
-                }
-            }
-
-            updateProgress(InstallState.SUCCESS, "ORIGINAL GRAPHICS RESTORED", "Restart RR3 to reload the factory configuration")
-            true
-        } catch (e: Exception) {
-            fail("Restore Error: ${e.message}")
-            false
+    suspend fun restoreOriginalGraphics(level: HdrLevel = HdrLevel.B): Boolean = withContext(Dispatchers.IO) {
+        withGraphicsPackage("restore_factory", "hdr=${level.name}", "Stopping RR3 before graphics restore...") { s, pkg ->
+            reportGraphics(graphicsEngine(s).restoreFactory(pkg, level, ::graphicsProgress), "ORIGINAL GRAPHICS RESTORED")
         }
     }
 
-    private fun rr3PathForPackage(s: IRetr0UserService): String =
-        when {
-            s.exists(RR3_ROW) -> RR3_ROW
-            s.exists(RR3_NA) -> RR3_NA
-            else -> RR3_ROW
+    /**
+     * Restores a graphics backup; [backupId] may be "latest". With [level] (the Hub's A/B/C selection)
+     * every restored preset is set to exactly that HDR level; null restores the backup byte for byte.
+     */
+    suspend fun restoreGraphicsBackup(backupId: String, level: HdrLevel? = null): Boolean = withContext(Dispatchers.IO) {
+        withGraphicsPackage("restore_backup", "backup=$backupId hdr=${level?.name ?: "none"}", "Stopping RR3 before graphics restore...") { s, pkg ->
+            reportGraphics(graphicsEngine(s).restoreBackup(pkg, backupId, level, ::graphicsProgress), "PREVIOUS GRAPHICS RESTORED")
         }
+    }
+
+    /** The Hub's A/B/C switches: sets the current graphics to exactly [level] (verified backup first). */
+    suspend fun setGraphicsHdrLevel(level: HdrLevel): Boolean = withContext(Dispatchers.IO) {
+        withGraphicsPackage("set_hdr", "hdr=${level.name}", "Applying HDR level ${level.name}...") { s, pkg ->
+            reportGraphics(graphicsEngine(s).applyHdrToCurrent(pkg, level, ::graphicsProgress), "HDR LEVEL ${level.name} APPLIED")
+        }
+    }
+
+    /** Read-only scan of the HDR level in the game's current graphics files, for the Hub's switches. Null when unavailable. */
+    suspend fun scanGraphicsHdr(): HdrScan? = withContext(Dispatchers.IO) {
+        val s = service ?: return@withContext null
+        runCatching {
+            val pkg = resolveGraphicsPackage(s) ?: return@runCatching null
+            graphicsEngine(s).scanHdr(pkg)
+        }.onFailure { Log.w(GraphicsLogcat.TAG, "code=GFX_W017 stage=hdr_scan reason=${it.javaClass.simpleName}: ${it.message}") }
+            .getOrNull()
+    }
 
     /**
      * Replaces a game music track with a user-provided file.
