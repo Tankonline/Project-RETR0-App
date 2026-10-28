@@ -45,7 +45,7 @@ object CarModelFolderScanner {
         }.filterNotNull()
         if (entries.isEmpty()) errors += "No regular files found"
         val manifest = CarModelManifest(metadata = metadata, supportedGamePackages = emptyList(), target = target.copy(vehicleDirectory = layout.vehicle, relativeRoot = "files/.depot"), files = entries, warnings = warnings.toList())
-        runCatching { CarModelManifestValidator.validate(manifest) }.onFailure { errors += it.message ?: "Invalid manifest" }
+        runCatching { CarModelManifestValidator.validate(manifest.copy(supportedGamePackages = listOf("com.ea.games.r3_row"))) }.onFailure { errors += it.message ?: "Invalid manifest" }
         return ScanResult(manifest, ValidationReport(errors.distinct(), warnings.distinct()))
     }
 

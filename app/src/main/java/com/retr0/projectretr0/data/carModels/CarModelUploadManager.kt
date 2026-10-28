@@ -37,7 +37,8 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
         require(root.isDirectory && root.canRead()) { "Selected folder is not readable" }
         val scan = CarModelFolderScanner.scan(root, request.metadata, request.target)
         require(scan.report.isValid) { scan.report.errors.joinToString("; ") }
-        val manifest = scan.manifest.copy(packageId = request.packageId, supportedVersions = request.supportedVersions, supportedGamePackages = request.supportedGamePackages, installMode = request.installMode.uppercase(), backupRequired = request.installMode.uppercase() != "ADDON")
+        // Local collision journals and absolute backup paths are intentionally excluded from the wire manifest.
+        val manifest = scan.manifest.copy(packageId = request.packageId, supportedVersions = request.supportedVersions, supportedGamePackages = request.supportedGamePackages, installMode = request.installMode.uppercase(), backupRequired = request.installMode.uppercase() != "ADDON", transactionId = null, localInstallJournal = null)
         // The local manifest keeps each destination relative to its declared depot root.
         // The Worker validates the complete wire destination, including non-vehicle roots.
         val wireManifest = manifest.copy(files = manifest.files.map { file ->

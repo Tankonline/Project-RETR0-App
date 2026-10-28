@@ -7,7 +7,7 @@ import com.retr0.projectretr0.data.carModels.CarModelException
 import com.retr0.projectretr0.ui.skins.SkinTargetValidator
 import java.io.File
 
-data class RemoteFile(val relativePath: String, val sizeBytes: Long)
+data class RemoteFile(val relativePath: String, val sizeBytes: Long, val sha256: String? = null, val contentType: String = "application/octet-stream")
 
 /** Privileged file operations the car-model engine needs. Backed by the same Shizuku service the skin flow uses. */
 interface CarModelFileOps {
@@ -85,7 +85,10 @@ class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelF
             require(depth <= MAX_DEPTH) { "Vehicle folder is nested too deeply" }
             entries(packageRoot, path).forEach { entry ->
                 when (entry.type) {
-                    'F' -> files += RemoteFile(prefix + entry.name, entry.size)
+                    'F' -> {
+                        val relative = prefix + entry.name
+                        files += RemoteFile(relative, entry.size)
+                    }
                     'D' -> walk("$path/${entry.name}", "$prefix${entry.name}/", depth + 1)
                 }
                 require(files.size <= MAX_FILES) { "Vehicle folder has too many files" }

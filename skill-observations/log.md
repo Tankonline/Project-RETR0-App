@@ -71,7 +71,7 @@ Observations captured during task-oriented work.
 ### Observation 5: Privileged multi-file persistence needs staged publication
 
 **Status:** OPEN
-**Date:** 2026-09-19
+**Date: 2026-09-19
 **Session context:** Persisting an Android media file with metadata and artwork through a privileged filesystem service.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -86,7 +86,7 @@ Observations captured during task-oriented work.
 ### Observation 6: Separate privileged discovery from client-side acceptance
 
 **Status:** OPEN
-**Date:** 2026-09-20
+**Date: 2026-09-20
 **Session context:** Deep Smart Match investigation in an Android Shizuku/AIDL filesystem browser.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -101,7 +101,7 @@ Observations captured during task-oriented work.
 ### Observation 7: Keep explicit remote lifecycle actions separate from local install
 
 **Status:** OPEN
-**Date:** 2026-09-20
+**Date: 2026-09-20
 **Session context:** Completing an Android car-model UI integration slice with local import, draft upload, publish, and install flows.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -116,7 +116,7 @@ Observations captured during task-oriented work.
 ### Observation 8: Keep active local state independent from remote draft actions
 
 **Status:** OPEN
-**Date:** 2026-09-20
+**Date: 2026-09-20
 **Session context:** Fixing an Android car-model screen where active local models could not upload drafts.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -131,10 +131,10 @@ Observations captured during task-oriented work.
 ### Observation 9: Treat graphics configuration swaps as transactional and lifecycle-aware
 
 **Status:** OPEN
-**Date:** 2026-10-25
+**Date: 2026-10-25
 **Session context:** Investigating an RR3 black screen after applying and reverting a graphics preset.
 **Skill:** Android development workflow
-**Type:** open-source
+**Type: open-source
 **Phase/Area:** Privileged game-file mutation and recovery
 
 **Issue:** The graphics workflow copied files directly into active game configuration directories without stopping RR3, did not verify every copy, and treated directory deletion/copy results as successful enough to report completion. A failed or partially applied configuration could therefore remain active after a nominal revert.
@@ -146,7 +146,7 @@ Observations captured during task-oriented work.
 ### Observation 10: Asset repair must use the same lifecycle and verification contract as graphics restore
 
 **Status:** OPEN
-**Date:** 2026-10-25
+**Date: 2026-10-25
 **Session context:** Auditing the complete Graphics Hub and adjacent RR3 asset-repair path for black-screen causes.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -157,3 +157,18 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Share the same package resolution, process-stop precondition, directory preparation, checked copy steps, and failure reporting across all game configuration repair paths.
 
 **Principle:** Recovery paths should enforce the same safety and verification invariants as the mutation path they repair.
+
+### Observation 11: SQLite child-table repairs must preserve schema metadata explicitly
+
+**Status:** OPEN
+**Date: 2026-10-28
+**Session context:** Repairing production D1 foreign keys after a parent-table reconstruction.
+**Skill:** New skill candidate: D1 forward migration repair
+**Type:** open-source
+**Phase/Area:** SQLite/D1 migration design and verification
+
+**Issue:** Rebuilding a parent table can leave child foreign-key metadata pointing at a temporary parent name. A safe forward repair must reconstruct each child from the exact historical schema, copy rows, recreate indexes, avoid unsupported explicit transaction wrappers, and verify foreign-key targets and delete actions.
+
+**Suggested improvement:** Establish a reusable D1 repair checklist: capture sqlite_master/PRAGMA metadata, stop on schema drift, use collision-resistant temporary names, avoid BEGIN/COMMIT in remote --file migrations, and perform post-apply foreign_key_check plus per-table foreign-key assertions.
+
+**Principle:** Schema repairs should be metadata-preserving, forward-only, and independently verifiable at the database boundary.
