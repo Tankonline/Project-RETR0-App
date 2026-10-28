@@ -685,6 +685,9 @@ fun StepAddonReview(inspection: AddonInspection?, error: UiError?, folder: Strin
             inspection.overwrites.take(12).forEach { MonoText(it, Modifier.padding(vertical = 3.dp), RetroTextSoft, maxLines = 1) }
             if (inspection.overwrites.size > 12) Text("+ ${inspection.overwrites.size - 12} more files", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
         }
+        inspection.collisions.groupingBy { it.classification }.eachCount().forEach { (classification, count) ->
+            InfoRow(classification.name.lowercase().replaceFirstChar { it.uppercase() }, count.toString(), valueColor = if (classification.name == "DIFFERENT") RetroGold else RetroTextSoft)
+        }
     }
     SectionHeader("Files and directories newly created", Icons.Filled.Add, trailingCount = inspection.newFiles.size + createdDirectories.size)
     RetroCard {

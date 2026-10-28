@@ -10,6 +10,61 @@ The files in `migrations/` are an ordered Wrangler migration history, not a set 
 
 `0001_add_installation_avatars.sql` and `0005_add_car_model_invalidation.sql` are therefore intentionally additive, but not re-runnable against a schema that already contains their columns. Do not “fix” this by dropping columns/tables or by rebuilding tables; that risks data loss. `0004` is safe for its tables/indexes because it uses `IF NOT EXISTS`, but it still depends on the existing table definitions being compatible.
 
+Migration `0006_add_published_car_model_status.sql` is a forward-only SQLite table reconstruction. It widens only the `car_models.status` CHECK constraint and preserves the repository-known columns, defaults, unique constraint, indexes, rows, and the `0005` invalidation columns. Because the production schema output was truncated, it is deliberately **not** safe to apply until the preflight below proves production has exactly the represented `car_models` columns/objects. If any additional column, constraint, trigger, or index is found, stop and generate a reviewed migration variant containing it; never guess.
+
+Migration `0007_rebuild_car_model_child_foreign_keys.sql` repairs the four child tables after the production `0006` reconstruction left their foreign keys targeting the dropped `car_models__status_migration_backup`. It copies rows into uniquely named temporary tables, drops/recreates each child table with `REFERENCES car_models(id) ON DELETE CASCADE`, and recreates every uniqueness constraint and index from `0004`. It intentionally has no `BEGIN`/`COMMIT` because remote D1 `--file` execution can reject explicit transaction statements, and it does not disable `PRAGMA foreign_keys`.
+
+The migration uses `PRAGMA foreign_keys = OFF` only around the reconstruction and restores it afterward. Run it through Wrangler's migration mechanism, not by splitting statements or running individual statements. Take an export/backup first; table reconstruction is transactional for the DDL/data sequence, but the backup is the recovery boundary.
+
+### car_models status-constraint migration preflight and verification
+
+```powershell
+npx wrangler d1 execute save-files --remote --command "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name LIKE 'car_model%' OR name LIKE 'idx_car_models%' ORDER BY type, name;"
+npx wrangler d1 execute save-files --remote --command "PRAGMA table_info(car_models);"
+npx wrangler d1 execute save-files --remote --command "PRAGMA index_list(car_models);"
+npx wrangler d1 execute save-files --remote --command "PRAGMA foreign_key_list(car_models);"
+npx wrangler d1 execute save-files --remote --command "SELECT status, COUNT(*) AS count FROM car_models GROUP BY status ORDER BY status;"
+npx wrangler d1 execute save-files --remote --command "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name IN ('car_model_files','car_model_screenshots','car_model_likes','car_model_reports') ORDER BY tbl_name, type, name;"
+npx wrangler d1 execute save-files --remote --command "PRAGMA table_info(car_model_files); PRAGMA index_list(car_model_files); PRAGMA foreign_key_list(car_model_files); PRAGMA table_info(car_model_screenshots); PRAGMA index_list(car_model_screenshots); PRAGMA foreign_key_list(car_model_screenshots); PRAGMA table_info(car_model_likes); PRAGMA index_list(car_model_likes); PRAGMA foreign_key_list(car_model_likes); PRAGMA table_info(car_model_reports); PRAGMA index_list(car_model_reports); PRAGMA foreign_key_list(car_model_reports);"
+npx wrangler d1 migrations list save-files --remote
+```
+
+Before applying, compare the complete `sqlite_master` and PRAGMA output with `0004`, `0005`, and `0006`. Back up/export the database using the account's approved D1 export procedure. Then, from this directory, apply pending migrations only after confirming the configured account/database ID:
+
+```powershell
+npx wrangler d1 migrations apply save-files --remote
+```
+
+Afterward verify:
+
+```powershell
+npx wrangler d1 execute save-files --remote --command "SELECT sql FROM sqlite_master WHERE type='table' AND name='car_models';"
+npx wrangler d1 execute save-files --remote --command "SELECT status, COUNT(*) AS count FROM car_models GROUP BY status ORDER BY status;"
+npx wrangler d1 execute save-files --remote --command "PRAGMA integrity_check;"
+npx wrangler d1 execute save-files --remote --command "PRAGMA foreign_key_check;"
+npx wrangler d1 execute save-files --remote --command "SELECT 'car_model_files' AS child, ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_files') UNION ALL SELECT 'car_model_screenshots', ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_screenshots') UNION ALL SELECT 'car_model_likes', ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_likes') UNION ALL SELECT 'car_model_reports', ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_reports');"
+npx wrangler d1 migrations list save-files --remote
+```
+
+### 0007 child foreign-key repair: exact operator procedure
+
+Run from `C:\Users\armaa\AndroidStudioProjects\ProjectRETR0installer\cloudflare\save-files`, after reviewing and saving the complete preflight output. These commands are read-only until the migration apply command. Do not use `--command` with guessed SQL or manually split the file.
+
+```powershell
+npx wrangler d1 execute save-files --remote --command "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name IN ('car_models','car_model_files','car_model_screenshots','car_model_likes','car_model_reports') ORDER BY tbl_name, type, name;"
+npx wrangler d1 execute save-files --remote --command "PRAGMA table_info(car_model_files); PRAGMA index_list(car_model_files); PRAGMA foreign_key_list(car_model_files); PRAGMA table_info(car_model_screenshots); PRAGMA index_list(car_model_screenshots); PRAGMA foreign_key_list(car_model_screenshots); PRAGMA table_info(car_model_likes); PRAGMA index_list(car_model_likes); PRAGMA foreign_key_list(car_model_likes); PRAGMA table_info(car_model_reports); PRAGMA index_list(car_model_reports); PRAGMA foreign_key_list(car_model_reports);"
+npx wrangler d1 migrations apply save-files --remote
+npx wrangler d1 execute save-files --remote --command "SELECT 'car_model_files' AS child, ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_files') UNION ALL SELECT 'car_model_screenshots', ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_screenshots') UNION ALL SELECT 'car_model_likes', ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_likes') UNION ALL SELECT 'car_model_reports', ""table"", ""from"", ""to"", on_delete FROM pragma_foreign_key_list('car_model_reports');"
+npx wrangler d1 execute save-files --remote --command "PRAGMA integrity_check; PRAGMA foreign_key_check;"
+npx wrangler d1 migrations list save-files --remote
+```
+
+The verification query must return exactly four rows, with `table = car_models` and `on_delete = CASCADE` for every child. Stop if any migration statement fails; inspect the error and restore from the approved D1 backup/export rather than retrying blindly. Do not apply remotely or deploy automatically from repository changes.
+```
+
+There is no automatic rollback migration: reverting the CHECK requires another reviewed table reconstruction, and rolling back the Worker does not undo the schema. If the migration fails, do not retry blindly; inspect the error and restore from the approved D1 backup/export if required. Do not apply remotely or deploy automatically from repository changes.
+
+
 ### First determine whether production history is missing or merely behind
 
 Run these **read-only** commands from this directory. They target the configured database only when `--remote` is supplied; do not use `--remote` until you have verified the account, database name, and ID in `wrangler.toml`.

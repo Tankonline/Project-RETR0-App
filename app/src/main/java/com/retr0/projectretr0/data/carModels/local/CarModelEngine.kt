@@ -14,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
 
 /** What the target vehicle directory looks like for a given model, before anything is changed. */
 data class TargetInspection(val targetPath: String, val exists: Boolean, val stockFileCount: Int, val matchingFiles: Int) {
@@ -26,9 +27,26 @@ data class TargetInspection(val targetPath: String, val exists: Boolean, val sto
 enum class TargetStatus { FOUND, MISSING, INCOMPATIBLE }
 
 /** What an add-on would do to its destination folder: which files are new and which would be overwritten. */
-data class AddonInspection(val targetPath: String, val exists: Boolean, val newFiles: List<String>, val overwrites: List<String>, val occupiedBy: InstalledCarModel?) {
-    val nothingOverwritten: Boolean get() = overwrites.isEmpty()
-}
+data class AddonInspection(
+    val targetPath: String,
+    val exists: Boolean,
+    val newFiles: List<String>,
+    val overwrites: List<String>,
+    val occupiedBy: InstalledCarModel?,
+    val collisions: List<CollisionPreview> = emptyList(),
+) { val nothingOverwritten: Boolean get() = overwrites.isEmpty() }
+
+data class CollisionPreview(
+    val sourcePath: String,
+    val destinationPath: String,
+    val root: String,
+    val existedBeforeInstall: Boolean,
+    val existingSizeBytes: Long? = null,
+    val existingSha256: String? = null,
+    val incomingSizeBytes: Long = 0,
+    val incomingSha256: String = "",
+    val classification: com.retr0.projectretr0.data.carModels.manifest.CollisionClassification,
+)
 
 sealed interface ApplyOutcome {
     data class Success(val filesCopied: Int, val appliedAt: Long) : ApplyOutcome
@@ -208,9 +226,21 @@ class CarModelEngine(
         val target = paths.vehicleDir(gamePackage, vehicleDirectory)
         val occupied = store.current.activeInstall(gamePackage, vehicleDirectory)
         val exists = ops.isDirectory(target)
-        val existing = if (exists) ops.listTree(paths.packageRoot(gamePackage), target).map { it.relativePath.lowercase() }.toSet() else emptySet()
-        val (overwrites, fresh) = manifest.files.map { it.destinationPath }.partition { it.lowercase() in existing }
-        AddonInspection(target, exists, fresh, overwrites, occupied)
+        val existing = existingAddonFiles(ops, gamePackage, vehicleDirectory, target, exists)
+        val destinations = manifest.files.map { file -> addonKey(file.destinationRoot, safePath(file.destinationPath)) }
+        ensure(destinations.distinct().size == destinations.size, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "The add-on contains duplicate destination paths" }
+        val previews = manifest.files.map { file ->
+            val key = addonKey(file.destinationRoot, safePath(file.destinationPath))
+            val current = existing[key]
+            val existingHash = current?.sha256 ?: current?.let { ops.sha256(destinationForInspection(gamePackage, vehicleDirectory, file)) }.orEmpty()
+            CollisionPreview(file.sourcePath, key.substringAfter('/'), file.destinationRoot.name, current != null, current?.sizeBytes, existingHash, file.sizeBytes, file.sha256,
+                when { current == null -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.MISSING
+                    existingHash.equals(file.sha256, true) -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.IDENTICAL
+                    else -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.DIFFERENT })
+        }
+        val overwrites = previews.filter { it.existedBeforeInstall }.map { if (it.root == "VEHICLE") it.destinationPath else "${it.root}/${it.destinationPath}" }
+        val fresh = previews.filterNot { it.existedBeforeInstall }.map { if (it.root == "VEHICLE") it.destinationPath else "${it.root}/${it.destinationPath}" }
+        AddonInspection(target, exists, fresh, overwrites, occupied, previews)
     }.logged("TARGET", "inspect addon target", gamePackage, vehicleDirectory) { "exists=${it.exists} new=${it.newFiles.size} overwrites=${it.overwrites.size} occupied=${it.occupiedBy != null}" }
 
     /**
@@ -226,40 +256,35 @@ class CarModelEngine(
         val result = locked(gamePackage, vehicleDirectory) {
             val model = store.current.model(modelId) ?: fail(CarModelErrorCode.MODEL_NOT_FOUND)
             modelName = model.name
-            ensure(store.current.activeInstall(gamePackage, vehicleDirectory) == null, CarModelErrorCode.ADDON_TARGET_OCCUPIED)
+            ensure(store.current.activeInstall(gamePackage, vehicleDirectory)?.isAddon != true, CarModelErrorCode.ADDON_TARGET_OCCUPIED)
+            // Older locally imported manifests may not have carried the mode field; the selected wizard mode is authoritative.
+            ensure(model.manifest.installMode.uppercase() in setOf("ADDON", "REPLACE"), CarModelErrorCode.IMPORT_INVALID_MANIFEST)
             ensure(model.manifest.files.isNotEmpty(), CarModelErrorCode.MODEL_EMPTY)
             val target = paths.vehicleDir(gamePackage, vehicleDirectory)
             val backupDir = paths.addonBackupDir(gamePackage, vehicleDirectory)
             val existed = ops.isDirectory(target)
-            ensure(ops.createDirectory(target), CarModelErrorCode.ADDON_COPY_FAILED) { "Unable to create add-on destination" }
             val sources = verifiedSources(model)
             ensure(ops.ensureGameStopped(gamePackage), CarModelErrorCode.GAME_RUNNING)
             val existing = existingAddonFiles(ops, gamePackage, vehicleDirectory, target, existed)
-            val (overwriting, fresh) = sources.map { it.relative }.partition { relative ->
-                val source = sources.first { it.relative == relative }
-                addonKey(source.entry.destinationRoot, relative) in existing || (source.entry.destinationRoot == com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE && relative.lowercase() in existing)
+            val destinations = sources.map { source -> addonKey(source.entry.destinationRoot, source.relative).lowercase() }
+            ensure(destinations.distinct().size == destinations.size, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "The add-on contains duplicate destination paths" }
+            val collisionEntries = sources.mapNotNull { source ->
+                val key = addonKey(source.entry.destinationRoot, source.relative).lowercase()
+                val current = existing[key] ?: return@mapNotNull null
+                    val oldHash = current.sha256 ?: ops.sha256(paths.destination(gamePackage, vehicleDirectory, source.entry))
+                val backupPath = addonBackupFile(backupDir, source.entry.destinationRoot.name, source.relative)
+                ensure(ops.copy(paths.destination(gamePackage, vehicleDirectory, source.entry), backupPath), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Unable to back up $key" }
+                ensure(ops.sha256(backupPath).equals(oldHash, true), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Backup verification failed for $key" }
+                BackupFile(source.relative, current.sizeBytes, oldHash, source.entry.destinationRoot.name)
             }
+            val fresh = sources
             // One transaction folder and one manifest cover every destination root.
-            ops.delete(backupDir)
-            val overwritten = sources.filter { source -> addonKey(source.entry.destinationRoot, source.relative).lowercase() in existing }.map { source ->
-                val root = source.entry.destinationRoot.name
-                val relative = source.relative
-                val key = addonKey(source.entry.destinationRoot, relative).lowercase()
-                val original = existing[key] ?: existing.getValue(relative.lowercase())
-                val destination = paths.destination(gamePackage, vehicleDirectory, source.entry)
-                val hash = ops.sha256(destination)
-                ensure(hash.matches(SHA256), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Unable to read $key before overwriting it" }
-                val backupPath = addonBackupFile(backupDir, root, relative)
-                ensure(ops.copy(destination, backupPath) && ops.sha256(backupPath).equals(hash, true), CarModelErrorCode.ADDON_BACKUP_FAILED)
-                if (root == "VEHICLE") ensure(ops.copy(destination, "$backupDir/files/${safePath(relative)}"), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Unable to back up $key before overwriting it" }
-                BackupFile(relative, original.sizeBytes, hash, root)
-            }
-            val addedEntries = sources.filter { addonKey(it.entry.destinationRoot, it.relative).lowercase() !in existing }
-                .map { AddonFileRecord(it.relative, it.entry.destinationRoot.name, it.hash) }
+            val overwritten = collisionEntries
+            val addedEntries = sources.map { AddonFileRecord(it.relative, it.entry.destinationRoot.name, it.hash) }
             val now = clock()
             val record = InstalledCarModel(model.id, model.name, gamePackage, vehicleDirectory, now, true, model.fileCount, model.totalBytes,
-                InstallMode.ADDON, fresh, overwritten, backupDir, addedEntries, createdDirectory = !existed)
-            ensure(ops.writeText("$backupDir/$BACKUP_MANIFEST", JSONObject().put("type", "addon-transaction-v1").put("gamePackage", gamePackage).put("vehicleDirectory", vehicleDirectory).put("files", JSONArray((overwritten.map { it.toJson() } + addedEntries.map { it.toJson() }))).toString()), CarModelErrorCode.ADDON_BACKUP_FAILED)
+                InstallMode.ADDON, fresh.filter { source -> overwritten.none { it.path == source.relative && it.root == source.entry.destinationRoot.name } }.map { it.relative }, overwritten, backupDir, addedEntries, createdDirectory = !existed)
+            ensure(ops.writeText("$backupDir/$BACKUP_MANIFEST", JSONObject().put("type", "addon-transaction-v1").put("gamePackage", gamePackage).put("vehicleDirectory", vehicleDirectory).put("transactionId", UUID.randomUUID().toString()).put("files", JSONArray((overwritten.map { it.toJson() } + addedEntries.map { it.toJson() }))).toString()), CarModelErrorCode.ADDON_BACKUP_FAILED)
             store.update { state -> state.copy(installed = state.installed.filterNot { it.key == record.key } + record) }
             touched = true
             sources.forEachIndexed { index, source ->
@@ -270,7 +295,7 @@ class CarModelEngine(
                 onProgress(index + 1, sources.size)
                 CarModelLog.step("addon copied ${index + 1}/${sources.size} ${source.relative}")
             }
-            val detail = if (overwritten.isEmpty()) ", nothing overwritten" else ", ${overwritten.size} overwritten (backed up)"
+            val detail = ", nothing overwritten"
             store.log(CarModelActivityKind.APPLY, model.name, "Add-on: ${fresh.size} files added to $vehicleDirectory$detail", true, now)
             ApplyOutcome.Success(sources.size, now)
         }
@@ -342,8 +367,12 @@ class CarModelEngine(
         return total
     }
 
+    private fun destinationForInspection(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile) = paths.destination(gamePackage, vehicleDirectory, file)
     private fun addonKey(root: com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot, relative: String) = "${root.name}/$relative".lowercase()
-    private fun addonBackupFile(backupDir: String, root: String, relative: String) = "$backupDir/files/$root/${safePath(relative)}"
+    private fun addonBackupFile(backupDir: String, root: String, relative: String): String {
+        val fileRoot = if (root == "VEHICLE") "" else "$root/"
+        return "$backupDir/files/$fileRoot${safePath(relative)}"
+    }
     private fun existingAddonFiles(ops: CarModelFileOps, gamePackage: String, vehicleDirectory: String, target: String, existed: Boolean): Map<String, RemoteFile> {
         val result = linkedMapOf<String, RemoteFile>()
         if (existed) ops.listTree(paths.packageRoot(gamePackage), target).forEach {

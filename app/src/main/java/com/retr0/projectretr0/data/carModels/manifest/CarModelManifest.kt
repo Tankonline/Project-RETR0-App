@@ -6,6 +6,10 @@ import org.json.JSONObject
 /** Portable description of a complete, generic RR3 vehicle-directory package. */
 data class CarModelManifest(
     val schemaVersion: Int = 1,
+    /** Stable local transaction identity; never sent to Community Hub. */
+    val transactionId: String? = null,
+    /** Local-only pre-install collision/backup journal. Omitted from community manifests. */
+    val localInstallJournal: LocalInstallJournal? = null,
     val packageType: String = "rr3-car-model",
     val metadata: PackageMetadata,
     val packageId: String = metadata.name,
@@ -22,6 +26,7 @@ data class CarModelManifest(
     fun toJson(): JSONObject = JSONObject().apply {
         put("manifestVersion", schemaVersion)
         put("schemaVersion", schemaVersion)
+        transactionId?.let { put("transactionId", it) }
         put("packageType", packageType)
         put("metadata", metadata.toJson())
         put("packageId", packageId)
@@ -34,6 +39,7 @@ data class CarModelManifest(
         put("revertSupported", revertSupported)
         put("files", JSONArray(files.map { it.toJson() }))
         put("warnings", JSONArray(warnings))
+        localInstallJournal?.let { put("localInstallJournal", it.toJson()) }
     }
 
     companion object {
@@ -41,6 +47,8 @@ data class CarModelManifest(
             val files = json.optJSONArray("files") ?: throw IllegalArgumentException("files is required")
             return CarModelManifest(
                 schemaVersion = json.optInt("schemaVersion", 1),
+                transactionId = json.optString("transactionId").takeIf { it.isNotBlank() },
+                localInstallJournal = json.optJSONObject("localInstallJournal")?.let { LocalInstallJournal.fromJson(it) },
                 packageType = json.optString("packageType", "rr3-car-model"),
                 metadata = PackageMetadata.fromJson(json.optJSONObject("metadata") ?: throw IllegalArgumentException("metadata is required")),
                 packageId = json.optString("packageId").ifBlank { json.optJSONObject("metadata")?.optString("name").orEmpty() },
@@ -63,13 +71,68 @@ data class PackageMetadata(val name: String, val version: String = "1", val desc
     companion object { fun fromJson(j: JSONObject) = PackageMetadata(j.optString("name"), j.optString("version", "1"), j.optString("description"), j.optString("creator")) }
 }
 
+enum class CollisionClassification { IDENTICAL, DIFFERENT, MISSING }
+
+data class LocalInstallJournal(
+    val transactionId: String,
+    val installMode: String,
+    val createdAt: Long,
+    val completedAt: Long? = null,
+    val entries: List<LocalInstallJournalEntry> = emptyList(),
+) {
+    fun toJson() = JSONObject().put("transactionId", transactionId).put("installMode", installMode)
+        .put("createdAt", createdAt).put("completedAt", completedAt ?: JSONObject.NULL)
+        .put("entries", JSONArray(entries.map { it.toJson() }))
+    companion object {
+        fun fromJson(j: JSONObject) = LocalInstallJournal(
+            j.getString("transactionId"), j.optString("installMode", "ADDON"), j.optLong("createdAt"),
+            j.optLong("completedAt").takeIf { it > 0 },
+            (j.optJSONArray("entries")?.let { array -> (0 until array.length()).mapNotNull { index -> runCatching { LocalInstallJournalEntry.fromJson(array.getJSONObject(index)) }.getOrNull() } } ?: emptyList()),
+        )
+    }
+}
+
+data class LocalInstallJournalEntry(
+    val sourcePath: String,
+    val destinationPath: String,
+    val destinationRoot: String,
+    val existedBeforeInstall: Boolean,
+    val existingSizeBytes: Long? = null,
+    val existingSha256: String? = null,
+    val existingContentType: String? = null,
+    val incomingSizeBytes: Long,
+    val incomingSha256: String,
+    val incomingContentType: String,
+    val collision: CollisionClassification,
+    val backupPath: String? = null,
+    val backupSha256: String? = null,
+) {
+    fun toJson() = JSONObject().put("sourcePath", sourcePath).put("destinationPath", destinationPath)
+        .put("destinationRoot", destinationRoot).put("existedBeforeInstall", existedBeforeInstall)
+        .put("existingSizeBytes", existingSizeBytes ?: JSONObject.NULL).put("existingSha256", existingSha256 ?: JSONObject.NULL)
+        .put("existingContentType", existingContentType ?: JSONObject.NULL).put("incomingSizeBytes", incomingSizeBytes)
+        .put("incomingSha256", incomingSha256).put("incomingContentType", incomingContentType)
+        .put("collision", collision.name).put("backupPath", backupPath ?: JSONObject.NULL).put("backupSha256", backupSha256 ?: JSONObject.NULL)
+    companion object {
+        fun fromJson(j: JSONObject) = LocalInstallJournalEntry(
+            j.getString("sourcePath"), j.getString("destinationPath"), j.optString("destinationRoot", "VEHICLE"),
+            j.optBoolean("existedBeforeInstall"), j.optLong("existingSizeBytes").takeIf { it > 0 },
+            j.optString("existingSha256").takeIf { it.isNotBlank() && it != "null" }, j.optString("existingContentType").takeIf { it.isNotBlank() && it != "null" },
+            j.getLong("incomingSizeBytes"), j.getString("incomingSha256"), j.optString("incomingContentType", "application/octet-stream"),
+            runCatching { CollisionClassification.valueOf(j.optString("collision")) }.getOrDefault(CollisionClassification.MISSING),
+            j.optString("backupPath").takeIf { it.isNotBlank() && it != "null" }, j.optString("backupSha256").takeIf { it.isNotBlank() && it != "null" },
+        )
+    }
+}
+
 data class TargetVehicle(val vehicleDirectory: String, val relativeRoot: String) {
     fun toJson() = JSONObject().put("vehicleDirectory", vehicleDirectory).put("relativeRoot", relativeRoot)
     companion object { fun fromJson(j: JSONObject) = TargetVehicle(j.optString("vehicleDirectory"), j.optString("relativeRoot")) }
 }
 
 enum class InstallationPolicy(val wireValue: String) {
-    FULL_DIRECTORY_REPLACEMENT("FULL_DIRECTORY_REPLACEMENT");
+    FULL_DIRECTORY_REPLACEMENT("FULL_DIRECTORY_REPLACEMENT"),
+    ADDON("ADDON");
     companion object { fun fromWire(value: String) = entries.firstOrNull { it.wireValue == value } ?: FULL_DIRECTORY_REPLACEMENT }
 }
 
@@ -102,8 +165,14 @@ object CarModelManifestValidator {
     fun validate(manifest: CarModelManifest) {
         require(manifest.schemaVersion == 1) { "Unsupported schema version" }
         require(manifest.packageType == "rr3-car-model") { "Unsupported package type" }
-        require(manifest.installMode.uppercase() in setOf("REPLACE", "ADDON")) { "Unsupported install mode" }
+        val mode = manifest.installMode.uppercase()
+        require(mode in setOf("REPLACE", "ADDON")) { "Unsupported install mode" }
         require(manifest.metadata.name.isNotBlank() && manifest.packageId.isNotBlank() && manifest.target.vehicleDirectory.isNotBlank()) { "Incomplete package metadata" }
+        if (manifest.supportedGamePackages.isNotEmpty()) {
+            require(manifest.supportedGamePackages.all { it.isNotBlank() }) { "Supported game packages must not be blank" }
+        }
+        if (mode == "ADDON") require(manifest.installationPolicy == InstallationPolicy.ADDON || manifest.installationPolicy == InstallationPolicy.FULL_DIRECTORY_REPLACEMENT) { "Unsupported ADDON installation policy" }
+        if (mode == "REPLACE") require(manifest.installationPolicy == InstallationPolicy.FULL_DIRECTORY_REPLACEMENT) { "REPLACE manifests require FULL_DIRECTORY_REPLACEMENT installationPolicy" }
         validateRelativePath(manifest.target.relativeRoot)
         require(manifest.files.isNotEmpty()) { "Manifest contains no files" }
         require(manifest.files.size <= CarModelLimits.MAX_FILES) { "Car models can contain at most ${CarModelLimits.MAX_FILES} files." }
