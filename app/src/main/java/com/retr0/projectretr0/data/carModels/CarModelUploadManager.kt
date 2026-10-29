@@ -36,8 +36,9 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
     }
 
     private fun normalizeWireDestination(value: String): String {
-        val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
-        return withoutDisplayPrefix.substringAfterLast("/", missingDelimiterValue = withoutDisplayPrefix)
+        return value.replace('\\', '/')
+            .replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("^depot/", RegexOption.IGNORE_CASE), "")
     }
 
     suspend fun upload(request: UploadRequest, onProgress: (UploadProgress) -> Unit = {}): UploadResult {
@@ -56,11 +57,11 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
             CarModelLog.step("upload_manifest_file source=${file.sourcePath} wireSource=${normalizeWireSource(file.sourcePath)} root=${file.destinationRoot} rawDestination=${file.destinationPath} normalizedDestination=$normalizedDestinationPath")
             val wireDestination = when (file.destinationRoot) {
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE ->
-                    "${manifest.target.vehicleDirectory}/$normalizedDestinationPath"
+                    "${manifest.target.vehicleDirectory}/${normalizedDestinationPath.removePrefix("vehicles/").removePrefix("${manifest.target.vehicleDirectory}/")}"
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA ->
-                    "vehicles/data/$normalizedDestinationPath"
+                    "vehicles/data/${normalizedDestinationPath.removePrefix("vehicles/data/").removePrefix("data/")}"
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA ->
-                    "data/$normalizedDestinationPath"
+                    "data/${normalizedDestinationPath.removePrefix("data/")}"
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT ->
                     normalizedDestinationPath
             }
@@ -104,12 +105,12 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
             val local = File(root, entry.sourcePath).canonicalFile
             require(local.toPath().startsWith(root.toPath())) { "File escapes selected folder" }
             require(local.isFile && local.length() == entry.sizeBytes && sha256(local) == entry.sha256) { "File changed while uploading: ${entry.sourcePath}" }
-            val existing = remoteFilesByPath[entry.sourcePath]
+            val wireSourcePath = normalizeWireSource(entry.sourcePath)
+            val existing = remoteFilesByPath[wireSourcePath]
             if (existing == null || existing.size != entry.sizeBytes || !existing.sha256.equals(entry.sha256, ignoreCase = true)) {
-                // The Worker addresses uploaded objects by their declared source path;
-                // destinationPath is the in-game target and is validated from the manifest.
-                CarModelLog.step("upload_stage=file index=${index + 1} size=${entry.sizeBytes}")
-                api.uploadFile(draft.modelId, entry.sourcePath, local, entry.contentType)
+                // The Worker addresses uploaded objects by the normalized manifest source path.
+                CarModelLog.step("upload_stage=file index=${index + 1} size=${entry.sizeBytes} path=$wireSourcePath")
+                api.uploadFile(draft.modelId, wireSourcePath, local, entry.contentType)
             }
             onProgress(UploadProgress.Event("file", index + 2, manifest.files.size + 1))
         }

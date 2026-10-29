@@ -48,7 +48,7 @@ object CarModelFolderScanner {
                     CarModelDestinationRoot.DEPOT_ROOT -> destination
                 }.removePrefix("paste to depot/")
                 val normalizedDestination = when (rootKind) {
-                    CarModelDestinationRoot.VEHICLE -> "${layout.vehicle}/$targetRelative"
+                    CarModelDestinationRoot.VEHICLE -> targetRelative
                     CarModelDestinationRoot.VEHICLES_DATA -> "vehicles/data/$targetRelative"
                     CarModelDestinationRoot.DEPOT_DATA -> "data/$targetRelative"
                     CarModelDestinationRoot.DEPOT_ROOT -> targetRelative
@@ -59,7 +59,7 @@ object CarModelFolderScanner {
         }.filterNotNull()
         if (entries.isEmpty()) errors += "No regular files found"
         if (errors.isNotEmpty() && errors.all { it.contains("recognised RR3") || it.contains("Incomplete package metadata") || it.contains("Manifest contains no files") }) errors.clear()
-        val manifest = CarModelManifest(metadata = metadata, supportedGamePackages = emptyList(), target = target.copy(vehicleDirectory = layout.vehicle, relativeRoot = "files/.depot"), files = entries, warnings = warnings.toList())
+        val manifest = CarModelManifest(metadata = metadata, supportedGamePackages = emptyList(), target = target.copy(vehicleDirectory = layout.vehicle, relativeRoot = "files/.depot"), vehicleRoot = layout.vehicle, files = entries, warnings = warnings.toList())
         runCatching { CarModelManifestValidator.validate(manifest.copy(supportedGamePackages = listOf("com.ea.games.r3_row"))) }.onFailure { error ->
             if (entries.isNotEmpty() && !error.message.orEmpty().contains("Manifest contains no files")) errors += error.message ?: "Invalid manifest"
         }

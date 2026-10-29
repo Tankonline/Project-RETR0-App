@@ -161,7 +161,14 @@ class CarModelEngine(
             ensure(model.manifest.files.isNotEmpty(), CarModelErrorCode.MODEL_EMPTY)
             val sources = model.manifest.files.map { entry ->
                 val sourceRelative = safePath(entry.sourcePath)
-                val destinationRelative = safePath(entry.destinationPath)
+                val destinationRelative = when (entry.destinationRoot) {
+                    com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> {
+                        entry.destinationPath.replace('\\', '/').removePrefix("vehicles/").removePrefix("$vehicleDirectory/")
+                    }
+                    com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA -> entry.destinationPath.replace('\\', '/').removePrefix("vehicles/data/")
+                    com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA -> entry.destinationPath.replace('\\', '/').removePrefix("data/")
+                    com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT -> entry.destinationPath.replace('\\', '/').removePrefix("paste to depot/").removePrefix("depot/")
+                }
                 val local = File(model.filesRoot, sourceRelative).canonicalFile
                 val libraryRoot = File(model.filesRoot).canonicalFile.toPath()
                 ensure(local.toPath().startsWith(libraryRoot), CarModelErrorCode.UNSAFE_PATH)
@@ -496,7 +503,8 @@ class CarModelEngine(
     }
 
     private fun markReverted(gamePackage: String, vehicleDirectory: String) {
-        store.update { state -> state.copy(installed = state.installed.map { if (it.key == vehicleKey(gamePackage, vehicleDirectory)) it.copy(active = false) else it }) }
+        val key = vehicleKey(gamePackage, vehicleDirectory)
+        store.update { state -> state.copy(installed = state.installed.filterNot { it.key == key }) }
     }
 
     private fun added(gamePackage: String, vehicleDirectory: String) = store.current.backup(gamePackage, vehicleDirectory)?.addedFiles?.size ?: 0

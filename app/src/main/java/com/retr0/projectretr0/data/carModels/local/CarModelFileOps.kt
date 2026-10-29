@@ -43,11 +43,20 @@ class CarModelPaths(
     fun vehiclesRoot(gamePackage: String): String = "${depotRoot(gamePackage)}/vehicles"
     fun vehiclesDataRoot(gamePackage: String): String = "${vehiclesRoot(gamePackage)}/data"
     fun depotDataRoot(gamePackage: String): String = "${depotRoot(gamePackage)}/data"
-    fun destination(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile): String = when (file.destinationRoot) {
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> "${vehicleDir(gamePackage, vehicleDirectory)}/${file.destinationPath}"
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA -> "${vehiclesDataRoot(gamePackage)}/${file.destinationPath}"
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA -> "${depotDataRoot(gamePackage)}/${file.destinationPath}"
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT -> "${depotRoot(gamePackage)}/${file.destinationPath}"
+    fun destination(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile): String {
+        val relative = file.destinationPath
+            .replace('\\', '/')
+            .removePrefix("paste to depot/")
+            .removePrefix("depot/")
+        val vehicleRelative = relative.removePrefix("vehicles/").removePrefix("$vehicleDirectory/").removePrefix("$vehicleDirectory/").removePrefix("$vehicleDirectory/")
+        val vehiclesDataRelative = relative.removePrefix("vehicles/data/").removePrefix("data/")
+        val depotDataRelative = relative.removePrefix("data/").removePrefix("data/")
+        return when (file.destinationRoot) {
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> "${vehicleDir(gamePackage, vehicleDirectory)}/$vehicleRelative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA -> "${vehiclesDataRoot(gamePackage)}/$vehiclesDataRelative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA -> "${depotDataRoot(gamePackage)}/$depotDataRelative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT -> "${depotRoot(gamePackage)}/$relative"
+        }
     }
     fun vehicleDir(gamePackage: String, vehicleDirectory: String): String {
         requireSafe(vehicleDirectory)
