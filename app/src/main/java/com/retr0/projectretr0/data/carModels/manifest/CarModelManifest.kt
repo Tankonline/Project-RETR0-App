@@ -16,6 +16,8 @@ data class CarModelManifest(
     val supportedVersions: List<String> = emptyList(),
     val supportedGamePackages: List<String>,
     val target: TargetVehicle,
+    /** Canonical vehicle directory root. Vehicle file destinations are relative to this root. */
+    val vehicleRoot: String = target.vehicleDirectory,
     val installationPolicy: InstallationPolicy = InstallationPolicy.FULL_DIRECTORY_REPLACEMENT,
     val installMode: String = "REPLACE",
     val backupRequired: Boolean = true,
@@ -33,6 +35,7 @@ data class CarModelManifest(
         put("supportedVersions", JSONArray(supportedVersions))
         put("supportedGamePackages", JSONArray(supportedGamePackages))
         put("target", target.toJson())
+        put("vehicleRoot", vehicleRoot)
         put("installationPolicy", installationPolicy.wireValue)
         put("installMode", installMode)
         put("backupRequired", backupRequired)
@@ -55,6 +58,7 @@ data class CarModelManifest(
                 supportedVersions = json.optJSONArray("supportedVersions").strings(),
                 supportedGamePackages = json.optJSONArray("supportedGamePackages").strings(),
                 target = TargetVehicle.fromJson(json.optJSONObject("target") ?: throw IllegalArgumentException("target is required")),
+                vehicleRoot = json.optString("vehicleRoot").ifBlank { json.optJSONObject("target")?.optString("vehicleDirectory").orEmpty() },
                 installationPolicy = InstallationPolicy.fromWire(json.optString("installationPolicy")),
                 installMode = json.optString("installMode", "REPLACE"),
                 backupRequired = json.optBoolean("backupRequired", true),
@@ -139,8 +143,9 @@ enum class InstallationPolicy(val wireValue: String) {
 enum class CarModelDestinationRoot { VEHICLE, VEHICLES_DATA, DEPOT_DATA, DEPOT_ROOT }
 
 private fun normalizeStoredDestination(value: String): String {
-    val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
-    return withoutDisplayPrefix.substringAfterLast("/", missingDelimiterValue = withoutDisplayPrefix)
+    return value.replace('\\', '/')
+        .replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("^depot/", RegexOption.IGNORE_CASE), "")
 }
 
 data class CarModelFile(
