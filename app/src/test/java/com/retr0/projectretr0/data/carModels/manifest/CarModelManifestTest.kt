@@ -39,7 +39,7 @@ class CarModelManifestTest {
         root.resolve("vehicles/2001_bmw_m3_gtr_street/car.m3g").apply { parentFile!!.mkdirs(); writeText("mesh") }
         root.resolve("vehicles/data/events.dat.nct").apply { parentFile!!.mkdirs(); writeText("events") }
         val result = CarModelFolderScanner.scan(root, target = TargetVehicle("ignored", "files/.depot"))
-        assertTrue(result.report.isValid)
+        assertTrue("scanner errors: ${result.report.errors}", result.report.isValid)
         assertEquals("car.m3g", result.manifest.files.first { it.sourcePath.startsWith("vehicles/") && !it.sourcePath.contains("data") }.destinationPath)
         assertEquals(CarModelDestinationRoot.VEHICLES_DATA, result.manifest.files.first { it.sourcePath.contains("events") }.destinationRoot)
         root.deleteRecursively()

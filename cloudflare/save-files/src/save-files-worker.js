@@ -216,7 +216,8 @@ function validateCarModelManifest(manifest, modelId) {
     const root = String(file.root ?? file.destinationRoot ?? "VEHICLE").toUpperCase();
     const expected = root === "VEHICLE" ? `${target}/${path}` : root === "VEHICLES_DATA" ? `vehicles/data/${path}` : root === "DEPOT_DATA" ? `data/${path}` : root === "DEPOT_ROOT" ? path : null;
     const recognizedDepotRoot = root === "DEPOT_ROOT" && (path === "gametext.txt" || path === "asset_list_base.txtCache.txt" || /^text_[^/]+\.txt$/.test(path) || path === "gametext/asset_list_base.txtCache.txt" || /^gametext\/text_[^/]+\.txt$/.test(path));
-    if (!expected || destination !== expected || (root !== "VEHICLE" && !addon) || (root === "DEPOT_ROOT" && !recognizedDepotRoot)) return invalid("invalid_destination_path", `Destination for ${path} is not allowed`);
+    const recognizedDepotData = root === "DEPOT_DATA" && (path === "events.dat.nct" || path.startsWith("events/") || path.startsWith("data/"));
+    if (!expected || destination !== expected || (root !== "VEHICLE" && !addon) || (root === "DEPOT_ROOT" && !recognizedDepotRoot) || (root === "DEPOT_DATA" && !recognizedDepotData)) return invalid("invalid_destination_path", `Destination for ${path} is not allowed`);
     if (seen.has(path) || destinations.has(destination)) return invalid("duplicate_file_path", "Manifest contains duplicate or colliding paths");
     seen.add(path); destinations.add(destination);
     const size = Number(file.size ?? file.sizeBytes); const sha256 = clean(file.sha256, 64).toLowerCase();

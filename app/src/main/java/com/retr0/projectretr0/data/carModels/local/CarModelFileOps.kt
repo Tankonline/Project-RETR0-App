@@ -76,8 +76,12 @@ class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelF
     override fun exists(path: String) = service.exists(path)
     override fun isDirectory(path: String) = service.isDirectory(path)
 
-    override fun listDirectories(packageRoot: String, directory: String): List<String> =
-        entries(packageRoot, directory).filter { it.type == 'D' }.map { it.name }
+    override fun listDirectories(packageRoot: String, directory: String): List<String> {
+        android.util.Log.i("RETR0-CarModels", "listDirectories root=$packageRoot directory=$directory")
+        val result = entries(packageRoot, directory).filter { it.type == 'D' }.map { it.name }
+        android.util.Log.i("RETR0-CarModels", "listDirectories result count=${result.size} directory=$directory")
+        return result
+    }
 
     override fun listTree(packageRoot: String, directory: String): List<RemoteFile> {
         val files = mutableListOf<RemoteFile>()
@@ -114,11 +118,20 @@ class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelF
     }
 
     private data class Entry(val type: Char, val size: Long, val name: String)
-    private fun entries(packageRoot: String, path: String): List<Entry> =
+    private fun entries(packageRoot: String, path: String): List<Entry> = try {
+        android.util.Log.i("RETR0-CarModels", "AIDL listDirectoryEntries root=$packageRoot path=$path")
         service.listDirectoryEntries(packageRoot, path).mapNotNull { raw ->
             val parts = raw.split('\t', limit = 3)
             if (parts.size != 3 || parts[0].length != 1) null else Entry(parts[0][0], parts[1].toLongOrNull() ?: 0L, parts[2])
         }
+    } catch (error: Throwable) {
+        android.util.Log.e("RETR0-CarModels", "AIDL listDirectoryEntries failed root=$packageRoot path=$path", error)
+        throw CarModelException(
+            CarModelErrorCode.VEHICLES_UNREADABLE,
+            "Unable to enumerate RR3 directory '$path': ${error.message ?: error.javaClass.simpleName}",
+            error,
+        )
+    }
 
     private companion object { const val MAX_FILES = 2_000; const val MAX_DEPTH = 8 }
 }

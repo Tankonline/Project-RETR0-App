@@ -69,7 +69,23 @@ class CarModelEngine(
     private fun lockFor(gamePackage: String, vehicleDirectory: String) = locks.computeIfAbsent(vehicleKey(gamePackage, vehicleDirectory)) { Mutex() }
 
     suspend fun listVehicles(ops: CarModelFileOps, gamePackage: String): Result<List<String>> = io(CarModelErrorCode.VEHICLES_UNREADABLE) {
-        ops.listDirectories(paths.packageRoot(gamePackage), paths.vehiclesRoot(gamePackage))
+        val packageRoot = paths.packageRoot(gamePackage)
+        val filesRoot = "$packageRoot/files"
+        val depotRoot = paths.depotRoot(gamePackage)
+        val vehiclesRoot = paths.vehiclesRoot(gamePackage)
+        ensure(ops.isDirectory(packageRoot), CarModelErrorCode.VEHICLES_UNREADABLE) {
+            "RR3 package directory is unavailable: $packageRoot"
+        }
+        ensure(ops.isDirectory(filesRoot), CarModelErrorCode.VEHICLES_UNREADABLE) {
+            "RR3 files directory is unavailable: $filesRoot"
+        }
+        ensure(ops.isDirectory(depotRoot), CarModelErrorCode.VEHICLES_UNREADABLE) {
+            "RR3 depot directory is unavailable: $depotRoot"
+        }
+        ensure(ops.isDirectory(vehiclesRoot), CarModelErrorCode.VEHICLES_UNREADABLE) {
+            "RR3 vehicles directory is unavailable: $vehiclesRoot"
+        }
+        ops.listDirectories(packageRoot, vehiclesRoot)
             .filter { CarModelPaths.SAFE_VEHICLE_DIR.matches(it) }.sortedBy { it.lowercase() }
     }.logged("TARGET", "list vehicles", gamePackage, null) { "${it.size} vehicles" }
 
@@ -226,9 +242,16 @@ class CarModelEngine(
         val target = paths.vehicleDir(gamePackage, vehicleDirectory)
         val occupied = store.current.activeInstall(gamePackage, vehicleDirectory)
         val exists = ops.isDirectory(target)
-        val existing = existingAddonFiles(ops, gamePackage, vehicleDirectory, target, exists)
+        // Add-ons create a vehicle folder. Avoid recursive scans entirely; shared-root
+        // destinations are checked individually by their exact paths below.
         val destinations = manifest.files.map { file -> addonKey(file.destinationRoot, safePath(file.destinationPath)) }
         ensure(destinations.distinct().size == destinations.size, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "The add-on contains duplicate destination paths" }
+        val existing = manifest.files.mapNotNull { file ->
+            val destination = paths.destination(gamePackage, vehicleDirectory, file)
+            if (!ops.exists(destination)) return@mapNotNull null
+            val relative = safePath(file.destinationPath)
+            addonKey(file.destinationRoot, relative) to RemoteFile(relative, 0L)
+        }.toMap()
         val previews = manifest.files.map { file ->
             val key = addonKey(file.destinationRoot, safePath(file.destinationPath))
             val current = existing[key]
@@ -265,7 +288,12 @@ class CarModelEngine(
             val existed = ops.isDirectory(target)
             val sources = verifiedSources(model)
             ensure(ops.ensureGameStopped(gamePackage), CarModelErrorCode.GAME_RUNNING)
-            val existing = existingAddonFiles(ops, gamePackage, vehicleDirectory, target, existed)
+                val existing = sources.associate { source ->
+                addonKey(source.entry.destinationRoot, source.relative) to RemoteFile(source.relative, 0L)
+            }.filterKeys { key ->
+                val source = sources.first { addonKey(it.entry.destinationRoot, it.relative) == key }
+                ops.exists(paths.destination(gamePackage, vehicleDirectory, source.entry))
+            }
             val destinations = sources.map { source -> addonKey(source.entry.destinationRoot, source.relative).lowercase() }
             ensure(destinations.distinct().size == destinations.size, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "The add-on contains duplicate destination paths" }
             val collisionEntries = sources.mapNotNull { source ->
@@ -373,19 +401,6 @@ class CarModelEngine(
         val fileRoot = if (root == "VEHICLE") "" else "$root/"
         return "$backupDir/files/$fileRoot${safePath(relative)}"
     }
-    private fun existingAddonFiles(ops: CarModelFileOps, gamePackage: String, vehicleDirectory: String, target: String, existed: Boolean): Map<String, RemoteFile> {
-        val result = linkedMapOf<String, RemoteFile>()
-        if (existed) ops.listTree(paths.packageRoot(gamePackage), target).forEach {
-            result[addonKey(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE, it.relativePath)] = it
-            result[it.relativePath.lowercase()] = it
-        }
-        fun add(root: com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot, dir: String) { if (ops.isDirectory(dir)) ops.listTree(paths.packageRoot(gamePackage), dir).forEach { result[addonKey(root, it.relativePath)] = it } }
-        add(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA, paths.vehiclesDataRoot(gamePackage))
-        add(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA, paths.depotDataRoot(gamePackage))
-        add(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT, paths.depotRoot(gamePackage))
-        return result
-    }
-
     private data class VerifiedSource(val relative: String, val file: File, val hash: String, val entry: com.retr0.projectretr0.data.carModels.manifest.CarModelFile)
     private fun verifiedSources(model: LocalCarModel): List<VerifiedSource> {
         val libraryRoot = File(model.filesRoot).canonicalFile.toPath()
@@ -504,7 +519,12 @@ class CarModelEngine(
     }
 
     private suspend fun <T> io(fallback: CarModelErrorCode = CarModelErrorCode.UNEXPECTED, block: () -> T): Result<T> =
-        withContext(Dispatchers.IO) { runCatching(block).recoverCatching { throw it.asCarModelException(fallback) } }
+        withContext(Dispatchers.IO) {
+            runCatching(block).recoverCatching { error ->
+                // Preserve the stable domain code and detailed path from the privileged layer.
+                throw if (error is CarModelException) error else error.asCarModelException(fallback)
+            }
+        }
     private suspend fun <T> locked(gamePackage: String, vehicleDirectory: String, block: () -> T): Result<T> = lockFor(gamePackage, vehicleDirectory).withLock { io(block = block) }
     private suspend fun <T> locked(block: () -> T): Result<T> = io(block = block)
 
