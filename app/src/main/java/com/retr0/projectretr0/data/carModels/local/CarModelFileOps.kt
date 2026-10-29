@@ -43,11 +43,20 @@ class CarModelPaths(
     fun vehiclesRoot(gamePackage: String): String = "${depotRoot(gamePackage)}/vehicles"
     fun vehiclesDataRoot(gamePackage: String): String = "${vehiclesRoot(gamePackage)}/data"
     fun depotDataRoot(gamePackage: String): String = "${depotRoot(gamePackage)}/data"
-    fun destination(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile): String = when (file.destinationRoot) {
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> "${vehicleDir(gamePackage, vehicleDirectory)}/${file.destinationPath}"
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA -> "${vehiclesDataRoot(gamePackage)}/${file.destinationPath}"
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA -> "${depotDataRoot(gamePackage)}/${file.destinationPath}"
-        com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT -> "${depotRoot(gamePackage)}/${file.destinationPath}"
+    fun destination(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile): String {
+        val relative = file.destinationPath
+            .replace('\\', '/')
+            .removePrefix("paste to depot/")
+            .removePrefix("depot/")
+        val vehicleRelative = relative.removePrefix("vehicles/").removePrefix("$vehicleDirectory/").removePrefix("$vehicleDirectory/").removePrefix("$vehicleDirectory/")
+        val vehiclesDataRelative = relative.removePrefix("vehicles/data/").removePrefix("data/")
+        val depotDataRelative = relative.removePrefix("data/").removePrefix("data/")
+        return when (file.destinationRoot) {
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> "${vehicleDir(gamePackage, vehicleDirectory)}/$vehicleRelative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA -> "${vehiclesDataRoot(gamePackage)}/$vehiclesDataRelative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA -> "${depotDataRoot(gamePackage)}/$depotDataRelative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT -> "${depotRoot(gamePackage)}/$relative"
+        }
     }
     fun vehicleDir(gamePackage: String, vehicleDirectory: String): String {
         requireSafe(vehicleDirectory)
@@ -76,8 +85,12 @@ class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelF
     override fun exists(path: String) = service.exists(path)
     override fun isDirectory(path: String) = service.isDirectory(path)
 
-    override fun listDirectories(packageRoot: String, directory: String): List<String> =
-        entries(packageRoot, directory).filter { it.type == 'D' }.map { it.name }
+    override fun listDirectories(packageRoot: String, directory: String): List<String> {
+        android.util.Log.i("RETR0-CarModels", "listDirectories root=$packageRoot directory=$directory")
+        val result = entries(packageRoot, directory).filter { it.type == 'D' }.map { it.name }
+        android.util.Log.i("RETR0-CarModels", "listDirectories result count=${result.size} directory=$directory")
+        return result
+    }
 
     override fun listTree(packageRoot: String, directory: String): List<RemoteFile> {
         val files = mutableListOf<RemoteFile>()
@@ -114,11 +127,20 @@ class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelF
     }
 
     private data class Entry(val type: Char, val size: Long, val name: String)
-    private fun entries(packageRoot: String, path: String): List<Entry> =
+    private fun entries(packageRoot: String, path: String): List<Entry> = try {
+        android.util.Log.i("RETR0-CarModels", "AIDL listDirectoryEntries root=$packageRoot path=$path")
         service.listDirectoryEntries(packageRoot, path).mapNotNull { raw ->
             val parts = raw.split('\t', limit = 3)
             if (parts.size != 3 || parts[0].length != 1) null else Entry(parts[0][0], parts[1].toLongOrNull() ?: 0L, parts[2])
         }
+    } catch (error: Throwable) {
+        android.util.Log.e("RETR0-CarModels", "AIDL listDirectoryEntries failed root=$packageRoot path=$path", error)
+        throw CarModelException(
+            CarModelErrorCode.VEHICLES_UNREADABLE,
+            "Unable to enumerate RR3 directory '$path': ${error.message ?: error.javaClass.simpleName}",
+            error,
+        )
+    }
 
     private companion object { const val MAX_FILES = 2_000; const val MAX_DEPTH = 8 }
 }

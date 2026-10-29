@@ -16,6 +16,8 @@ data class CarModelManifest(
     val supportedVersions: List<String> = emptyList(),
     val supportedGamePackages: List<String>,
     val target: TargetVehicle,
+    /** Canonical vehicle directory root. Vehicle file destinations are relative to this root. */
+    val vehicleRoot: String = target.vehicleDirectory,
     val installationPolicy: InstallationPolicy = InstallationPolicy.FULL_DIRECTORY_REPLACEMENT,
     val installMode: String = "REPLACE",
     val backupRequired: Boolean = true,
@@ -33,6 +35,7 @@ data class CarModelManifest(
         put("supportedVersions", JSONArray(supportedVersions))
         put("supportedGamePackages", JSONArray(supportedGamePackages))
         put("target", target.toJson())
+        put("vehicleRoot", vehicleRoot)
         put("installationPolicy", installationPolicy.wireValue)
         put("installMode", installMode)
         put("backupRequired", backupRequired)
@@ -55,6 +58,7 @@ data class CarModelManifest(
                 supportedVersions = json.optJSONArray("supportedVersions").strings(),
                 supportedGamePackages = json.optJSONArray("supportedGamePackages").strings(),
                 target = TargetVehicle.fromJson(json.optJSONObject("target") ?: throw IllegalArgumentException("target is required")),
+                vehicleRoot = json.optString("vehicleRoot").ifBlank { json.optJSONObject("target")?.optString("vehicleDirectory").orEmpty() },
                 installationPolicy = InstallationPolicy.fromWire(json.optString("installationPolicy")),
                 installMode = json.optString("installMode", "REPLACE"),
                 backupRequired = json.optBoolean("backupRequired", true),
@@ -138,6 +142,12 @@ enum class InstallationPolicy(val wireValue: String) {
 
 enum class CarModelDestinationRoot { VEHICLE, VEHICLES_DATA, DEPOT_DATA, DEPOT_ROOT }
 
+private fun normalizeStoredDestination(value: String): String {
+    return value.replace('\\', '/')
+        .replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("^depot/", RegexOption.IGNORE_CASE), "")
+}
+
 data class CarModelFile(
     val sourcePath: String,
     val destinationPath: String,
@@ -151,11 +161,11 @@ data class CarModelFile(
     val destinationRoot: CarModelDestinationRoot = CarModelDestinationRoot.VEHICLE,
 ) {
     fun toJson() = JSONObject().put("sourcePath", sourcePath).put("path", sourcePath)
-        .put("destinationPath", destinationPath).put("destinationRelativePath", destinationPath).put("role", role)
+        .put("destinationPath", normalizeStoredDestination(destinationPath)).put("destinationRelativePath", normalizeStoredDestination(destinationPath)).put("role", role)
         .put("detectedFormat", detectedFormat).put("variant", variant ?: JSONObject.NULL).put("required", required)
         .put("sizeBytes", sizeBytes).put("size", sizeBytes).put("sha256", sha256).put("contentType", contentType)
         .put("destinationRoot", destinationRoot.name).put("root", destinationRoot.name)
-    companion object { fun fromJson(j: JSONObject) = CarModelFile(j.getString("sourcePath"), j.getString("destinationPath"), j.optString("role", "unknown"), j.optString("detectedFormat", "unknown"), j.optString("variant").takeIf { it.isNotBlank() && it != "null" }, j.optBoolean("required", true), j.getLong("sizeBytes"), j.getString("sha256"), j.optString("contentType", "application/octet-stream"), runCatching { CarModelDestinationRoot.valueOf(j.optString("destinationRoot")) }.getOrDefault(CarModelDestinationRoot.VEHICLE)) }
+    companion object { fun fromJson(j: JSONObject) = CarModelFile(j.getString("sourcePath"), normalizeStoredDestination(j.getString("destinationPath")), j.optString("role", "unknown"), j.optString("detectedFormat", "unknown"), j.optString("variant").takeIf { it.isNotBlank() && it != "null" }, j.optBoolean("required", true), j.getLong("sizeBytes"), j.getString("sha256"), j.optString("contentType", "application/octet-stream"), runCatching { CarModelDestinationRoot.valueOf(j.optString("destinationRoot")) }.getOrDefault(CarModelDestinationRoot.VEHICLE)) }
 }
 
 private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else (0 until length()).map { getString(it) }

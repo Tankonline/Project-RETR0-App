@@ -207,6 +207,8 @@ fun CarModelImportWizard(
         }
     }
     // Target step (REPLACE): list the vehicles of the selected package, then inspect the chosen one.
+    // For ADDON installs the destination folder is created directly; no existing vehicle
+    // enumeration or vehicle-folder scan is required. REPLACE retains its legacy validation.
     LaunchedEffect(step, mode, gamePackage, liveService) {
         if (step != WizardSteps.TARGET || mode != InstallMode.REPLACE) return@LaunchedEffect
         vehicles = null; vehiclesError = null
@@ -217,7 +219,12 @@ fun CarModelImportWizard(
                 val guess = vehicle ?: savedModel?.vehicleDirectory ?: staged?.folderName
                 vehicle = list.firstOrNull { it.equals(guess, ignoreCase = true) }
             }
-            .onFailure { vehiclesError = it.toUiError("RR3 ${gamePackage.short} vehicles could not be read. Is the game installed?") }
+            .onFailure {
+                val detail = it.toUiError()
+                vehiclesError = detail.copy(
+                    message = "${detail.message}\n\nExpected path: /storage/emulated/0/Android/data/${gamePackage.id}/files/.depot/vehicles",
+                )
+            }
     }
     LaunchedEffect(step, mode, gamePackage, vehicle, manifest, liveService) {
         inspection = null; zeroMatchAccepted = false

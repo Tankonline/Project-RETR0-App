@@ -543,15 +543,26 @@ class Retr0UserService : IRetr0UserService.Stub() {
             "/storage/emulated/0/Android/data/com.ea.games.r3_row",
             "/storage/emulated/0/Android/data/com.ea.games.r3_na",
         )
-        if (packageRoot !in allowedPackageRoots || path.indexOf('\u0000') >= 0) throw SecurityException("Unsupported package root")
+        if (packageRoot !in allowedPackageRoots || path.indexOf('\u0000') >= 0) {
+            Log.e(TAG, "listDirectoryEntries rejected root=$packageRoot path=$path reason=unsupported_root_or_nul")
+            throw SecurityException("Unsupported package root")
+        }
         val root = File(packageRoot)
         val candidate = File(path)
         val rootCanonical = root.canonicalFile
         val candidateCanonical = candidate.canonicalFile
         val rootPath = rootCanonical.toPath()
         val candidatePath = candidateCanonical.toPath()
-        if (candidatePath != rootPath && !candidatePath.startsWith(rootPath)) throw SecurityException("Path escapes package root")
-        if (!candidate.exists() || !candidate.isDirectory || Files.isSymbolicLink(candidate.toPath())) throw IllegalArgumentException("Not a readable directory")
+        if (candidatePath != rootPath && !candidatePath.startsWith(rootPath)) {
+            Log.e(TAG, "listDirectoryEntries rejected root=$packageRoot path=$path reason=path_escape")
+            throw SecurityException("Path escapes package root")
+        }
+        if (!candidate.exists()) {
+            Log.e(TAG, "listDirectoryEntries missing path=$path")
+            throw IllegalArgumentException("Directory does not exist: $path")
+        }
+        if (!candidate.isDirectory) throw IllegalArgumentException("Path is not a directory: $path")
+        if (Files.isSymbolicLink(candidate.toPath())) throw SecurityException("Directory is a symbolic link: $path")
         val children = candidate.listFiles()
             ?: throw IllegalStateException("Directory could not be listed: $path")
         Log.i(TAG, "listDirectory raw children=${children.size}: $path")

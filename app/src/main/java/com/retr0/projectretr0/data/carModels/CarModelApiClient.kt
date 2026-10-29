@@ -46,6 +46,7 @@ class CarModelApiClient(
     private val base = requireHttpsBase(baseUrl)
     private val identity = context?.applicationContext?.let(::SkinInstallationIdentity)
 
+
     init {
         // Keep startup diagnostics limited to routing metadata; never log credentials or signed paths.
         CarModelLog.info("client_initialized", "host=${base.host} buildType=${if (BuildConfig.DEBUG) "debug" else "release"}")
@@ -158,8 +159,19 @@ class CarModelApiClient(
                 CarModelLog.step("response method=$method path=${url.encodedPath} status=${response.code} requestId=${requestId ?: "none"}")
                 if (!response.isSuccessful) {
                     val error = SkinApiParser.parseError(responseBody)
-                    CarModelLog.step("response_error path=${url.encodedPath} code=${error?.code ?: "http_${response.code}"} requestId=${error?.requestId ?: requestId ?: "none"}")
-                    throw SkinApiException(error?.message ?: "Car-model service returned ${response.code}", response.code, error?.code, error?.requestId ?: requestId, error?.duplicateId)
+                    val resolvedCode = error?.code ?: "http_${response.code}"
+                    val resolvedRequestId = error?.requestId ?: requestId
+                    val safeBody = responseBody
+                        .replace(Regex("(?i)(x-signature|authorization|auth_key|private_key|secret)\\s*[:=]\\s*[^,}\\s]+"), "$1=<redacted>")
+                        .take(2000)
+                    CarModelLog.fail(
+                        CarModelErrorCode.UNEXPECTED,
+                        "api_rejected method=$method path=${url.encodedPath} status=${response.code} " +
+                            "code=$resolvedCode requestId=${resolvedRequestId ?: "none"} " +
+                            "body=${safeBody.ifBlank { "<empty>" }}"
+                    )
+                    CarModelLog.step("response_error path=${url.encodedPath} code=$resolvedCode requestId=${resolvedRequestId ?: "none"}")
+                    throw SkinApiException(error?.message ?: "Car-model service returned ${response.code}", response.code, error?.code, resolvedRequestId, error?.duplicateId)
                 }
                 runCatching { parser(responseBody) }.getOrElse { throw SkinApiException("Invalid car-model service response", response.code, requestId = requestId, cause = it) }
             }
@@ -246,6 +258,10 @@ class CarModelApiClient(
         root.optJSONArray("files")?.let { files -> (0 until files.length()).forEach { index ->
             val item = files.getJSONObject(index)
             listOf("sourcePath", "destinationPath").forEach { key -> item.optString(key).takeIf(String::isNotBlank)?.let(::safeRelativePath) }
+            val destination = item.optString("destinationPath")
+            require(!destination.contains("paste to depot", ignoreCase = true)) {
+                "Display label found in manifest destination at files[$index]"
+            }
         } }
         requireNoAbsolutePaths(root, "manifest")
     }
