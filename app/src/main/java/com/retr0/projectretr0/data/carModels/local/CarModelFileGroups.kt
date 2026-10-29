@@ -13,8 +13,9 @@ enum class CarModelFileGroup(val label: String, val extensionLabel: String) {
 
 object CarModelFileGroups {
     private val textureFormats = setOf("dds.z", "dds", "etc", "atc", "ptc", "pvr", "dxt")
-    // Files that travel with downloads but are never part of a vehicle directory.
-    private val ignoredExtensions = setOf("txt", "md", "nfo", "url", "htm", "html", "pdf", "doc", "docx", "rtf", "zip", "rar", "7z", "ini", "db", "lnk")
+    // Only obvious host/download metadata is ignored. RR3 text/localisation/configuration
+    // files are valid mod assets and must remain installable.
+    private val ignoredExtensions = setOf("md", "nfo", "url", "htm", "html", "pdf", "doc", "docx", "rtf", "zip", "rar", "7z", "lnk")
 
     fun groupOf(relativePath: String): CarModelFileGroup {
         // File types come from the scanner so the wizard and the upload manifest agree.
@@ -29,7 +30,7 @@ object CarModelFileGroups {
         }
     }
 
-    /** True for files that are skipped at import and never installed (readme.txt, Thumbs.db, dotfiles…). */
+    /** True only for metadata/archive files that are not part of a vehicle directory. */
     fun isIgnored(fileName: String): Boolean {
         val lower = fileName.lowercase()
         return lower.startsWith(".") || lower.substringAfterLast('.', "") in ignoredExtensions

@@ -20,7 +20,7 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
         val supportedVersions: List<String> = emptyList(),
         val supportedGamePackages: List<String> = listOf(packageId),
         val target: TargetVehicle,
-        val installMode: String = "REPLACE",
+        val installMode: String = "ADDON",
         val cover: MediaFile? = null,
         val screenshots: List<MediaFile> = emptyList(),
     )
@@ -29,6 +29,16 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
         data class Event(val name: String, val completed: Int, val total: Int) : UploadProgress()
     }
     data class UploadResult(val draftId: String, val status: String, val uploadedFiles: Int, val uploadedMedia: Int, val manifest: CarModelManifest)
+
+    private fun normalizeWireSource(value: String): String {
+        val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+        return withoutDisplayPrefix.removePrefix("depot/")
+    }
+
+    private fun normalizeWireDestination(value: String): String {
+        val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+        return withoutDisplayPrefix.substringAfterLast("/", missingDelimiterValue = withoutDisplayPrefix)
+    }
 
     suspend fun upload(request: UploadRequest, onProgress: (UploadProgress) -> Unit = {}): UploadResult {
         coroutineContext.ensureActive()
@@ -42,19 +52,28 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
         // The local manifest keeps each destination relative to its declared depot root.
         // The Worker validates the complete wire destination, including non-vehicle roots.
         val wireManifest = manifest.copy(files = manifest.files.map { file ->
+            val normalizedDestinationPath = normalizeWireDestination(file.destinationPath)
+            CarModelLog.step("upload_manifest_file source=${file.sourcePath} wireSource=${normalizeWireSource(file.sourcePath)} root=${file.destinationRoot} rawDestination=${file.destinationPath} normalizedDestination=$normalizedDestinationPath")
             val wireDestination = when (file.destinationRoot) {
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE ->
-                    "${manifest.target.vehicleDirectory}/${file.destinationPath}"
+                    "${manifest.target.vehicleDirectory}/$normalizedDestinationPath"
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA ->
-                    "vehicles/data/${file.destinationPath}"
+                    "vehicles/data/$normalizedDestinationPath"
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA ->
-                    "data/${file.destinationPath}"
+                    "data/$normalizedDestinationPath"
                 com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT ->
-                    file.destinationPath
+                    normalizedDestinationPath
             }
-            file.copy(destinationPath = wireDestination)
+            file.copy(
+                sourcePath = normalizeWireSource(file.sourcePath),
+                destinationPath = wireDestination,
+            )
         })
         val manifestJson = wireManifest.toJson().toString()
+        val manifestPreview = wireManifest.files
+            .filter { it.destinationRoot == com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT }
+            .joinToString(",") { it.destinationPath }
+        CarModelLog.step("upload_manifest depotRoot=$manifestPreview")
         require(manifestJson.toByteArray(Charsets.UTF_8).size <= CarModelLimits.MAX_MANIFEST_BYTES) { "Car-model manifest exceeds 256 KiB." }
         val idempotency = "car-model-${manifest.packageId}-${sha256(manifestJson.toByteArray()).take(32)}"
         onProgress(UploadProgress.Event("draft", 0, manifest.files.size + 1))

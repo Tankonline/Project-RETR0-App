@@ -138,6 +138,11 @@ enum class InstallationPolicy(val wireValue: String) {
 
 enum class CarModelDestinationRoot { VEHICLE, VEHICLES_DATA, DEPOT_DATA, DEPOT_ROOT }
 
+private fun normalizeStoredDestination(value: String): String {
+    val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+    return withoutDisplayPrefix.substringAfterLast("/", missingDelimiterValue = withoutDisplayPrefix)
+}
+
 data class CarModelFile(
     val sourcePath: String,
     val destinationPath: String,
@@ -151,11 +156,11 @@ data class CarModelFile(
     val destinationRoot: CarModelDestinationRoot = CarModelDestinationRoot.VEHICLE,
 ) {
     fun toJson() = JSONObject().put("sourcePath", sourcePath).put("path", sourcePath)
-        .put("destinationPath", destinationPath).put("destinationRelativePath", destinationPath).put("role", role)
+        .put("destinationPath", normalizeStoredDestination(destinationPath)).put("destinationRelativePath", normalizeStoredDestination(destinationPath)).put("role", role)
         .put("detectedFormat", detectedFormat).put("variant", variant ?: JSONObject.NULL).put("required", required)
         .put("sizeBytes", sizeBytes).put("size", sizeBytes).put("sha256", sha256).put("contentType", contentType)
         .put("destinationRoot", destinationRoot.name).put("root", destinationRoot.name)
-    companion object { fun fromJson(j: JSONObject) = CarModelFile(j.getString("sourcePath"), j.getString("destinationPath"), j.optString("role", "unknown"), j.optString("detectedFormat", "unknown"), j.optString("variant").takeIf { it.isNotBlank() && it != "null" }, j.optBoolean("required", true), j.getLong("sizeBytes"), j.getString("sha256"), j.optString("contentType", "application/octet-stream"), runCatching { CarModelDestinationRoot.valueOf(j.optString("destinationRoot")) }.getOrDefault(CarModelDestinationRoot.VEHICLE)) }
+    companion object { fun fromJson(j: JSONObject) = CarModelFile(j.getString("sourcePath"), normalizeStoredDestination(j.getString("destinationPath")), j.optString("role", "unknown"), j.optString("detectedFormat", "unknown"), j.optString("variant").takeIf { it.isNotBlank() && it != "null" }, j.optBoolean("required", true), j.getLong("sizeBytes"), j.getString("sha256"), j.optString("contentType", "application/octet-stream"), runCatching { CarModelDestinationRoot.valueOf(j.optString("destinationRoot")) }.getOrDefault(CarModelDestinationRoot.VEHICLE)) }
 }
 
 private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else (0 until length()).map { getString(it) }

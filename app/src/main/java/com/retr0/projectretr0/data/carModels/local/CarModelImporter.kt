@@ -29,6 +29,7 @@ data class StagedCarModel(
     val fileCount: Int,
     val totalBytes: Long,
     val ignoredFiles: List<String>,
+    val effectiveRoot: String = "",
 )
 
 data class CarModelMediaAsset(

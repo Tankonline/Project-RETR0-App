@@ -7,6 +7,7 @@ import com.retr0.projectretr0.data.carModels.CarModelApiClient
 import com.retr0.projectretr0.data.carModels.CarModelUploadManager
 import com.retr0.projectretr0.data.carModels.CarModelLog
 import com.retr0.projectretr0.data.carModels.CarModelErrorCode
+import com.retr0.projectretr0.data.skins.SkinApiException
 import com.retr0.projectretr0.data.carModels.CloudflareCarModelHubRepository
 import com.retr0.projectretr0.data.carModels.manifest.TargetVehicle
 import java.io.File
@@ -44,6 +45,7 @@ class CarModelsViewModel private constructor(context: Context) {
             supportedVersions = model.manifest.supportedVersions,
             supportedGamePackages = model.manifest.supportedGamePackages,
             target = model.manifest.target,
+            installMode = "ADDON",
             cover = model.coverPath?.let { File(it).takeIf(File::isFile)?.let { file -> CarModelUploadManager.MediaFile(file, "image/webp") } },
             screenshots = model.screenshotPaths.mapNotNull { path -> File(path).takeIf(File::isFile)?.let { file -> CarModelUploadManager.MediaFile(file, "image/webp") } },
         )) { progress ->
@@ -57,7 +59,19 @@ class CarModelsViewModel private constructor(context: Context) {
         store.log(CarModelActivityKind.IMPORT, model.name, "Draft uploaded (${result.uploadedFiles} files, ${result.uploadedMedia} media)", true)
         result
     }.onFailure { error ->
-        CarModelLog.fail(CarModelErrorCode.UNEXPECTED, "upload_failed model=$modelId cause=${error.javaClass.simpleName}")
+        when (error) {
+            is SkinApiException -> CarModelLog.fail(
+                CarModelErrorCode.UNEXPECTED,
+                "upload_failed model=$modelId status=${error.statusCode ?: "none"} " +
+                    "code=${error.errorCode ?: "none"} requestId=${error.requestId ?: "none"} " +
+                    "message=${error.message ?: "none"}"
+            )
+            else -> CarModelLog.fail(
+                CarModelErrorCode.UNEXPECTED,
+                "upload_failed model=$modelId cause=${error.javaClass.simpleName} " +
+                    "message=${error.message ?: "none"}"
+            )
+        }
     }
 
     suspend fun deleteRemote(context: Context, modelId: String): Result<Unit> = runCatching {

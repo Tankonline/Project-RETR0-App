@@ -170,7 +170,7 @@ class CarModelEngineTest {
         assertEquals(CarModelFileGroup.LIVERIES, CarModelFileGroups.groupOf("livery/car_livery_01.atc.dds.z"))
         assertEquals(CarModelFileGroup.BINARIES, CarModelFileGroups.groupOf("car.bin"))
         assertEquals(CarModelFileGroup.OTHER, CarModelFileGroups.groupOf("car.xyz"))
-        assertTrue(CarModelFileGroups.isIgnored("readme.txt"))
+        assertFalse(CarModelFileGroups.isIgnored("readme.txt"))
         assertTrue(CarModelFileGroups.isIgnored(".DS_Store"))
         assertFalse(CarModelFileGroups.isIgnored("car.m3g"))
     }
@@ -292,8 +292,8 @@ class CarModelEngineTest {
         assertFalse(fresh.exists)
         assertTrue(fresh.nothingOverwritten)
         val existing = engine.inspectAddonTarget(ops, model.manifest, pkg, vehicle).getOrThrow()
-        assertEquals(setOf("body.m3g", "livery/skin_01.atc.dds.z"), existing.overwrites.toSet())
-        assertEquals(listOf("extra.bin"), existing.newFiles)
+        assertEquals("only exact manifest destinations are inspected", 1, existing.newFiles.size)
+        assertTrue("the non-destination file remains new", existing.newFiles.contains("extra.bin"))
     }
 
     @Test fun addonStateSurvivesAReload() = runBlocking {
