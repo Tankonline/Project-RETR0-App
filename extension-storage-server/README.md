@@ -47,8 +47,30 @@ Not yet enabled:
 - live Community Hub server selection;
 - the Tauri provider GUI binary.
 
-See [INSTALLATION.md](INSTALLATION.md), [CHANGELOG.md](CHANGELOG.md), and
-[docs/roadmap.md](docs/roadmap.md) before using this project.
+## Installation
+
+See the full [installation guide](INSTALLATION.md) before running a node.
+
+Quick local development start:
+
+```powershell
+cd storage-node
+go test ./...
+go run .\cmd\node -storage-root .\dev-data -listen 127.0.0.1:8788
+```
+
+Then, from another terminal:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8788/healthz
+Invoke-WebRequest http://127.0.0.1:8788/v1/local/capacity
+```
+
+The current node listens on loopback and is for local development only. Do not
+expose it to the public Internet or use production credentials.
+
+See also [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
+[CHANGELOG.md](CHANGELOG.md), and [docs/roadmap.md](docs/roadmap.md).
 
 ## Planned safeguards
 
