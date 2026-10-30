@@ -369,7 +369,10 @@ async function uploadCarModelImage(bytes, request, env, id, role, owner, request
   const model = await ownedCarModel(env.SKINS_DB, id, owner);
   if (!model) return fail(404, "model_not_found", "Owned draft not found");
   const detected = detectImage(bytes);
-  if (!detected || (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase() !== detected.mime) return fail(415, "invalid_image", "Image type does not match its bytes");
+  const declaredType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  if (!detected || declaredType !== detected.mime || detected.mime !== "image/webp") return fail(415, "invalid_image", "Car-model media must be a valid WebP image");
+  const maxBytes = role === "cover" ? MAX_COVER_BYTES : MAX_SCREENSHOT_BYTES;
+  if (bytes.length <= 0 || bytes.length > maxBytes) return fail(413, "image_too_large", `Car-model ${role === "cover" ? "cover" : "screenshot"} exceeds the size limit`);
   const digest = await sha256Hex(bytes);
   if (role === "cover") {
     const key = `car-models/${id}/cover.${detected.extension}`;
@@ -381,6 +384,9 @@ async function uploadCarModelImage(bytes, request, env, id, role, owner, request
   }
   const position = Number(role.split(":")[1]);
   if (!Number.isInteger(position) || position < 1 || position > 8) return fail(400, "invalid_position", "Screenshot position must be 1-8");
+  const count = await env.SKINS_DB.prepare("SELECT COUNT(*) AS count FROM car_model_screenshots WHERE model_id = ?").bind(id).first();
+  const alreadyExists = await env.SKINS_DB.prepare("SELECT 1 FROM car_model_screenshots WHERE model_id = ? AND position = ? LIMIT 1").bind(id, position).first();
+  if (!alreadyExists && Number(count?.count || 0) >= 8) return fail(409, "screenshot_limit", "A car model can have at most 8 screenshots");
   const key = `car-models/${id}/screenshots/${String(position).padStart(2, "0")}.${detected.extension}`;
   await env.COMMUNITY_BUCKET.put(key, bytes, { httpMetadata: { contentType: detected.mime }, customMetadata: { modelId: id, ownerId: owner, role: "screenshot", position: String(position), sha256: digest } });
   const stored = await env.COMMUNITY_BUCKET.head(key);
