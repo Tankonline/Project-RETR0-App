@@ -1,0 +1,64 @@
+openapi: 3.1.0
+info:
+  title: Project RETR0 Extension Storage Protocol
+  version: 1.0.0
+  description: Control-plane protocol for managed, replaceable Community Hub storage nodes.
+servers:
+  - url: http://127.0.0.1:8788
+    description: Local development node only
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      responses:
+        '200':
+          description: Node is running
+  /v1/local/capacity:
+    get:
+      summary: Local capacity information
+      responses:
+        '200':
+          description: Capacity snapshot
+  /v1/objects/{sha256}:
+    parameters:
+      - name: sha256
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+    head:
+      summary: Read object metadata using a signed command
+      responses:
+        '200':
+          description: Object exists
+        '404':
+          description: Object not found
+    get:
+      summary: Stream an object using a signed command
+      responses:
+        '200':
+          description: Object bytes
+        '404':
+          description: Object not found
+    put:
+      summary: Store an object using a signed PUT_OBJECT command
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: {}
+      responses:
+        '201':
+          description: Object stored and verified
+        '400':
+          description: Invalid command or object
+        '409':
+          description: Replay or conflicting object
+  /v1/commands/delete:
+    post:
+      summary: Delete an object using an admin-authorized signed command
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          description: Command is not authorized

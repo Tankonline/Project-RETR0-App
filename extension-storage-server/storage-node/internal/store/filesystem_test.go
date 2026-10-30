@@ -4,20 +4,23 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
+	"io"
 	"testing"
 )
+
+func testHash(content []byte) string {
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:])
+}
 
 func TestPutAndOpen(t *testing.T) {
 	root := t.TempDir()
 	content := []byte("hello extension storage")
-	digest := sha256.Sum256(content)
-	hash := hex.EncodeToString(digest[:])
 	storage := FileSystemStore{Root: root}
-	if _, err := storage.Put(hash, int64(len(content)), bytes.NewReader(content)); err != nil {
+	if _, err := storage.Put(testHash(content), int64(len(content)), bytes.NewReader(content)); err != nil {
 		t.Fatal(err)
 	}
-	file, info, err := storage.Open(hash)
+	file, info, err := storage.Open(testHash(content))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +28,7 @@ func TestPutAndOpen(t *testing.T) {
 	if info.Size() != int64(len(content)) {
 		t.Fatalf("size = %d", info.Size())
 	}
-	got, err := os.ReadFile(file.Name())
+	got, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,5 +42,14 @@ func TestPutRejectsWrongHash(t *testing.T) {
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if _, err := storage.Put(hash, 3, bytes.NewReader([]byte("bad"))); err == nil {
 		t.Fatal("expected hash mismatch")
+	}
+}
+
+func TestObjectPathRejectsTraversalAndMalformedHashes(t *testing.T) {
+	storage := FileSystemStore{Root: t.TempDir()}
+	for _, value := range []string{"", "../object", "zzzz", "abc"} {
+		if _, err := storage.ObjectPath(value); err == nil {
+			t.Fatalf("expected invalid hash for %q", value)
+		}
 	}
 }
