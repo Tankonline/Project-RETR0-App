@@ -8,8 +8,6 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -684,12 +682,8 @@ private fun CarModelMediaStrip(
 ) {
     val items = buildList { cover?.let { add(it to true) }; screenshots.forEach { add(it to false) } }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(end = 12.dp),
-        ) {
-            items(items) { (asset, isCover) ->
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items.forEach { (asset, isCover) ->
                 Box(Modifier.size(136.dp), contentAlignment = Alignment.TopEnd) {
                     val bitmap = remember(asset.file.absolutePath) { android.graphics.BitmapFactory.decodeFile(asset.file.absolutePath) }
                     if (bitmap != null) Image(
@@ -703,27 +697,11 @@ private fun CarModelMediaStrip(
                     else TextButton(onClick = { onSetCover(asset) }, modifier = Modifier.align(Alignment.BottomCenter)) { Text("Set cover") }
                 }
             }
-            item {
-                if (cover == null) {
-                    SecondaryButton("Add cover", Modifier.width(136.dp).height(136.dp), Icons.Filled.Image, onPickCover)
-                }
+            if (cover == null) {
+                SecondaryButton("Add cover", Modifier.width(136.dp).height(136.dp), Icons.Filled.Image, onPickCover)
             }
-            item {
-                if (screenshots.size < 8) {
-                    Box(
-                        modifier = Modifier
-                            .size(136.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(2.dp, RetroTextMuted, RoundedCornerShape(14.dp))
-                            .clickable(onClick = onPickScreenshots),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = "Add screenshots", tint = RetroAccent, modifier = Modifier.size(32.dp))
-                            Text("Add screenshots", color = RetroAccent, style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                }
+            if (screenshots.size < 8) {
+                SecondaryButton("+", Modifier.width(136.dp).height(136.dp), Icons.Filled.AddPhotoAlternate, onPickScreenshots)
             }
         }
         Text("${screenshots.size} / 8 screenshots", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
