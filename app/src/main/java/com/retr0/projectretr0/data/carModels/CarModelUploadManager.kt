@@ -86,6 +86,7 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
             .put("packageId", manifest.packageId)
             .put("packageName", manifest.metadata.name)
             .put("targetVehicleDirectory", manifest.target.vehicleDirectory)
+            .put("vehicleRoot", manifest.vehicleRoot)
             .put("metadata", manifest.metadata.toJson())
             .put("target", manifest.target.toJson())
             .put("installMode", manifest.installMode)

@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
@@ -135,6 +136,7 @@ class CarModelImporter(private val context: Context, private val store: CarModel
                 coverPath = details.cover?.let { copyMedia(it.file, File(home, "media/cover.webp")) },
                 screenshotPaths = details.screenshots.take(CarModelLimits.MAX_SCREENSHOTS).mapIndexedNotNull { index, asset -> copyMedia(asset.file, File(home, "media/screenshot_${index + 1}.webp")) },
                 ignoredFiles = staged.ignoredFiles,
+                media = listOfNotNull(details.cover?.let { CarModelMediaRecord("cover", "media/cover.webp", it.mimeType, it.sizeBytes, sha256(File(home, "media/cover.webp"))) }) + details.screenshots.take(CarModelLimits.MAX_SCREENSHOTS).mapIndexed { index, asset -> CarModelMediaRecord("screenshot", "media/screenshot_${index + 1}.webp", asset.mimeType, asset.sizeBytes, sha256(File(home, "media/screenshot_${index + 1}.webp"))) },
                 importedAt = System.currentTimeMillis(),
             )
             store.update { state -> state.copy(models = state.models + model) }
@@ -168,6 +170,8 @@ class CarModelImporter(private val context: Context, private val store: CarModel
             }
         }
     }
+
+    private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
 
     private fun copyMedia(uri: Uri, destination: File): String? = runCatching {
         destination.parentFile?.mkdirs()
