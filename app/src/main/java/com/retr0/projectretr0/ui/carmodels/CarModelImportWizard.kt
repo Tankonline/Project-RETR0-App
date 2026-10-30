@@ -8,6 +8,8 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -192,10 +195,54 @@ fun CarModelImportWizard(
             stageProgress = null
         }
     }
-    fun processMedia(decision: CropDecision, rect: CropRect? = null) { val pending = pendingMedia ?: return; scope.launch { mediaProcessor.process(pending.first, pending.second, decision, rect).onSuccess { image -> val asset = CarModelMediaAsset(image.file, image.mimeType, image.sizeBytes, image.sourceHash, image.width, image.height); if (pending.second == SkinImageRole.COVER) form = form.copy(cover = asset) else form = form.copy(screenshots = (form.screenshots + asset).take(8)); pendingMedia = null }.onFailure { mediaError = it.message } } }
-    fun inspectMedia(uri: Uri, role: SkinImageRole) { scope.launch { mediaProcessor.inspect(uri, role.aspectRatio, role.cropTolerance).onSuccess { inspection -> pendingMedia = uri to role; if (inspection.needsCropChoice) cropRequest = ImageCropRequest(uri, inspection, role) else processMedia(CropDecision.AUTO_CROP) }.onFailure { mediaError = it.message } } }
+    fun processMedia(decision: CropDecision, rect: CropRect? = null) {
+        val pending = pendingMedia ?: return
+        scope.launch {
+            mediaProcessor.process(pending.first, pending.second, decision, rect)
+                .onSuccess { image ->
+                    val asset = CarModelMediaAsset(image.file, image.mimeType, image.sizeBytes, image.sourceHash, image.width, image.height)
+                    val duplicate = form.cover?.sha256 == asset.sha256 || form.screenshots.any { it.sha256 == asset.sha256 }
+                    if (duplicate) {
+                        mediaCache.delete(asset.file)
+                        mediaError = "That image is already selected."
+                    } else if (pending.second == SkinImageRole.COVER) {
+                        form = form.copy(cover = asset)
+                    } else {
+                        form = form.copy(screenshots = (form.screenshots + asset).take(8))
+                    }
+                    pendingMedia = null
+                }
+                .onFailure { mediaError = it.message ?: "Unable to process image."; pendingMedia = null }
+        }
+    }
+    fun inspectMedia(uri: Uri, role: SkinImageRole) {
+        scope.launch {
+            mediaError = null
+            mediaProcessor.inspect(uri, role.aspectRatio, role.cropTolerance)
+                .onSuccess { inspection ->
+                    pendingMedia = uri to role
+                    if (inspection.needsCropChoice) cropRequest = ImageCropRequest(uri, inspection, role)
+                    else processMedia(CropDecision.AUTO_CROP)
+                }
+                .onFailure { mediaError = it.message ?: "Unable to inspect image." }
+        }
+    }
+    fun removeMedia(asset: CarModelMediaAsset, cover: Boolean) {
+        mediaCache.delete(asset.file)
+        form = if (cover) form.copy(cover = null) else form.copy(screenshots = form.screenshots - asset)
+    }
+    fun setCover(asset: CarModelMediaAsset) {
+        val current = form.cover
+        form = if (current == null) {
+            form.copy(cover = asset, screenshots = form.screenshots - asset)
+        } else {
+            form.copy(cover = asset, screenshots = (form.screenshots - asset) + current)
+        }
+    }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) inspectMedia(uri, SkinImageRole.COVER) }
-    val screenshotPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris -> uris.take((8 - form.screenshots.size).coerceAtLeast(0)).forEach { inspectMedia(it, SkinImageRole.SCREENSHOT) } }
+    val screenshotPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        uris.take((8 - form.screenshots.size).coerceAtLeast(0)).forEach { inspectMedia(it, SkinImageRole.SCREENSHOT) }
+    }
 
     // Validate step: hash every staged file into the manifest.
     LaunchedEffect(step, staged) {
@@ -387,7 +434,7 @@ fun CarModelImportWizard(
             WizardSteps.VALIDATE -> StepValidate(hashProgress, relativeFiles, staged?.ignoredFiles.orEmpty(), scan?.report?.errors.orEmpty())
             WizardSteps.TARGET -> if (addon) StepAddonTarget(gamePackage, { gamePackage = it }, addonFolder, { addonFolder = it.take(120) }, addonInspection, addonError)
                 else StepTarget(gamePackage, { gamePackage = it; vehicle = null }, vehicles, vehiclesError, vehicleQuery, { vehicleQuery = it }, vehicle, { vehicle = it }, staged?.displayPath ?: "Library · ${savedModel?.name.orEmpty()}", targetPath, inspection, alreadyInstalled, zeroMatchAccepted, { zeroMatchAccepted = it }, addonOnVehicle)
-            WizardSteps.DETAILS -> StepDetails(form, { form = it }, destination.orEmpty(), saveError, uploadError, uploadProgress, mediaError, { coverPicker.launch("image/*") }, { screenshotPicker.launch("image/*") }, if (uploadError != null) ::retryCommunityPublish else null, targetLabel = if (addon) "New car folder" else "Replaced vehicle")
+            WizardSteps.DETAILS -> StepDetails(form, { form = it }, destination.orEmpty(), saveError, uploadError, uploadProgress, mediaError, { coverPicker.launch("image/*") }, { screenshotPicker.launch("image/*") }, if (uploadError != null) ::retryCommunityPublish else null, targetLabel = if (addon) "New car folder" else "Replaced vehicle", removeMedia = ::removeMedia, setCover = ::setCover)
             WizardSteps.REVIEW -> if (addon) StepAddonReview(addonInspection, addonError, destination.orEmpty(), gamePackage, manifest, uploadError, uploadProgress)
                 else StepBackup(backupState, vehicle?.let { runCatching { paths.backupDir(gamePackage.id, it) }.getOrNull() }.orEmpty(), relativeFiles, alreadyInstalled, uploadError, uploadProgress) { backupAttempt++ }
             else -> StepResult(outcome, applyProgress, destination.orEmpty(), gamePackage, relativeFiles.size, onViewBackups, onRevert = { destination?.let { onRevertRequested(gamePackage.id, it) } }, mode = mode ?: InstallMode.REPLACE)
@@ -594,7 +641,7 @@ fun StepAddonTarget(gamePackage: GamePackage, onPackage: (GamePackage) -> Unit, 
 }
 
 @Composable
-fun StepDetails(form: CarModelDetailsForm, onChange: (CarModelDetailsForm) -> Unit, vehicleDirectory: String, error: UiError?, uploadError: UiError?, uploadProgress: String?, mediaError: String?, onPickCover: () -> Unit, onPickScreenshots: () -> Unit, onRetryPublish: (() -> Unit)? = null, targetLabel: String = "Replaced vehicle") {
+fun StepDetails(form: CarModelDetailsForm, onChange: (CarModelDetailsForm) -> Unit, vehicleDirectory: String, error: UiError?, uploadError: UiError?, uploadProgress: String?, mediaError: String?, onPickCover: () -> Unit, onPickScreenshots: () -> Unit, onRetryPublish: (() -> Unit)? = null, targetLabel: String = "Replaced vehicle", removeMedia: (CarModelMediaAsset, Boolean) -> Unit = { _, _ -> }, setCover: (CarModelMediaAsset) -> Unit = {}) {
     Text("Model details", color = RetroText, style = MaterialTheme.typography.titleLarge)
     RetroField("Model name *", form.name, { onChange(form.copy(name = it.take(80))) }, placeholder = "e.g. BMW M3 GTR Street")
     RetroField("Creator", form.creator, { onChange(form.copy(creator = it.take(60))) })
@@ -608,10 +655,14 @@ fun StepDetails(form: CarModelDetailsForm, onChange: (CarModelDetailsForm) -> Un
     RetroField("Game version (optional)", form.gameVersion, { onChange(form.copy(gameVersion = it.take(24))) })
     RetroField("License / permission (optional)", form.license, { onChange(form.copy(license = it.take(120))) })
     CheckRow("Publish this model to the Community Hub", form.uploadToCommunityHub) { onChange(form.copy(uploadToCommunityHub = it)) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SecondaryButton(if (form.cover == null) "Add cover" else "Cover added", Modifier.weight(1f), Icons.Filled.Image, onPickCover)
-        SecondaryButton(if (form.screenshots.isEmpty()) "Add screenshots" else "${form.screenshots.size} screenshots", Modifier.weight(1f), Icons.Filled.AddPhotoAlternate, onPickScreenshots)
-    }
+    CarModelMediaStrip(
+        cover = form.cover,
+        screenshots = form.screenshots,
+        onPickCover = onPickCover,
+        onPickScreenshots = onPickScreenshots,
+        onRemove = removeMedia,
+        onSetCover = setCover,
+    )
     mediaError?.let { InfoNote(Icons.Filled.ErrorOutline, it, RetroDanger) }
     uploadProgress?.let { InfoNote(Icons.Filled.CloudUpload, it, RetroAccent) }
     InfoNote(Icons.Filled.Lock, if (form.uploadToCommunityHub) "Files and processed media are uploaded, integrity is checked, then the model becomes public. Original local backups and game files are never uploaded." else "This model stays local and is not uploaded to the Community Hub.", RetroAccent)
@@ -619,6 +670,63 @@ fun StepDetails(form: CarModelDetailsForm, onChange: (CarModelDetailsForm) -> Un
     uploadError?.let {
         InfoNote(Icons.Filled.ErrorOutline, it.message, RetroDanger, code = it.code)
         onRetryPublish?.let { retry -> SecondaryButton("Retry upload and publish", Modifier.fillMaxWidth(), Icons.Filled.Refresh, retry) }
+    }
+}
+
+@Composable
+private fun CarModelMediaStrip(
+    cover: CarModelMediaAsset?,
+    screenshots: List<CarModelMediaAsset>,
+    onPickCover: () -> Unit,
+    onPickScreenshots: () -> Unit,
+    onRemove: (CarModelMediaAsset, Boolean) -> Unit,
+    onSetCover: (CarModelMediaAsset) -> Unit,
+) {
+    val items = buildList { cover?.let { add(it to true) }; screenshots.forEach { add(it to false) } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(end = 12.dp),
+        ) {
+            items(items) { (asset, isCover) ->
+                Box(Modifier.size(136.dp), contentAlignment = Alignment.TopEnd) {
+                    val bitmap = remember(asset.file.absolutePath) { android.graphics.BitmapFactory.decodeFile(asset.file.absolutePath) }
+                    if (bitmap != null) Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = if (isCover) "Car model cover" else "Car model screenshot",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)),
+                    )
+                    IconButton(onClick = { onRemove(asset, isCover) }) { Icon(Icons.Filled.Close, "Remove image", tint = RetroText) }
+                    if (isCover) Text("Cover", color = RetroAccent, modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
+                    else TextButton(onClick = { onSetCover(asset) }, modifier = Modifier.align(Alignment.BottomCenter)) { Text("Set cover") }
+                }
+            }
+            item {
+                if (cover == null) {
+                    SecondaryButton("Add cover", Modifier.width(136.dp).height(136.dp), Icons.Filled.Image, onPickCover)
+                }
+            }
+            item {
+                if (screenshots.size < 8) {
+                    Box(
+                        modifier = Modifier
+                            .size(136.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(2.dp, RetroTextMuted, RoundedCornerShape(14.dp))
+                            .clickable(onClick = onPickScreenshots),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = "Add screenshots", tint = RetroAccent, modifier = Modifier.size(32.dp))
+                            Text("Add screenshots", color = RetroAccent, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+        }
+        Text("${screenshots.size} / 8 screenshots", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
     }
 }
 
