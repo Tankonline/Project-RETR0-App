@@ -1,5 +1,14 @@
 # Project RETR0 Release Checklist
 
+## v1.1.3 Release
+- [ ] Version metadata is `versionName "1.1.3"` and `versionCode 15`.
+- [ ] Car-model media wizard tested: cover, screenshots, remove, set cover, and horizontal scrolling.
+- [ ] Car-model Community Hub upload tested with cover and screenshots.
+- [ ] Worker media validation and R2 verification tested.
+- [ ] Pull request merged and required CI checks passed.
+- [ ] Release tag `v1.1.3` points to the merged master commit.
+- [ ] Signed APK and SHA-256 checksum published.
+
 ## v1.0.5 Release
 - [x] Version metadata updated to `versionName "1.0.5"` and `versionCode 7`.
 - [x] APK self-updater removal verified in current master.
