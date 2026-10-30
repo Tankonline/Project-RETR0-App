@@ -1,0 +1,29 @@
+# Go
+bin/
+*.test
+coverage.out
+
+# Local node data
+dev-data/
+data/
+*.sqlite
+
+# Node and frontend dependencies
+node_modules/
+dist/
+.tauri/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

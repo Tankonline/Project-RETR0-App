@@ -26,9 +26,29 @@ extension-storage-server/
 
 ## Status
 
-Initial architecture scaffold. The first implementation targets published,
-public content only. Draft/private content and encryption-key workflows are
-intentionally out of scope until the threat model and protocol are reviewed.
+Development milestone: local storage-node foundation.
+
+Implemented and verified:
+
+- Go content-addressed filesystem store;
+- atomic writes with exact size and SHA-256 verification;
+- local health and capacity endpoints;
+- Windows-compatible Go tests and `go vet` checks;
+- protocol schemas and OpenAPI documentation;
+- Docker development image;
+- installation, contribution, security, operations, and provider-GUI guides.
+
+Not yet enabled:
+
+- production enrollment;
+- signed command authentication on object routes;
+- Cloudflare replication;
+- R2 fallback routing;
+- live Community Hub server selection;
+- the Tauri provider GUI binary.
+
+See [INSTALLATION.md](INSTALLATION.md), [CHANGELOG.md](CHANGELOG.md), and
+[docs/roadmap.md](docs/roadmap.md) before using this project.
 
 ## Planned safeguards
 
