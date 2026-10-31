@@ -27,3 +27,5 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+storage-node/node.exe
