@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "commandId": "vector-command-001",
+  "nodeId": "vector-node-001",
+  "type": "HEARTBEAT",
+  "issuedAt": "2026-01-01T00:00:00Z",
+  "expiresAt": "2026-01-01T00:05:00Z",
+  "nonce": "vector-nonce-001",
+  "payload": {},
+  "payloadHash": "44136fa355b3678a1146ad16f7e8649e94fb4a5f5a6a5f5d3b5e0f2f6f4d7f5f",
+  "canonicalJson": "{\"version\":\"v1\",\"commandId\":\"vector-command-001\",\"nodeId\":\"vector-node-001\",\"type\":\"HEARTBEAT\",\"issuedAt\":\"2026-01-01T00:00:00Z\",\"expiresAt\":\"2026-01-01T00:05:00Z\",\"nonce\":\"vector-nonce-001\",\"payloadHash\":\"44136fa355b3678a1146ad16f7e8649e94fb4a5f5a6a5f5d3b5e0f2f6f4d7f5f\"}"
+}

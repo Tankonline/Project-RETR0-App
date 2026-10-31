@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-retr0.invalid/extension-storage/protocol.json",
+  "title": "Extension Storage Protocol",
+  "type": "object",
+  "required": ["version", "commandId", "nodeId", "type", "issuedAt", "expiresAt", "nonce", "payload", "signature"],
+  "properties": {
+    "version": { "const": "v1" },
+    "commandId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "nodeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "type": { "enum": ["PUT_OBJECT", "HEAD_OBJECT", "GET_OBJECT", "DELETE_OBJECT", "HEARTBEAT", "CAPACITY_REPORT", "DRAIN_NODE"] },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "nonce": { "type": "string", "minLength": 16, "maxLength": 256 },
+    "payload": { "type": "object" },
+    "signature": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

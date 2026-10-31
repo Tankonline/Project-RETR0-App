@@ -1,33 +1,15 @@
 # Extension Storage Protocol
 
-This directory defines the contract between the Cloudflare control plane and
-managed extension storage nodes.
+Versioned contract between the Cloudflare control plane and managed storage nodes.
 
-## Principles
+## Signed request format
 
-1. The control plane is authoritative.
-2. Nodes store opaque content-addressed blobs.
-3. Android clients communicate only with the control plane.
-4. Every mutating command is signed, short-lived, and replay-protected.
-5. Nodes verify object hash and byte length before acknowledging storage.
-6. Node-local deletion is not exposed as a user operation.
-7. Missing or corrupt replicas are replaceable; they are never authoritative.
+The Ed25519 signature is URL-safe unpadded base64 over the exact UTF-8 canonical JSON bytes, with fields in this order and no whitespace:
 
-## Initial object identity
+`{"version":"v1","commandId":"...","nodeId":"...","type":"...","issuedAt":"RFC3339Nano","expiresAt":"RFC3339Nano","nonce":"...","payloadHash":"sha256 hex"}`
 
-```text
-sha256/<first-two-hex>/<next-two-hex>/<full-sha256>
-```
+`payloadHash` is SHA-256 of canonical JSON serialization of `payload` (or `{}` when absent). `signature` is excluded from the signed bytes. Go and Worker must use this exact format. See `cross-language-vector.json`.
 
-## Planned commands
+Nodes reject unknown versions, timestamps outside the five-minute clock window, TTL over fifteen minutes, replayed nonces, mismatched node IDs, invalid base64, and invalid signatures.
 
-- `PUT_OBJECT`
-- `HEAD_OBJECT`
-- `GET_OBJECT`
-- `DELETE_OBJECT`
-- `HEARTBEAT`
-- `CAPACITY_REPORT`
-- `DRAIN_NODE`
-
-`DELETE_OBJECT` will require an administrator-authorized control-plane command.
-The Android application will never issue it directly.
+Production enrollment, replication, public node directory, account authentication, and Android server selection remain disabled.

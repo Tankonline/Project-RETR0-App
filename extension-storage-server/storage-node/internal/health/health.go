@@ -12,19 +12,14 @@ type Snapshot struct {
 }
 
 func Read(root string) (Snapshot, error) {
-	info, err := os.Stat(root)
-	if err != nil {
-		return Snapshot{}, err
+	info, e := os.Stat(root)
+	if e != nil {
+		return Snapshot{}, e
 	}
-	// Portable baseline for the first milestone. Platform-specific disk quota
-	// providers can replace this without changing the HTTP contract.
 	available := uint64(info.Size())
 	if runtime.GOOS == "windows" {
 		available = 0
 	}
 	return Snapshot{Root: root, BytesAvailable: available, BytesFree: available}, nil
 }
-
-func EnsureDirectory(root string) error {
-	return os.MkdirAll(root, 0o750)
-}
+func EnsureDirectory(root string) error { return os.MkdirAll(root, 0750) }

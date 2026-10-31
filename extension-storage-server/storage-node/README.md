@@ -1,15 +1,21 @@
 # Storage Node
 
-Planned Go daemon for computers and VPS servers that provide storage capacity.
+Local/staging-ready Go storage daemon. Existing local flags remain compatible:
 
-The daemon will:
+```text
+-storage-root -listen -identity-file -replay-file -quota-bytes
+```
 
-- receive only control-plane-authenticated commands;
-- store opaque SHA-256-addressed blobs;
-- support streaming reads and writes;
-- report health and capacity;
-- verify byte length and SHA-256 before acknowledging writes;
-- reject direct user deletion;
-- support node drain and revocation.
+Optional staging enrollment flags are additive and never enable production:
 
-It will not contain Community Hub ownership, moderation, or publication logic.
+```text
+-control-plane-environment staging
+-control-plane-url https://<staging-worker-host>/<staging-path>
+-enrollment-code <one-time-code>
+-control-plane-state-file <0600-state-file>
+-heartbeat-interval-seconds 60
+```
+
+The control-plane URL must be HTTPS, explicit, non-private, and used only with `staging`. Enrollment state is persisted atomically with mode `0600`; the Ed25519 identity and replay journal remain under the storage root. Heartbeats use the canonical signed v1 protocol, with bounded retry/backoff, status/revocation handling, and graceful shutdown.
+
+No production URL, admin token, production secret, live replication, or Android integration is included.
