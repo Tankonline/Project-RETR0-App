@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,7 +46,7 @@ type Heartbeat struct {
 	CapacityBytes int64     `json:"capacityBytes"`
 	FreeBytes     int64     `json:"freeBytes"`
 	ObjectCount   int64     `json:"objectCount"`
-	SentAt        time.Time `json:"sentAt"`
+	SentAt        time.Time `json:"sentAt,omitempty"`
 }
 type Client struct {
 	HTTP      *http.Client
@@ -64,13 +65,37 @@ func (c *Client) ensureStaging() error {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("staging control-plane URL must be an absolute HTTPS URL without credentials, query, or fragment")
 	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "save-files-staging.armaandeep08-ap.workers.dev" {
+		return nil
+	}
+	if host == "save-files.armaandeep08-ap.workers.dev" || strings.HasSuffix(host, ".workers.dev") {
+		return fmt.Errorf("staging control-plane URL must target the deployed staging host")
+	}
 	if strings.TrimRight(u.Path, "/") == "" {
 		return fmt.Errorf("staging control-plane URL must include an explicit staging path")
 	}
-	if strings.Contains(strings.ToLower(u.Hostname()), "localhost") || strings.HasPrefix(u.Hostname(), "127.") || strings.HasPrefix(u.Hostname(), "10.") || strings.HasPrefix(u.Hostname(), "192.168.") {
+	if strings.Contains(host, "localhost") || host == "::1" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback() || net.ParseIP(host) != nil && isPrivateIP(net.ParseIP(host)) {
 		return fmt.Errorf("staging control-plane URL must not target a local or private host")
 	}
 	return nil
+}
+
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []*net.IPNet{
+		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
+		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
+		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
+		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)},
+		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},
+		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},
+	}
+	for _, network := range privateRanges {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) Enroll(ctx context.Context) error {
@@ -82,11 +107,11 @@ func (c *Client) Enroll(ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	value := map[string]any{"nodeId": c.Identity.NodeID, "publicKey": base64.RawURLEncoding.EncodeToString(pub), "fingerprint": c.Identity.Fingerprint(), "enrollmentCode": c.Config.EnrollmentCode, "nonce": randomID(), "issuedAt": now.Format(time.RFC3339Nano), "expiresAt": now.Add(5 * time.Minute).Format(time.RFC3339Nano)}
+	value := map[string]any{"nodeId": c.Identity.NodeID, "displayName": c.Identity.NodeID, "endpoint": "", "publicKey": base64.RawURLEncoding.EncodeToString(pub), "fingerprint": c.Identity.Fingerprint(), "enrollmentCode": c.Config.EnrollmentCode, "expiresAt": now.Add(15 * time.Minute).Format(time.RFC3339Nano)}
 	var out struct {
 		Status string `json:"status"`
 	}
-	if err = c.post(ctx, "/v1/storage/nodes/enroll", value, &out); err != nil {
+	if err = c.post(ctx, "/v1/storage/nodes/"+url.PathEscape(c.Identity.NodeID)+"/enroll/request", value, &out); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -136,7 +161,7 @@ func (c *Client) Heartbeat(ctx context.Context, capacity, free, count int64) err
 	if err != nil {
 		return err
 	}
-	cmd := protocol.Command{Version: "v1", CommandID: randomID(), NodeID: c.Identity.NodeID, Type: protocol.Heartbeat, IssuedAt: now, ExpiresAt: now.Add(5 * time.Minute), Nonce: randomID(), Payload: payload}
+	cmd := protocol.Command{Version: "v1", CommandID: randomID(), NodeID: c.Identity.NodeID, Type: protocol.Heartbeat, IssuedAt: now, ExpiresAt: now.Add(15 * time.Minute), Nonce: randomID(), Payload: payload}
 	priv, err := c.Identity.Private()
 	if err != nil {
 		return err
@@ -220,6 +245,7 @@ func (c *Client) do(ctx context.Context, method, path string, value any, respons
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-ID", c.Identity.NodeID)
+	req.Header.Set("X-Request-ID", randomID())
 	cl := c.HTTP
 	if cl == nil {
 		cl = http.DefaultClient

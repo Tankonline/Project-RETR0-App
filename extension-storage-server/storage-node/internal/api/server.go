@@ -24,8 +24,10 @@ type Server struct {
 
 func (s Server) Handler() http.Handler {
 	m := http.NewServeMux()
-	m.HandleFunc("POST /v1/storage/nodes/heartbeat", s.heartbeat)
 	m.HandleFunc("POST /v1/storage/nodes/{nodeId}/heartbeat", s.heartbeat)
+	m.HandleFunc("POST /v1/storage/nodes/{nodeId}/enroll/request", s.enrollRequest)
+	m.HandleFunc("POST /v1/storage/nodes/{nodeId}/enroll/approve", s.enrollApprove)
+	m.HandleFunc("POST /v1/storage/nodes/{nodeId}/enroll/status", s.status)
 	m.HandleFunc("GET /v1/storage/nodes/{nodeId}/status", s.status)
 	m.HandleFunc("GET /healthz", s.health)
 	m.HandleFunc("GET /v1/local/capacity", s.capacity)
@@ -50,10 +52,14 @@ func (s Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 }
 func (s Server) status(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("nodeId") != s.NodeID {
-		writeJSON(w, 404, map[string]string{"error": "node_not_found"})
+		writeJSON(w, 404, map[string]any{"error": map[string]string{"code": "not_found", "message": "Node not found"}, "requestId": r.Header.Get("X-Request-ID")})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"nodeId": s.NodeID, "status": "approved"})
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		writeJSON(w, 405, map[string]any{"error": map[string]string{"code": "method_not_allowed", "message": "Method not allowed"}, "requestId": r.Header.Get("X-Request-ID")})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"nodeId": s.NodeID, "status": "approved", "requestId": r.Header.Get("X-Request-ID")})
 }
 func (s Server) validate(c protocol.Command) error {
 	now := time.Now
@@ -151,6 +157,15 @@ func (s Server) deleteObject(w http.ResponseWriter, r *http.Request) {
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Request-ID,X-Node-ID,X-Timestamp,X-Nonce,X-Signature")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+	if value, ok := v.(map[string]any); ok {
+		if requestID, ok := value["requestId"].(string); ok && requestID != "" {
+			w.Header().Set("X-Request-ID", requestID)
+		}
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
