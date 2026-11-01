@@ -26,7 +26,7 @@ Observations captured during task-oriented work.
 ### Observation 2: Security-sensitive fallback code benefits from isolated deterministic policy components
 
 **Status:** OPEN
-**Date:** 2026-09-19
+**Date: 2026-09-19
 **Session context:** Implementing a local-only Android media authentication fallback with encrypted device storage and temporary credential material.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -41,7 +41,7 @@ Observations captured during task-oriented work.
 ### Observation 3: Keep derived upload assets explicit across orchestration boundaries
 
 **Status:** OPEN
-**Date:** 2026-09-19
+**Date: 2026-09-19
 **Session context:** Fixing an Android media upload flow where preview metadata artwork was not forwarded to a secondary cover upload.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -56,7 +56,7 @@ Observations captured during task-oriented work.
 ### Observation 4: Bounded media transforms need separate input and output limits
 
 **Status:** OPEN
-**Date:** 2026-09-19
+**Date: 2026-09-19
 **Session context:** Adding automatic Android artwork compression before a size-limited upload.
 **Skill:** Android development workflow
 **Type:** open-source
@@ -172,3 +172,33 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Establish a reusable D1 repair checklist: capture sqlite_master/PRAGMA metadata, stop on schema drift, use collision-resistant temporary names, avoid BEGIN/COMMIT in remote --file migrations, and perform post-apply foreign_key_check plus per-table foreign-key assertions.
 
 **Principle:** Schema repairs should be metadata-preserving, forward-only, and independently verifiable at the database boundary.
+
+### Observation 12: Cross-runtime canonical signing needs executable interoperability tests
+
+**Status:** OPEN
+**Date: 2026-10-31
+**Session context:** Implementing staging-only storage-node enrollment and heartbeat signing across Go and a Cloudflare Worker.
+**Skill:** New skill candidate: cross-runtime signed protocol integration
+**Type:** open-source
+**Phase/Area:** Protocol canonicalization and verification
+
+**Issue:** The Go and Worker implementations both claimed an ordered canonical JSON envelope, but a static vector alone did not prove that payload serialization, timestamp formatting, base64 encoding, and signature verification remained identical after edits.
+
+**Suggested improvement:** Maintain golden request/response vectors plus a live cross-runtime verification test that signs in one runtime and verifies in the other, including payload hashes, clock windows, replay, and negative cases.
+
+**Principle:** Security protocol compatibility must be tested at the byte boundary between runtimes, not inferred from matching field names.
+
+### Observation 13: Diagnostic instrumentation should reuse existing lifecycle identifiers
+
+**Status:** OPEN
+**Date:** 2026-10-31
+**Session context:** Adding safe Shizuku privileged-service lifecycle diagnostics to an Android activity and AIDL user service.
+**Skill:** Android development workflow
+**Type:** open-source
+**Phase/Area:** Cross-process diagnostics and verification
+
+**Issue:** The existing code already had bind timeouts, helper version checks, and service callbacks, but diagnostic coverage was inconsistent and a new request identifier needed to be introduced without changing behavior or logging sensitive arguments.
+
+**Suggested improvement:** Add structured event codes at existing lifecycle boundaries, derive request IDs from monotonic timestamps or existing request codes, include elapsed duration at completion/error boundaries, and verify both source inspections and a debug build after instrumentation.
+
+**Principle:** Observability should be additive, lifecycle-aligned, privacy-safe, and build-verified rather than implemented as a broad refactor.

@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.os.PowerManager
 import android.provider.Settings
@@ -107,6 +108,8 @@ class MainActivity : ComponentActivity() {
         private const val CODE_PACKAGE_VERIFIED = "PKG_MIGRATION_I002"
         private const val CODE_PACKAGE_MISMATCH = "PKG_MIGRATION_E001"
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 1000
+        private const val SHIZUKU_DIAGNOSTIC_TAG = "RETR0_SHIZUKU_DIAG"
+        private const val SHIZUKU_BIND_TIMEOUT_MS = 5_000L
 
         /** Shizuku key for the app's own helper. The scheduled backup uses its own tag, so neither can kill the other. */
         const val MAIN_HELPER_TAG = "retr0-main"
@@ -296,7 +299,7 @@ class MainActivity : ComponentActivity() {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.i(TAG, "code=SHIZUKU_USVC_CONNECTED stage=callback name=$name binder=${binder != null}")
+            Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_CONNECTED stage=callback binderPresent=${binder != null} binderAlive=${binder?.isBinderAlive == true}")
             // The callback can arrive during the launch/splash transition, before
             // onStart() has marked the activity visible. It is still a valid bind;
             // rejecting it here leaves Shizuku connected but the app unbound until
@@ -314,7 +317,11 @@ class MainActivity : ComponentActivity() {
             // Shizuku can keep an older helper process alive after an update (e.g. Android Studio
             // "Apply Changes" or a cached service record). Ask the helper its API version and, if it
             // is outdated, kill it and bind a fresh one built from the installed APK.
-            val helperApi = runCatching { IRetr0UserService.Stub.asInterface(binder).getGraphicsApiVersion() }.getOrDefault(0)
+            val selfTestStartedAt = SystemClock.elapsedRealtime()
+            val helper = IRetr0UserService.Stub.asInterface(binder)
+            val helperApi = runCatching { helper.getGraphicsApiVersion() }.getOrDefault(0)
+            val pingOk = runCatching { helper.ping() }.getOrDefault(false)
+            Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_SERVICE_SELF_TEST stage=callback ping=$pingOk helperApi=$helperApi elapsedMs=${SystemClock.elapsedRealtime() - selfTestStartedAt}")
             if (helperApi < GraphicsPathValidator.SERVICE_API) {
                 if (staleHelperRestarts < 1) {
                     staleHelperRestarts++
@@ -340,10 +347,15 @@ class MainActivity : ComponentActivity() {
             }
             userServiceBinder = binder
             runCatching {
-                binder.linkToDeath({ runOnUiThread { handleUserServiceLost("RETR0 user service binder died") } }, 0)
-            }.onFailure { Log.w(TAG, "Could not register RETR0 binder death recipient", it) }
-            service = IRetr0UserService.Stub.asInterface(binder)
+                binder.linkToDeath({
+                    Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BINDER_DEATH stage=death_recipient")
+                    runOnUiThread { handleUserServiceLost("RETR0 user service binder died") }
+                }, 0)
+                Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BINDER_LIVENESS stage=death_recipient_registered alive=${binder.isBinderAlive}")
+            }.onFailure { Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BINDER_DEATH_RECIPIENT_FAILURE error=${it.javaClass.simpleName}", it) }
+            service = helper
             isServiceBound = true
+            Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_READY stage=callback ping=$pingOk helperApi=$helperApi")
             bindInProgress = false
             userServiceBindJob?.cancel()
             shizukuStatus = "RETR0 privileged service connected."
@@ -425,7 +437,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        Log.i(TAG, "Shizuku binder received")
+        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_BINDER_RECEIVED stage=callback binderAlive=${runCatching { Shizuku.pingBinder() }.getOrDefault(false)}")
         runOnUiThread {
             updateShizukuStatus()
             if (canAttemptServiceBind() && !isServiceBound) bindRetr0Service()
@@ -433,7 +445,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        Log.w(TAG, "Shizuku binder died")
+        Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_BINDER_DEAD stage=callback")
         runOnUiThread {
             isShizukuRunning = false
             isPermissionGranted = false
@@ -443,7 +455,7 @@ class MainActivity : ComponentActivity() {
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
         if (requestCode == SHIZUKU_PERMISSION_REQUEST_CODE) {
-            Log.i(TAG, "code=SHIZUKU_PERMISSION_RESULT requestCode=$requestCode grantResult=$grantResult")
+            Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_PERMISSION_RESULT requestId=$requestCode grantResult=$grantResult elapsedMs=unknown")
             updateShizukuStatus()
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
                 isPermissionGranted = true
@@ -2577,7 +2589,7 @@ class MainActivity : ComponentActivity() {
         // Do not invoke Binder.pingBinder() on the SDK-managed binder here: it can be
         // unavailable during hand-off even while the Shizuku service is operational.
         val binderAlive = binderOk
-        Log.i(TAG, "updateShizukuStatus: binderAvailable=$binderAlive")
+        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_STATUS stage=binder_check binderAvailable=$binderAlive")
         isShizukuRunning = binderAlive
         if (!binderAlive) { 
             shizukuStatus = "Shizuku binder unavailable."
@@ -2590,7 +2602,7 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {
             false
         }
-        Log.i(TAG, "updateShizukuStatus: permGranted=$permGranted")
+        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_PERMISSION_CHECK stage=status_check granted=$permGranted")
         isPermissionGranted = permGranted
         shizukuStatus = if (permGranted) "Shizuku is running (permission granted)." else "Shizuku is running (permission required)."
         isSystemStatusLoading = false
@@ -2598,7 +2610,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestShizukuPermission() {
         val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
-        Log.i(TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=preflight binderAvailable=$binderAvailable")
+        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=preflight requestId=$SHIZUKU_PERMISSION_REQUEST_CODE binderAvailable=$binderAvailable")
         if (!binderAvailable) {
             Toast.makeText(this, "Shizuku binder is unavailable. Open Shizuku and restart its service.", Toast.LENGTH_SHORT).show()
             return 
@@ -2611,7 +2623,7 @@ class MainActivity : ComponentActivity() {
             bindRetr0Service(forceRebind = true)
             return
         }
-        Log.i(TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=requesting requestCode=$SHIZUKU_PERMISSION_REQUEST_CODE")
+        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=requesting requestId=$SHIZUKU_PERMISSION_REQUEST_CODE")
         try {
             Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST_CODE)
         } catch (e: Exception) {
@@ -2631,7 +2643,7 @@ class MainActivity : ComponentActivity() {
         isServiceBound = false
         bindInProgress = false
         shizukuStatus = reason
-        Log.w(TAG, reason)
+        Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_LOST stage=service_lost reason=${reason.take(120)}")
     }
 
     private fun scheduleUserServiceBindRetry() {
@@ -2671,25 +2683,29 @@ class MainActivity : ComponentActivity() {
         }
         bindInProgress = true
         shizukuStatus = "Connecting to RETR0 privileged service..."
-        Log.i(TAG, "Binding RETR0 user service package=$packageName component=${Retr0UserService::class.java.name}")
+        val bindStartedAt = SystemClock.elapsedRealtime()
+        val bindRequestId = "usvc-${bindStartedAt}"
+        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BIND_START requestId=$bindRequestId package=$packageName component=${Retr0UserService::class.java.name}")
         replaceHelperOncePerProcess()
         runCatching { Shizuku.bindUserService(userServiceArgs, serviceConnection) }
             .onSuccess {
+                Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BIND_ACCEPT requestId=$bindRequestId elapsedMs=${SystemClock.elapsedRealtime() - bindStartedAt}")
                 // Some OEMs accept the request but delay (or drop) the callback.
                 // Do not report success until onServiceConnected has supplied a live binder.
                 userServiceBindJob?.cancel()
                 userServiceBindJob = lifecycleScope.launch {
-                            delay(5_000)
+                            delay(SHIZUKU_BIND_TIMEOUT_MS)
                     if (!activityStarted) return@launch
                     if (!isServiceBound && bindInProgress) {
                         bindInProgress = false
                         shizukuStatus = "RETR0 service did not connect. Keep Shizuku running and tap Enable Privileged Services again."
-                        Log.w(TAG, "code=SHIZUKU_USVC_TIMEOUT stage=bind_timeout binderAvailable=${runCatching { Shizuku.pingBinder() }.getOrDefault(false)} permissionGranted=${runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)}")
+                        Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_TIMEOUT requestId=$bindRequestId stage=bind_timeout elapsedMs=${SystemClock.elapsedRealtime() - bindStartedAt} binderAvailable=${runCatching { Shizuku.pingBinder() }.getOrDefault(false)} permissionGranted=${runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)}")
                         scheduleUserServiceBindRetry()
                     }
                 }
             }
             .onFailure {
+                Log.e(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BIND_FAILURE requestId=$bindRequestId elapsedMs=${SystemClock.elapsedRealtime() - bindStartedAt} error=${it.javaClass.simpleName}", it)
                 bindInProgress = false
                 handleUserServiceLost("Could not start RETR0 service: ${it.message ?: "Shizuku rejected the bind"}")
                 scheduleUserServiceBindRetry()

@@ -21,11 +21,12 @@ import java.security.MessageDigest
 class Retr0UserService : IRetr0UserService.Stub() {
 
     init {
+        val startedAt = SystemClock.elapsedRealtime()
         try {
             System.loadLibrary("sonic-extractor")
-            Log.i("RETR0_INSTALLER_SVC", "Native library loaded via System.loadLibrary")
+            Log.i(TAG, "code=SERVICE_NATIVE_LOAD stage=complete result=success elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
         } catch (e: Throwable) {
-            Log.e("RETR0_INSTALLER_SVC", "CRITICAL: Native library load failed", e)
+            Log.e(TAG, "code=SERVICE_NATIVE_LOAD stage=complete result=failure error=${e.javaClass.simpleName} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", e)
         }
     }
 
@@ -82,7 +83,10 @@ class Retr0UserService : IRetr0UserService.Stub() {
         }
     }
 
-    override fun ping(): Boolean = true
+    override fun ping(): Boolean {
+        Log.d(TAG, "code=SERVICE_PING stage=call result=success")
+        return true
+    }
 
     override fun exists(path: String): Boolean {
         return isPathAllowed(path) && File(path).exists()
@@ -323,7 +327,11 @@ class Retr0UserService : IRetr0UserService.Stub() {
 
     private fun quote(text: String?): String = "\"" + text.orEmpty().replace('"', '\'').replace('\n', ' ') + "\""
 
-    override fun getGraphicsApiVersion(): Int = GraphicsPathValidator.SERVICE_API
+    override fun getGraphicsApiVersion(): Int {
+        val api = GraphicsPathValidator.SERVICE_API
+        Log.d(TAG, "code=SERVICE_API_VERSION stage=call api=$api")
+        return api
+    }
 
     override fun publishGraphicsFile(sourcePath: String, targetPath: String, expectedSha256: String): String {
         val startedAt = SystemClock.elapsedRealtime()
@@ -829,7 +837,7 @@ class Retr0UserService : IRetr0UserService.Stub() {
     }
 
     override fun destroy() {
-        Log.w(TAG, "Retr0UserService.destroy() called; exiting process")
+        Log.w(TAG, "code=SERVICE_DESTROY stage=called action=kill_process")
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 }

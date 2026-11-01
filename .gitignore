@@ -12,6 +12,18 @@
 *.apk
 *.zip
 *.log
+**/dev-data/
+**/dist/
+**/node-identity.json
+**/replay.log
+**/*replay*.json
+**/*replay*.log
+**/staging-data/
+**/staging-data/**
+**/private-key*
+**/*private-key*
+**/generated-binaries/
+**/generated-binaries/**
 deps.txt
 CLAUDE_CROP_EDITOR_PERFECTION_PROMPT.md
 
@@ -40,6 +52,7 @@ app/build/
 
 # Sensitive files and generated dependencies
 node_modules/
+app/google-services.json
 *.pem
 *.key
 *.mobileprovision
