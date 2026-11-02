@@ -10,16 +10,20 @@ import (
 	"github.com/Tankonline/project-retr0-extension-storage/storage-node/internal/store"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 type Server struct {
-	Store      store.FileSystemStore
-	NodeID     string
-	ControlKey ed25519.PublicKey
-	Replay     *auth.ReplayCache
-	Now        func() time.Time
+	Store               store.FileSystemStore
+	NodeID              string
+	ControlKey          ed25519.PublicKey
+	Replay              *auth.ReplayCache
+	TransferClient      *http.Client
+	AllowedTransferHost string
+	Now                 func() time.Time
 }
 
 func (s Server) Handler() http.Handler {
@@ -34,6 +38,7 @@ func (s Server) Handler() http.Handler {
 	m.HandleFunc("HEAD /v1/local/objects/{hash}", s.headObject)
 	m.HandleFunc("GET /v1/local/objects/{hash}", s.getObject)
 	m.HandleFunc("PUT /v1/objects/{hash}", s.putObject)
+	m.HandleFunc("POST /v1/commands/{commandId}/put-object", s.executePutObject)
 	m.HandleFunc("GET /v1/objects/{hash}", s.authenticatedGetObject)
 	m.HandleFunc("HEAD /v1/objects/{hash}", s.authenticatedHeadObject)
 	m.HandleFunc("DELETE /v1/objects/{hash}", s.deleteObject)
@@ -113,6 +118,49 @@ func (s Server) command(w http.ResponseWriter, r *http.Request, hash string, t p
 	}
 	return c, s.validate(c)
 }
+func (s Server) executePutObject(w http.ResponseWriter, r *http.Request) {
+	c, e := decodeCommand(w, r)
+	if e != nil || c.Type != protocol.PutObject || c.CommandID != r.PathValue("commandId") || c.NodeID != s.NodeID || s.validate(c) != nil {
+		writeJSON(w, 401, map[string]string{"error": "unauthorized_command"})
+		return
+	}
+	var payload struct {
+		ObjectHash  string `json:"objectHash"`
+		ObjectSize  int64  `json:"objectSize"`
+		ContentType string `json:"contentType"`
+		TransferURL string `json:"transferUrl"`
+	}
+	if json.Unmarshal(c.Payload, &payload) != nil || payload.ObjectHash != c.ObjectHash || payload.ObjectSize != c.ObjectSize || payload.TransferURL == "" || payload.TransferURL != strings.TrimSpace(payload.TransferURL) {
+		writeJSON(w, 400, map[string]string{"error": "invalid_put_object"})
+		return
+	}
+	u, e := url.Parse(payload.TransferURL)
+	if e != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || s.AllowedTransferHost == "" || !strings.EqualFold(u.Hostname(), s.AllowedTransferHost) {
+		writeJSON(w, 403, map[string]string{"error": "transfer_not_allowed"})
+		return
+	}
+	cl := s.TransferClient
+	if cl == nil {
+		cl = http.DefaultClient
+	}
+	resp, e := cl.Get(u.String())
+	if e != nil {
+		writeJSON(w, 502, map[string]string{"error": "transfer_failed"})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		writeJSON(w, 502, map[string]string{"error": "transfer_failed"})
+		return
+	}
+	n, e := s.Store.Put(payload.ObjectHash, payload.ObjectSize, resp.Body, payload.ContentType)
+	if e != nil {
+		writeJSON(w, 422, map[string]string{"error": "object_verification_failed"})
+		return
+	}
+	writeJSON(w, 201, map[string]any{"hash": payload.ObjectHash, "sizeBytes": n})
+}
+
 func (s Server) putObject(w http.ResponseWriter, r *http.Request) {
 	c, e := s.command(w, r, r.PathValue("hash"), protocol.PutObject)
 	if e != nil {

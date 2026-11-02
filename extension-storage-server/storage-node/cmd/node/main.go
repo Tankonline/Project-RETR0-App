@@ -29,6 +29,7 @@ func main() {
 	controlPlaneURL := flag.String("control-plane-url", "", "HTTPS staging control-plane URL")
 	enrollmentCode := flag.String("enrollment-code", "", "one-time staging enrollment code")
 	statePath := flag.String("control-plane-state-file", "", "persistent staging enrollment state path")
+	transferHost := flag.String("staging-transfer-host", "save-files-staging.armaandeep08-ap.workers.dev", "fixed staging transfer hostname")
 	heartbeatInterval := flag.Int("heartbeat-interval-seconds", 60, "staging heartbeat interval")
 	flag.Parse()
 	if e := health.EnsureDirectory(*root); e != nil {
@@ -48,7 +49,7 @@ func main() {
 	if *statePath == "" {
 		*statePath = filepath.Join(*root, "control-plane-state.json")
 	}
-	s := api.Server{Store: store.FileSystemStore{Root: *root, QuotaBytes: *quota}, NodeID: id.NodeID, ControlKey: pub, Replay: auth.NewPersistentReplayCache(*replayPath, 100000)}
+	s := api.Server{Store: store.FileSystemStore{Root: *root, QuotaBytes: *quota}, NodeID: id.NodeID, ControlKey: pub, Replay: auth.NewPersistentReplayCache(*replayPath, 100000), AllowedTransferHost: *transferHost}
 	server := &http.Server{Addr: *listen, Handler: s.Handler()}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -69,15 +70,20 @@ func main() {
 			}
 		}
 		go func() {
+			log.Printf("staging control-plane enabled node=%s state=%s interval_seconds=%d", id.NodeID, client.State.Status, client.Config.HeartbeatIntervalSeconds)
+			_ = client.RunCommandLoop(ctx, func(commandCtx context.Context, command controlplane.CommandEnvelope) controlplane.CommandAck {
+				return controlplane.ExecutePutObject(commandCtx, command, s.Store, http.DefaultClient, *transferHost)
+			})
 			err := client.RunHeartbeatLoop(ctx, func() (int64, int64, int64) {
 				snap, e := health.Read(*root)
 				if e != nil {
+					log.Printf("staging heartbeat metrics_failed node=%s", id.NodeID)
 					return 0, 0, 0
 				}
 				return int64(snap.BytesAvailable), int64(snap.BytesFree), int64(store.FileSystemStore{Root: *root}.UsedBytes())
 			})
 			if err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("staging heartbeat stopped: %v", err)
+				log.Printf("staging heartbeat stopped node=%s error=%v", id.NodeID, err)
 			}
 		}()
 	}

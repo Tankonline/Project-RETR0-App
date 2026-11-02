@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -24,9 +25,24 @@ import (
 )
 
 var (
-	ErrStagingOnly = errors.New("control-plane operation is staging-only")
-	ErrRevoked     = errors.New("node is revoked")
+	ErrStagingOnly   = errors.New("control-plane operation is staging-only")
+	ErrRevoked       = errors.New("node is revoked")
+	ErrAdminApproval = errors.New("staging admin approval failed")
 )
+
+// HTTPError preserves bounded, non-sensitive control-plane diagnostics.
+type HTTPError struct {
+	StatusCode int
+	Status     string
+	Code       string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("control-plane returned %s (%s)", e.Status, e.Code)
+	}
+	return fmt.Sprintf("control-plane returned %s", e.Status)
+}
 
 type Config struct {
 	BaseURL                  string `json:"baseUrl"`
@@ -40,6 +56,27 @@ type State struct {
 	NextRetryAt     time.Time `json:"nextRetryAt,omitempty"`
 	RetryCount      int       `json:"retryCount"`
 }
+type CommandEnvelope struct {
+	Version   string               `json:"version"`
+	CommandID string               `json:"commandId"`
+	NodeID    string               `json:"nodeId"`
+	Type      protocol.CommandType `json:"type"`
+	IssuedAt  time.Time            `json:"issuedAt"`
+	ExpiresAt time.Time            `json:"expiresAt"`
+	Nonce     string               `json:"nonce"`
+	Payload   json.RawMessage      `json:"payload"`
+	Signature string               `json:"signature"`
+}
+
+type CommandAck struct {
+	NodeID    string `json:"nodeId"`
+	CommandID string `json:"commandId"`
+	Success   bool   `json:"success"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type Heartbeat struct {
 	NodeID        string    `json:"nodeId"`
 	Fingerprint   string    `json:"fingerprint"`
@@ -98,6 +135,86 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+type ApprovalResult struct {
+	NodeID    string `json:"nodeId"`
+	Status    string `json:"status"`
+	RequestID string `json:"requestId"`
+	ErrorCode string `json:"-"`
+}
+
+// BuildApprovalEnvelope constructs the exact Worker enrollment approval body.
+// It intentionally contains no private key or admin token.
+func BuildApprovalEnvelope(id auth.Identity, enrollmentCode string, now time.Time) (map[string]any, error) {
+	pub, err := id.Public()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"nodeId":         id.NodeID,
+		"publicKey":      base64.RawURLEncoding.EncodeToString(pub),
+		"enrollmentCode": enrollmentCode,
+		"nonce":          randomID(),
+		"issuedAt":       now.UTC().Format(time.RFC3339Nano),
+		"expiresAt":      now.UTC().Add(15 * time.Minute).Format(time.RFC3339Nano),
+		"signature":      "staging-admin",
+	}, nil
+}
+
+func (c *Client) Approve(ctx context.Context, adminToken, enrollmentCode string) (ApprovalResult, error) {
+	if err := c.ensureStaging(); err != nil {
+		return ApprovalResult{}, err
+	}
+	if adminToken == "" {
+		return ApprovalResult{}, ErrAdminApproval
+	}
+	value, err := BuildApprovalEnvelope(c.Identity, enrollmentCode, time.Now())
+	if err != nil {
+		return ApprovalResult{}, err
+	}
+	path := "/v1/storage/nodes/" + url.PathEscape(c.Identity.NodeID) + "/enroll/approve"
+	return c.postAdmin(ctx, path, adminToken, value)
+}
+
+func (c *Client) postAdmin(ctx context.Context, path, adminToken string, value any) (ApprovalResult, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ApprovalResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.Config.BaseURL, "/")+path, bytes.NewReader(data))
+	if err != nil {
+		return ApprovalResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Storage-Admin", adminToken)
+	req.Header.Set("X-Request-ID", randomID())
+	cl := c.HTTP
+	if cl == nil {
+		cl = http.DefaultClient
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return ApprovalResult{}, err
+	}
+	defer resp.Body.Close()
+	var envelope struct {
+		NodeID    string `json:"nodeId"`
+		Status    string `json:"status"`
+		RequestID string `json:"requestId"`
+		Error     struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&envelope)
+	result := ApprovalResult{NodeID: envelope.NodeID, Status: envelope.Status, RequestID: envelope.RequestID, ErrorCode: envelope.Error.Code}
+	if resp.StatusCode >= 300 {
+		if result.ErrorCode == "" {
+			result.ErrorCode = "admin_approval_failed"
+		}
+		return result, ErrAdminApproval
+	}
+	return result, nil
+}
+
 func (c *Client) Enroll(ctx context.Context) error {
 	if err := c.ensureStaging(); err != nil {
 		return err
@@ -143,6 +260,55 @@ func (c *Client) Status(ctx context.Context) (State, error) {
 	return state, err
 }
 
+func (c *Client) PollCommands(ctx context.Context) ([]CommandEnvelope, error) {
+	if err := c.ensureStaging(); err != nil {
+		return nil, err
+	}
+	var out struct {
+		Commands []CommandEnvelope `json:"commands"`
+	}
+	if err := c.get(ctx, "/v1/storage/nodes/"+url.PathEscape(c.Identity.NodeID)+"/commands", &out); err != nil {
+		return nil, err
+	}
+	return out.Commands, nil
+}
+
+func (c *Client) AckCommand(ctx context.Context, ack CommandAck) error {
+	if err := c.ensureStaging(); err != nil {
+		return err
+	}
+	return c.post(ctx, "/v1/storage/nodes/"+url.PathEscape(c.Identity.NodeID)+"/commands/"+url.PathEscape(ack.CommandID)+"/ack", ack, nil)
+}
+
+func (c *Client) RunCommandLoop(ctx context.Context, execute func(context.Context, CommandEnvelope) CommandAck) error {
+	if err := c.ensureStaging(); err != nil {
+		return err
+	}
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		commands, err := c.PollCommands(ctx)
+		if err != nil {
+			time.Sleep(backoff(1))
+			continue
+		}
+		for _, command := range commands {
+			ack := execute(ctx, command)
+			if err := c.AckCommand(ctx, ack); err != nil {
+				return err
+			}
+		}
+		timer := time.NewTimer(5 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func (c *Client) Heartbeat(ctx context.Context, capacity, free, count int64) error {
 	if err := c.ensureStaging(); err != nil {
 		return err
@@ -157,7 +323,11 @@ func (c *Client) Heartbeat(ctx context.Context, capacity, free, count int64) err
 		return fmt.Errorf("node state draining does not heartbeat")
 	}
 	now := time.Now().UTC()
-	payload, err := json.Marshal(Heartbeat{c.Identity.NodeID, c.Identity.Fingerprint(), capacity, free, count, now})
+	payload, err := json.Marshal(struct {
+		CapacityBytes int64 `json:"capacityBytes"`
+		FreeBytes     int64 `json:"freeBytes"`
+		ObjectCount   int64 `json:"objectCount"`
+	}{capacity, free, count})
 	if err != nil {
 		return err
 	}
@@ -166,7 +336,7 @@ func (c *Client) Heartbeat(ctx context.Context, capacity, free, count int64) err
 	if err != nil {
 		return err
 	}
-	cmd.Signature = ed25519.Sign(priv, cmd.CanonicalBytes())
+	cmd.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, cmd.CanonicalBytes()))
 	if err = c.post(ctx, "/v1/storage/nodes/"+url.PathEscape(c.Identity.NodeID)+"/heartbeat", cmd, nil); err != nil {
 		c.mu.Lock()
 		c.State.RetryCount++
@@ -200,10 +370,26 @@ func (c *Client) RunHeartbeatLoop(ctx context.Context, metrics func() (int64, in
 			return ctx.Err()
 		}
 		a, f, n := metrics()
+		logHeartbeat := func(result string, err error) {
+			if err == nil {
+				log.Printf("staging heartbeat result node=%s result=%s", c.Identity.NodeID, result)
+				return
+			}
+			var httpErr *HTTPError
+			if errors.As(err, &httpErr) {
+				log.Printf("staging heartbeat result node=%s result=%s status_code=%d error_code=%s retry_count=%d", c.Identity.NodeID, result, httpErr.StatusCode, httpErr.Code, c.State.RetryCount)
+			} else {
+				log.Printf("staging heartbeat result node=%s result=%s error=%v retry_count=%d", c.Identity.NodeID, result, err, c.State.RetryCount)
+			}
+		}
+		log.Printf("staging heartbeat attempt node=%s", c.Identity.NodeID)
 		if err := c.Heartbeat(ctx, a, f, n); err != nil {
+			logHeartbeat("rejected_or_failed", err)
 			if errors.Is(err, ErrRevoked) {
 				return err
 			}
+		} else {
+			logHeartbeat("accepted", nil)
 		}
 		wait := interval
 		c.mu.Lock()
@@ -256,11 +442,16 @@ func (c *Client) do(ctx context.Context, method, path string, value any, respons
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		if strings.Contains(string(b), "revoked") {
+		var envelope struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&envelope)
+		if envelope.Error.Code == "node_revoked" || envelope.Error.Code == "revoked" {
 			return ErrRevoked
 		}
-		return fmt.Errorf("control-plane returned %s: %s", resp.Status, string(b))
+		return &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Code: envelope.Error.Code}
 	}
 	if response != nil {
 		return json.NewDecoder(resp.Body).Decode(response)

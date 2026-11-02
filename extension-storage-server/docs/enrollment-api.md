@@ -3,7 +3,7 @@
 The staging contract is shared by the Worker and Go storage node:
 
 - `POST /v1/storage/nodes/{nodeId}/enroll/request` creates an idempotent pending request. Body: `nodeId`, `displayName`, `endpoint`, `publicKey` (URL-safe unpadded base64 Ed25519 public key), `fingerprint`, `enrollmentCode`, optional `expiresAt`.
-- `POST /v1/storage/nodes/{nodeId}/enroll/approve` approves a pending request. It requires `X-Storage-Admin: staging`; the URL and body `nodeId` must match. It accepts `nodeId`, `publicKey`, `enrollmentCode`, `nonce`, `issuedAt`, `expiresAt`, and `signature`.
+- `POST /v1/storage/nodes/{nodeId}/enroll/approve` approves a pending request. It requires `X-Storage-Admin` containing the configured staging secret value `env.STORAGE_STAGING_ADMIN_TOKEN`; the literal `staging` is never valid. The URL and body `nodeId` must match. It accepts `nodeId`, `publicKey`, `enrollmentCode`, `nonce`, `issuedAt`, `expiresAt`, and `signature`.
 - `POST /v1/storage/nodes/{nodeId}/enroll/status` returns `{nodeId,status,lastHeartbeatAt,...}`.
 - `POST /v1/storage/nodes/{nodeId}/heartbeat` accepts a signed v1 `HEARTBEAT` envelope.
 

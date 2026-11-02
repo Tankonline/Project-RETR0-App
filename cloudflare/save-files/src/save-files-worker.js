@@ -44,6 +44,14 @@ async function handleV1(request, env, ctx, requestId) {
   const fail = /* @__PURE__ */ __name2((status, code, message, details) => respond({ error: { code, message, ...details ? { details } : {} }, requestId }, status), "fail");
   if (!env.SKINS_DB || !env.COMMUNITY_BUCKET) return fail(503, "service_unavailable", "Skin storage is unavailable");
   try {
+    // Staging admin storage routes must be dispatched before any Community Hub
+    // installation authentication. They authenticate exclusively with the
+    // staging control-plane guard and X-Storage-Admin.
+    const stagingAdminRoute = /^\/v1\/storage\/admin\/(?:storage-objects\/seed|nodes\/[^/]+\/commands)$/.test(url.pathname);
+    if (stagingAdminRoute) {
+      const response = await handleStorageNodeRoute(request, env, url, requestId);
+      if (response) return response;
+    }
     if (url.pathname === "/v1/auth/me" && request.method === "GET") {
       if (!(await authRateLimit(env, request))) return fail(429, "rate_limited", "Too many authentication requests");
       const auth = await authenticatedAccount(request, env, requestId);
@@ -1291,6 +1299,8 @@ __name2(reconcileCommunityAssets, "reconcileCommunityAssets");
 async function reconcileSaves(env) {
   let removed = 0;
   let lastId = "";
+  // D1 returns an empty result set for an empty table; return immediately so the
+  // scheduled pass is a no-op rather than treating absence of rows as failure.
   while (true) {
     const rows = await env.SKINS_DB.prepare(`
       SELECT id, file_key
@@ -1429,6 +1439,8 @@ var index_default = {
     const startedAt = Date.now();
     let v1Response;
     try {
+      // Storage control-plane routes are dispatched before Community Hub
+      // installation authentication, including admin seed/command routes.
       v1Response = await handleStorageNodeRoute(request, env, url, requestId);
       if (!v1Response) v1Response = await handleV1(
         request,

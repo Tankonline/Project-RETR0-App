@@ -2,7 +2,6 @@ package health
 
 import (
 	"os"
-	"runtime"
 )
 
 type Snapshot struct {
@@ -12,14 +11,13 @@ type Snapshot struct {
 }
 
 func Read(root string) (Snapshot, error) {
-	info, e := os.Stat(root)
-	if e != nil {
-		return Snapshot{}, e
+	if _, err := os.Stat(root); err != nil {
+		return Snapshot{}, err
 	}
-	available := uint64(info.Size())
-	if runtime.GOOS == "windows" {
-		available = 0
+	available, free, err := filesystemCapacity(root)
+	if err != nil {
+		return Snapshot{}, err
 	}
-	return Snapshot{Root: root, BytesAvailable: available, BytesFree: available}, nil
+	return Snapshot{Root: root, BytesAvailable: available, BytesFree: free}, nil
 }
 func EnsureDirectory(root string) error { return os.MkdirAll(root, 0750) }
