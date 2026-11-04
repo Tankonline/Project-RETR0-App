@@ -19,6 +19,15 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    - name: Restore Firebase configuration
+      env:
+        FIREBASE_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_BASE64 }}
+      shell: bash
+      run: |
+        test -n "${FIREBASE_GOOGLE_SERVICES_JSON_BASE64}"
+        printf '%s' "${FIREBASE_GOOGLE_SERVICES_JSON_BASE64}" | base64 --decode > app/google-services.json
+        test -s app/google-services.json
+
     - name: Build with Gradle
       run: ./gradlew :app:assembleDebug
 
@@ -27,3 +36,8 @@ jobs:
 
     - name: Run Android Lint
       run: ./gradlew :app:lintDebug
+
+    - name: Remove generated Firebase configuration
+      if: always()
+      shell: bash
+      run: rm -f app/google-services.json

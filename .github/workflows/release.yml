@@ -64,6 +64,15 @@ jobs:
             exit 1
           }
 
+      - name: Restore Firebase configuration
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_BASE64 }}
+        shell: bash
+        run: |
+          test -n "${FIREBASE_GOOGLE_SERVICES_JSON_BASE64}"
+          printf '%s' "${FIREBASE_GOOGLE_SERVICES_JSON_BASE64}" | base64 --decode > app/google-services.json
+          test -s app/google-services.json
+
       - name: Run unit tests
         run: ./gradlew --no-daemon :app:testDebugUnitTest
 
@@ -73,7 +82,8 @@ jobs:
         shell: bash
         run: |
           test -n "${RELEASE_KEYSTORE_BASE64}"
-          echo "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          printf '%s' "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          test -s "$RUNNER_TEMP/release.keystore"
 
       - name: Build signed release APK
         env:
@@ -162,3 +172,8 @@ jobs:
               --title "Project RETR0 installer ${TAG}" \
               --notes-file "${NOTES_PATH}"
           fi
+
+      - name: Remove generated Firebase configuration
+        if: always()
+        shell: bash
+        run: rm -f app/google-services.json

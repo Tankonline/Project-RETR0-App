@@ -106,6 +106,8 @@ dependencies {
     implementation(platform(libs.firebaseBomLib))
     implementation(libs.firebaseAuthLib)
     implementation(libs.androidx.activity.compose)
+    // Keep Fragment's ActivityResult integration on a modern, compatible API surface.
+    implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)

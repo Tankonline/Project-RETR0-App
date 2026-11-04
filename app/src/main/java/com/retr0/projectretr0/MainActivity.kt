@@ -492,6 +492,8 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
+            // This is ActivityResult registration on ComponentActivity; the explicit modern
+            // Fragment dependency prevents the lint detector from selecting stale transitives.
             registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                 if (!granted) {
                     Toast.makeText(this, "Enable notifications to see live installation progress.", Toast.LENGTH_LONG).show()
