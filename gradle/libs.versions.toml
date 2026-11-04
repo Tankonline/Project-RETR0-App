@@ -7,10 +7,7 @@ espressoCore = "3.6.1"
 lifecycleRuntimeKtx = "2.8.4"
 lifecycleViewmodelKtx = "2.8.4"
 activityCompose = "1.9.1"
-prepare-release-v1.1.4
-
 fragment = "1.8.9"
-master
 kotlin = "2.4.0"
 composeBom = "2024.12.01"
 composeUiTest = "1.7.6"
