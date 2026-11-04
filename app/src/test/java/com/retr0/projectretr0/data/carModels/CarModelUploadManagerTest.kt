@@ -9,10 +9,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 import java.io.File
+import kotlin.io.path.createTempDirectory
 
 class CarModelUploadManagerTest {
     @Test fun uploadsInOrderAndNeverPublishes() { runBlocking {
-        val root = createTempDir().apply { resolve("vehicle/livery_01.dds").apply { parentFile!!.mkdirs(); writeText("data") } }
+        val root = createTempDirectory("car-upload-").toFile().apply { resolve("vehicle/livery_01.dds").apply { parentFile!!.mkdirs(); writeText("data") } }
         val api = FakeApi(); val result = CarModelUploadManager(api).upload(request(root))
         assertEquals(listOf("draft", "manifest", "file:vehicle/livery_01.dds"), api.calls)
         assertEquals(1, result.uploadedFiles); assertFalse(api.published)
@@ -20,7 +21,7 @@ class CarModelUploadManagerTest {
     } }
 
     @Test fun failureStopsLaterUploadsAndRejectsUnsafePaths() { runBlocking {
-        val root = createTempDir().apply { resolve("car.dds").writeText("data") }
+        val root = createTempDirectory("car-upload-").toFile().apply { resolve("car.dds").writeText("data") }
         val api = FakeApi(failManifest = true)
         kotlin.runCatching { CarModelUploadManager(api).upload(request(root)) }.onSuccess { error("expected failure") }
         assertEquals(listOf("draft", "manifest"), api.calls)

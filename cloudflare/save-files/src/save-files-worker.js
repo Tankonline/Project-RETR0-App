@@ -2,6 +2,8 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // ../save-files-worker-deploy.js
+import { handleStorageNodeRoute } from "./storage-node-control-plane.js";
+import { authenticatedAccount, auditAuth, authRateLimit } from "./auth.js";
 var __defProp2 = Object.defineProperty;
 var __name2 = /* @__PURE__ */ __name((target, value) => __defProp2(target, "name", { value, configurable: true }), "__name");
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -42,6 +44,39 @@ async function handleV1(request, env, ctx, requestId) {
   const fail = /* @__PURE__ */ __name2((status, code, message, details) => respond({ error: { code, message, ...details ? { details } : {} }, requestId }, status), "fail");
   if (!env.SKINS_DB || !env.COMMUNITY_BUCKET) return fail(503, "service_unavailable", "Skin storage is unavailable");
   try {
+    // Staging admin storage routes must be dispatched before any Community Hub
+    // installation authentication. They authenticate exclusively with the
+    // staging control-plane guard and X-Storage-Admin.
+    const stagingAdminRoute = /^\/v1\/storage\/admin\/(?:storage-objects\/seed|nodes\/[^/]+\/commands)$/.test(url.pathname);
+    if (stagingAdminRoute) {
+      const response = await handleStorageNodeRoute(request, env, url, requestId);
+      if (response) return response;
+    }
+    if (url.pathname === "/v1/auth/me" && request.method === "GET") {
+      if (!(await authRateLimit(env, request))) return fail(429, "rate_limited", "Too many authentication requests");
+      const auth = await authenticatedAccount(request, env, requestId);
+      if (!auth.ok) { await auditAuth(env.SKINS_DB, "auth_failure", null, request, requestId, { code: auth.code }); return fail(auth.status, auth.code, auth.message); }
+      await auditAuth(env.SKINS_DB, "auth_me", auth.account.id, request, requestId);
+      return respond({ account: { id: auth.account.id, email: auth.account.email, displayName: auth.account.display_name }, requestId });
+    }
+    const installationLink = /^\/v1\/auth\/installations\/([0-9a-f-]{36})\/(link|unlink)$/.exec(url.pathname);
+    if (installationLink && (request.method === "POST" || request.method === "DELETE")) {
+      if (!(await authRateLimit(env, request))) return fail(429, "rate_limited", "Too many authentication requests");
+      const auth = await authenticatedAccount(request, env, requestId);
+      if (!auth.ok) return fail(auth.status, auth.code, auth.message);
+      const installationId = installationLink[1].toLowerCase();
+      const exists = await env.SKINS_DB.prepare("SELECT id FROM anonymous_installations WHERE id = ? AND status = 'active'").bind(installationId).first();
+      if (!exists) return fail(404, "unknown_installation", "Installation is not registered");
+      if (installationLink[2] === "link" && request.method === "POST") await env.SKINS_DB.prepare("INSERT INTO account_installations (account_id, installation_id, linked_at, unlinked_at) VALUES (?, ?, CURRENT_TIMESTAMP, NULL) ON CONFLICT(account_id, installation_id) DO UPDATE SET linked_at = CURRENT_TIMESTAMP, unlinked_at = NULL").bind(auth.account.id, installationId).run();
+      else await env.SKINS_DB.prepare("UPDATE account_installations SET unlinked_at = CURRENT_TIMESTAMP WHERE account_id = ? AND installation_id = ? AND unlinked_at IS NULL").bind(auth.account.id, installationId).run();
+      await auditAuth(env.SKINS_DB, installationLink[2] === "link" ? "installation_link" : "installation_unlink", auth.account.id, request, requestId, { installationId });
+      return respond({ installationId, linked: installationLink[2] === "link", requestId });
+    }
+    if (url.pathname === "/v1/auth/logout" && (request.method === "POST" || request.method === "DELETE")) {
+      const auth = await authenticatedAccount(request, env, requestId);
+      if (auth.ok) await auditAuth(env.SKINS_DB, "logout", auth.account.id, request, requestId);
+      return respond({ loggedOut: true, requestId });
+    }
     if (url.pathname === "/v1/installations" && request.method === "POST") {
       operation = "installation_register";
       const bodyBytes2 = await boundedBody(request, MAX_JSON_BYTES);
@@ -1264,6 +1299,8 @@ __name2(reconcileCommunityAssets, "reconcileCommunityAssets");
 async function reconcileSaves(env) {
   let removed = 0;
   let lastId = "";
+  // D1 returns an empty result set for an empty table; return immediately so the
+  // scheduled pass is a no-op rather than treating absence of rows as failure.
   while (true) {
     const rows = await env.SKINS_DB.prepare(`
       SELECT id, file_key
@@ -1380,6 +1417,12 @@ var ASSET_LINKS = [
 ];
 var index_default = {
   async scheduled(event, env, ctx) {
+    if (env.STORAGE_ENVIRONMENT === "staging" && env.STORAGE_CONTROL_PLANE_ENABLED === "true" && env.SKINS_DB) {
+      ctx.waitUntil(env.SKINS_DB.batch([
+        env.SKINS_DB.prepare("DELETE FROM storage_node_nonces WHERE expires_at < CURRENT_TIMESTAMP LIMIT 500"),
+        env.SKINS_DB.prepare("UPDATE storage_nodes SET status = 'offline', updated_at = CURRENT_TIMESTAMP WHERE status IN ('approved','draining') AND last_heartbeat_at < datetime('now', '-30 minutes') LIMIT 100")
+      ]).catch(error => console.error(JSON.stringify({ event: "staging_node_cleanup_failed", error: String(error) }))));
+    }
     ctx.waitUntil(
       reconcileCommunityAssets(env).catch(
         (error) => console.error(JSON.stringify({
@@ -1396,7 +1439,10 @@ var index_default = {
     const startedAt = Date.now();
     let v1Response;
     try {
-      v1Response = await handleV1(
+      // Storage control-plane routes are dispatched before Community Hub
+      // installation authentication, including admin seed/command routes.
+      v1Response = await handleStorageNodeRoute(request, env, url, requestId);
+      if (!v1Response) v1Response = await handleV1(
         request,
         env,
         ctx,

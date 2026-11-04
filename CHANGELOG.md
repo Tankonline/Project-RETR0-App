@@ -2,6 +2,32 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.4]
+
+### Added
+- Added the car-model media workflow for selecting a cover and up to eight screenshots, with thumbnail previews and removal controls.
+- Added Community Hub cover and screenshot uploads for car models.
+- Added profile-picture editing and persistence for Community Hub identity.
+- Added graphics-tier controls and restore support through the graphics hub.
+
+### Changed
+- Improved Shizuku authorization and privileged-service recovery, including explicit API_V23 declaration, reconnect handling, timeout/retry behavior, and diagnostics for affected OEM devices.
+- Improved car-model search, remote file indexing, manifest/layout detection, path normalization, backup, rollback, and upload flows.
+- Improved skin image processing with crop support, WebP conversion, size limits, duplicate detection, and persisted integrity metadata.
+- Improved save snapshots, music library import/metadata/artwork handling, and background backup state reporting.
+
+### Fixed
+- Prevented duplicate vehicle-folder nesting during local and Community Hub car-model installation.
+- Preserved lowercase vehicle directory names and corrected Applied/My Models state after removal or revert.
+- Added validation and rollback safeguards around downloads, archives, backups, graphics changes, and remote media.
+
+### Compatibility and limitations
+- Minimum Android version remains Android 8.0/API 26; target and compile SDK remain 35.
+- Shizuku is required for privileged RR3 file and package operations; behavior also depends on the RR3 package variant and OEM Shizuku support.
+- Community Hub, profile pictures, metadata lookup, and remote downloads require network access and use the configured HTTPS services.
+- Music is imported from local storage or obtained externally; the app does not provide an in-app YouTube converter or APK self-updater.
+- The release still requires a configured release keystore; no signing credentials are stored in the repository.
+
 ## [1.1.3]
 
 ### Added

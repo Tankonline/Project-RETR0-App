@@ -1,0 +1,73 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.155.0/config-schema.json",
+  "name": "save-files-staging",
+  "main": "src/save-files-worker.js",
+  "compatibility_date": "2026-08-22",
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true
+    }
+  },
+  "d1_databases": [
+    {
+      "binding": "SKINS_DB",
+      "database_name": "retr0-save-files-staging",
+      "database_id": "80e10844-4552-4cf0-9219-d86caaa1884d",
+      "migrations_dir": "migrations-staging"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "COMMUNITY_BUCKET",
+      "bucket_name": "retr0-community-staging"
+    },
+    {
+      "binding": "ASSET_BUCKET",
+      "bucket_name": "retr0-assets-staging"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "ASSET_KV",
+      "id": "065596ea1453407f810dabd3598a713c"
+    },
+    {
+      "binding": "SOCIAL_KV",
+      "id": "472530dde9ff4b5a9a109f9a9acfb598"
+    },
+    {
+      "binding": "STORAGE_NODE_RATE_LIMIT",
+      "id": "83431cdae0664f6f962fed2446d7eac9"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "STORAGE_CONTROL_PLANE_MODE": "staging",
+    "STORAGE_ENVIRONMENT": "staging",
+    "STORAGE_CONTROL_PLANE_ENABLED": "true", "STORAGE_SEED_ENABLED": "true",
+    "AUTH_PROVIDER": "firebase",
+    "AUTH_ENVIRONMENT": "staging",
+    "FIREBASE_PROJECT_ID": "project-retr0",
+    "FIREBASE_ISSUER": "https://securetoken.google.com/project-retr0",
+    "FIREBASE_AUDIENCE": "project-retr0",
+    "AUTH_ISSUER": "https://securetoken.google.com/project-retr0",
+    "AUTH_AUDIENCE": "project-retr0",
+    "AUTH_JWKS_URL": "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com",
+    "AUTH_RATE_LIMIT_MAX": "30",
+    "AUTH_RATE_LIMIT_TTL": "60"
+  }
+}

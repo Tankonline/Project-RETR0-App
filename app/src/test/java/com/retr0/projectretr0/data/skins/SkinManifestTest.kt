@@ -10,6 +10,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import kotlin.io.path.createTempDirectory
 
 class SkinManifestTest {
     @Test fun serializesWorkerCanonicalRootAssetShape() {
@@ -23,7 +24,7 @@ class SkinManifestTest {
     }
 
     @Test fun roundTripsCanonicalManifestJson() {
-        val root = createTempDir()
+        val root = createTempDirectory("skin-manifest-").toFile()
         val binary = root.resolve("skin.dds.z").apply { writeBytes(byteArrayOf(1)) }
         val manifest = sampleManifest().copy(binary = ManifestFile("skin.dds.z", "application/octet-stream", binary.length(), "hash"))
         SkinManifestValidator.validate(manifest, root)
@@ -55,7 +56,7 @@ class SkinManifestTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun rejectsTraversalPath() {
-        val root = createTempDir()
+        val root = createTempDirectory("skin-manifest-").toFile()
         SkinManifestValidator.validate(sampleManifest().copy(binary = ManifestFile("../outside.dds.z", "application/octet-stream", 1, "hash")), root)
     }
 }
