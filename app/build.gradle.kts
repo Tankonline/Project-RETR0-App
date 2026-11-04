@@ -17,8 +17,8 @@ android {
         applicationId = "com.retr0.projectretr0"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.1.3"
+        versionCode = 16
+        versionName = "1.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -54,12 +54,13 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            // Debug builds use the live Worker for local upload/publish testing; no credentials are embedded.
+            // Debug remains production-compatible, but never embeds credentials or a staging endpoint.
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
         }
         release {
             isMinifyEnabled = true
+            // Release must remain pinned to the production Worker. Staging is selected only by an explicit local build override.
             buildConfigField("String", "COMMUNITY_API_BASE_URL", "\"https://save-files.armaandeep08-ap.workers.dev\"")
             buildConfigField("String", "COMMUNITY_API_KEY", "\"\"")
             signingConfig = signingConfigs.findByName("release")

@@ -1,5 +1,15 @@
 # Project RETR0 Release Checklist
 
+## v1.1.4 Release
+- [x] Version metadata is `versionName "1.1.4"` and `versionCode 16`.
+- [x] Changelog updated with code-evidenced features, improvements, fixes, compatibility, and limitations.
+- [ ] Car-model media wizard tested: cover, screenshots, remove, set cover, and horizontal scrolling.
+- [ ] Car-model Community Hub upload tested with cover and screenshots.
+- [ ] Worker media validation and R2 verification tested.
+- [ ] Pull request merged and required CI checks passed.
+- [ ] Release tag `v1.1.4` points to the merged master commit.
+- [ ] Signed APK and SHA-256 checksum published.
+
 ## v1.1.3 Release
 - [ ] Version metadata is `versionName "1.1.3"` and `versionCode 15`.
 - [ ] Car-model media wizard tested: cover, screenshots, remove, set cover, and horizontal scrolling.
@@ -27,7 +37,9 @@
 - [ ] All documentation updated (README, CHANGELOG, LICENSE, PRIVACY, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, THIRD_PARTY_LICENSES).
 
 ## Build and Configuration
-- [ ] `versionName` and `versionCode` incremented in `app/build.gradle.kts`.
+- [x] `versionName` and `versionCode` incremented in `app/build.gradle.kts` to `1.1.4` / `16`.
+- [ ] Confirm the release tag is exactly `v1.1.4` before publishing.
+- [ ] Confirm release signing environment variables are present in the local shell or CI environment.
 - [ ] Clean build successful: `./gradlew clean`.
 - [ ] Debug build successful: `./gradlew :app:assembleDebug`.
 - [ ] Release build successful (local check): `./gradlew :app:assembleRelease` (requires local signing env).

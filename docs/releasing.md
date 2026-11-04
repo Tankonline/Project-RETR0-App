@@ -39,7 +39,9 @@ Configure these protected environment or repository secrets:
 - `RELEASE_KEY_ALIAS`: signing-key alias.
 - `RELEASE_KEY_PASSWORD`: signing-key password.
 
-The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag matching `versionName`, such as `v1.1.3`.
+The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag matching `versionName`, such as `v1.1.4`.
+
+For v1.1.4, the expected Android metadata is `versionName "1.1.4"` and `versionCode 16`.
 
 ## Release procedure
 
@@ -52,6 +54,24 @@ The workflow at `.github/workflows/release.yml` validates unit tests, builds `:a
 7. Verify the GitHub Release contains the APK, checksum, source tag, and release notes.
 8. Submit the same source/tag and documented build instructions to IzzyOnDroid.
 9. If rollback is required, publish a newer corrective version. Do not reuse or move an existing release tag.
+
+## v1.1.4 release description draft
+
+Project RETR0 installer v1.1.4 expands the RR3 management workflows while improving privileged-service reliability and content validation.
+
+### Highlights
+- Car-model media selection, previews, removal, cover assignment, and Community Hub uploads.
+- Profile-picture editing and persisted Community Hub identity.
+- Improved Shizuku authorization, reconnect/retry handling, stale-service recovery, and OEM diagnostics.
+- Improved car-model discovery, path normalization, backup/rollback, skin image processing, save snapshots, and music-library metadata/artwork handling.
+- Additional validation and rollback safeguards for downloads, archives, backups, graphics changes, and remote media.
+
+### Compatibility and known limitations
+- Android 8.0/API 26 minimum; target/compile SDK 35.
+- Shizuku is required for privileged RR3 operations, and OEM/package support can vary.
+- Network access is required for Community Hub, profile pictures, metadata lookup, and remote downloads.
+- Music is imported locally or obtained externally; there is no in-app YouTube converter or APK self-updater.
+- A release keystore is required to produce the signed APK.
 
 ## Release notes template
 

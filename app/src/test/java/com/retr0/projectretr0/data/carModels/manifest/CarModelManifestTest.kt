@@ -5,6 +5,7 @@ import java.security.MessageDigest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.io.path.createTempDirectory
 
 class CarModelManifestTest {
     @Test fun pathValidationRejectsTraversalAndAbsolutePaths() {
@@ -15,7 +16,7 @@ class CarModelManifestTest {
     }
 
     @Test fun scannerProducesGenericBmwLikeShapeHashesAndSizes() {
-        val root = createTempDir(prefix = "rr3-car-")
+        val root = createTempDirectory("rr3-car-").toFile()
         repeat(27) { index ->
             val directory = root.resolve(if (index % 3 == 0) "textures" else "vehicle").apply { mkdirs() }
             val file = directory.resolve(if (index == 0) "livery_01.dds.z" else "part_$index.etc")
@@ -35,7 +36,7 @@ class CarModelManifestTest {
     }
 
     @Test fun scannerNormalizesLegacyStructuredRootsAndDestinations() {
-        val root = createTempDir(prefix = "rr3-legacy-")
+        val root = createTempDirectory("rr3-legacy-").toFile()
         root.resolve("vehicles/2001_bmw_m3_gtr_street/car.m3g").apply { parentFile!!.mkdirs(); writeText("mesh") }
         root.resolve("vehicles/data/events.dat.nct").apply { parentFile!!.mkdirs(); writeText("events") }
         val result = CarModelFolderScanner.scan(root, target = TargetVehicle("ignored", "files/.depot"))
@@ -46,7 +47,7 @@ class CarModelManifestTest {
     }
 
     @Test fun scannerNormalizesUpdatedDepotRootFilesAndRejectsUnknownTopLevelFile() {
-        val root = createTempDir(prefix = "rr3-updated-")
+        val root = createTempDirectory("rr3-updated-").toFile()
         root.resolve("vehicles/2001_bmw_m3_gtr_street/car.m3g").apply { parentFile!!.mkdirs(); writeText("mesh") }
         root.resolve("gametext/text_en.txt").apply { parentFile!!.mkdirs(); writeText("text") }
         root.resolve("asset_list_base.txtCache.txt").writeText("cache")
