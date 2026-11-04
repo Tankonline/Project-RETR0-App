@@ -19,7 +19,7 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 ### Current release
 
-- **Version:** `1.1.3` (`versionCode 15`)
+- **Version:** `1.1.4` (`versionCode 16`)
 - **Application ID / namespace:** `com.retr0.projectretr0`
 - **Minimum Android:** Android 8.0 / API 26
 - **Target and compile SDK:** API 35
@@ -535,8 +535,8 @@ compileSdk:    35
 minSdk:        26
 targetSdk:     35
 
-versionCode:   7
-versionName:   1.0.5
+versionCode:   16
+versionName:   1.1.4
 
 Java:          17
 Kotlin JVM:    17
@@ -896,7 +896,7 @@ Check:
 
 # Known Issues
 
-The following issues are currently known in the **v1.0.5** release. They do not all prevent normal use of the installer, but they are being tracked for future fixes.
+The following limitations and warnings apply to the current **v1.1.4** release. They do not all prevent normal use of the installer, but they should be considered when testing or distributing a build.
 
 ## Music import limitations
 
@@ -914,7 +914,7 @@ Some bundled native libraries may emit strip warnings during release packaging. 
 
 The release build currently emits warnings concerning the legacy `package` attribute in the source manifest and manifest merge `tools:replace` entries for the Shizuku provider and `org.apache.http.legacy`.
 
-**Impact:** The v1.0.3 release build completes successfully. These warnings are not currently known to prevent installation or normal operation.
+**Impact:** The current release build completes successfully. These warnings are not currently known to prevent installation or normal operation.
 
 **Status:** Cleanup opportunity for a future maintenance release rather than a current release blocker.
 
@@ -1059,8 +1059,8 @@ Project RETR0 installer is an active development project.
 The current repository configuration identifies the application as:
 
 ```text
-Version: 1.0.5
-Version code: 7
+Version: 1.1.4
+Version code: 16
 ```
 
 The implementation and documentation may evolve as additional asset types, installation safeguards, community functionality, and compatibility improvements are introduced.

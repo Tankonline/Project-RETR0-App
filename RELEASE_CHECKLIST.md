@@ -34,7 +34,7 @@
 - [ ] No IDE metadata (`.idea/`, `.iml`) in version control.
 - [ ] No generated build artifacts (`build/`, `.cxx/`, `.artifacts/`).
 - [ ] No secrets, API keys, or private tokens committed.
-- [ ] All documentation updated (README, CHANGELOG, LICENSE, PRIVACY, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, THIRD_PARTY_LICENSES).
+- [ ] All release-relevant documentation updated (README, CHANGELOG, RELEASE_CHECKLIST, docs/releasing.md, privacy/community policy, IzzyOnDroid metadata, and workflow-generated notes). Unrelated Cloudflare/extension-server docs are out of scope unless app-release behavior changes.
 
 ## Build and Configuration
 - [x] `versionName` and `versionCode` incremented in `app/build.gradle.kts` to `1.1.4` / `16`.
