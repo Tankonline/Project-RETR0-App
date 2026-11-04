@@ -55,9 +55,11 @@ For v1.1.4, the expected Android metadata is `versionName "1.1.4"` and `versionC
 8. Submit the same source/tag and documented build instructions to IzzyOnDroid.
 9. If rollback is required, publish a newer corrective version. Do not reuse or move an existing release tag.
 
-## v1.1.4 release description draft
+## v1.1.4 release description
 
-Project RETR0 installer v1.1.4 expands the RR3 management workflows while improving privileged-service reliability and content validation.
+Project RETR0 installer v1.1.4 expands RR3 asset management with richer car-model media workflows, stronger Community Hub integration, and more resilient Shizuku-powered installation services. This release is suitable as the GitHub Release and IzzyOnDroid-facing summary; replace the checksum placeholder with the value generated from the signed APK before publishing.
+
+Project RETR0 installer is a user-authorized RR3 utility: it does not self-update, and privileged file operations require Shizuku permission. Back up game data before applying changes and use the app's revert flow where available.
 
 ### Highlights
 - Car-model media selection, previews, removal, cover assignment, and Community Hub uploads.
