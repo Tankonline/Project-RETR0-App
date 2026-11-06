@@ -4,7 +4,7 @@
   "main": "src/save-files-worker.js",
   "compatibility_date": "2026-08-22",
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["*/15 * * * *", "0 */6 * * *"]
   },
   "observability": {
     "enabled": true,
@@ -24,7 +24,8 @@
     {
       "binding": "SKINS_DB",
       "database_name": "save-files",
-      "database_id": "0937c661-1914-486d-88b1-7a03332ff99a"
+      "database_id": "0937c661-1914-486d-88b1-7a03332ff99a",
+      "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
@@ -49,7 +50,18 @@
   ],
   "ai": {
     "binding": "AI"
+  },
+  "vars": {
+    "RR3_RAG_ENABLED": "false",
+    "RR3_RAG_ALLOWED_HOSTS": "",
+    "RR3_RAG_MANUAL_TRIGGER_ENABLED": "false"
   }
+  // RAG remains fail-closed until a reviewed rr3_knowledge migration, a
+  // dedicated cache binding, and a validated Vectorize index are approved.
+  // No Vectorize/KV placeholder binding is declared here, avoiding accidental
+  // reuse of ASSET_KV (release-manifest semantics). Do not deploy this config
+  // to create remote resources.
+  // /troubleshoot uses @cf/ibm-granite/granite-4.0-h-micro through env.AI.
   // AUTH_KEY is a Cloudflare secret binding. Its value cannot be retrieved.
   // Keep it out of vars; do not set or rotate it as part of this config task.
 }

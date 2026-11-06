@@ -4,7 +4,7 @@
   "main": "src/save-files-worker.js",
   "compatibility_date": "2026-08-22",
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["*/15 * * * *", "0 */6 * * *"]
   },
   "observability": {
     "enabled": true,
@@ -50,12 +50,27 @@
     {
       "binding": "STORAGE_NODE_RATE_LIMIT",
       "id": "83431cdae0664f6f962fed2446d7eac9"
+    },
+    {
+      "binding": "RR3_RAG_CACHE",
+      "id": "d2415dca3b034b1b97f94000d2a43247"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "RR3_RAG_INDEX",
+      "index_name": "rr3-knowledge"
     }
   ],
   "ai": {
     "binding": "AI"
   },
+  // RAG is explicitly enabled only for this staging deployment. The source
+  // allowlist is intentionally limited to the approved RR3 Fandom host.
   "vars": {
+    "RR3_RAG_ENABLED": "true",
+    "RR3_RAG_ALLOWED_HOSTS": "realracing3.fandom.com",
+    "RR3_RAG_MANUAL_TRIGGER_ENABLED": "true",
     "STORAGE_CONTROL_PLANE_MODE": "staging",
     "STORAGE_ENVIRONMENT": "staging",
     "STORAGE_CONTROL_PLANE_ENABLED": "true", "STORAGE_SEED_ENABLED": "true",
