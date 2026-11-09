@@ -76,7 +76,7 @@
 		"RR3_RAG_MANUAL_TRIGGER_ENABLED": "false",
 		"ADMIN_INGESTION_ENABLED": "false",
 		"ADMIN_CLAIM": "admin",
-		"AI_SEARCH_ENABLED": "false",
+		"AI_SEARCH_ENABLED": "true",
 		"WEB_RESEARCH_ENABLED": "false",
 		"WEB_RESEARCH_PROVIDER": "",
 		"WEB_RESEARCH_MODEL": "",
