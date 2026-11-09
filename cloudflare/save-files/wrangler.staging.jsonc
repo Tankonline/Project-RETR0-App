@@ -65,12 +65,42 @@
   "ai": {
     "binding": "AI"
   },
+  // Bind the dashboard namespace; the worker resolves the retr0-kb instance
+  // explicitly with env.KB_SEARCH.get("retr0-kb"). Runtime remains disabled
+  // until the binding is validated by an operator.
+  "ai_search_namespaces": [
+    {
+      "binding": "KB_SEARCH",
+      "namespace": "retr0-kb"
+    }
+  ],
   // RAG is explicitly enabled only for this staging deployment. The source
   // allowlist is intentionally limited to the approved RR3 Fandom host.
   "vars": {
     "RR3_RAG_ENABLED": "true",
     "RR3_RAG_ALLOWED_HOSTS": "realracing3.fandom.com",
+    "RR3_RAG_REJECTED_HOSTS": "",
+    "RR3_RAG_REJECTED_PATHS": "",
+    "RR3_RAG_ALLOWED_PATH_PREFIXES": "/ /wiki/ /api/ /dev/",
+    "RR3_RAG_SOURCE_ENTRIES": "realracing3.fandom.com|/wiki/Real_Racing_3",
+    "RR3_RAG_SOURCE_PATH": "/wiki/Real_Racing_3",
     "RR3_RAG_MANUAL_TRIGGER_ENABLED": "true",
+    // Staging-only web research. Provider and gateway are explicit; the worker
+    // remains constrained by bounded fetches, robots, SSRF, and review queue.
+    "AI_SEARCH_ENABLED": "true",
+    "WEB_RESEARCH_ENABLED": "true",
+    "WEB_RESEARCH_PROVIDER": "ceramic",
+    "WEB_RESEARCH_GATEWAY_ID": "default",
+    "WEB_RESEARCH_MAX_RESULTS": "3",
+    "WEB_RESEARCH_MAX_FETCHES": "3",
+    "WEB_RESEARCH_MAX_QUERY_CHARS": "240",
+    "WEB_RESEARCH_MAX_RESULT_CHARS": "4000",
+    "WEB_RESEARCH_RATE_LIMIT_MAX": "3",
+    "WEB_RESEARCH_RATE_LIMIT_TTL": "3600",
+    "WEB_RESEARCH_DAILY_BUDGET": "50",
+    "WEB_RESEARCH_ALLOWED_HOSTS": "realracing3.fandom.com",
+    "WEB_RESEARCH_ALLOWED_PATH_PREFIXES": "/ /wiki/ /api/ /dev/",
+    "WEB_RESEARCH_ROBOTS_REQUIRED": "true",
     "STORAGE_CONTROL_PLANE_MODE": "staging",
     "STORAGE_ENVIRONMENT": "staging",
     "STORAGE_CONTROL_PLANE_ENABLED": "true", "STORAGE_SEED_ENABLED": "true",

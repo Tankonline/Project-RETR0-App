@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+const production = readFileSync(new URL("wrangler.jsonc", import.meta.url), "utf8");
+const source = readFileSync(new URL("src/save-files-worker.js", import.meta.url), "utf8");
+assert.match(production, /"RR3_RAG_ENABLED": "true"/);
+assert.match(production, /"RR3_RAG_MANUAL_TRIGGER_ENABLED": "false"/);
+assert.match(production, /"WEB_RESEARCH_ENABLED": "false"/);
+assert.match(production, /"WEB_RESEARCH_DAILY_BUDGET": "0"/);
+assert.match(source, /env\.STORAGE_ENVIRONMENT === "staging"/);
+assert.match(source, /pending_review/);
+assert.match(source, /queueResearchReview/);
+console.log("production web/manual flags and review queue guards passed");

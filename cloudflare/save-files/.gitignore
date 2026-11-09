@@ -2,3 +2,24 @@
 .wrangler-dry-run/
 *.worker.js
 *.worker.js.map
+
+# Local credentials, exports, backups, and runtime artifacts
+.env
+.env.*
+!.env.example
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*-backup*
+backup-*
+save-files
+-X
+
+# Generated Wrangler types
+worker-configuration.d.ts
+
+# Local research/runtime data
+staging-data/
+node_modules/

@@ -17,8 +17,8 @@ android {
         applicationId = "com.retr0.projectretr0"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.1.4"
+        versionCode = 17
+        versionName = "1.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -105,6 +105,8 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.firebaseBomLib))
     implementation(libs.firebaseAuthLib)
+    // Used only by the inactive email-link authentication preparation layer.
+    implementation(libs.secureDependency)
     implementation(libs.androidx.activity.compose)
     // Keep Fragment's ActivityResult integration on a modern, compatible API surface.
     implementation(libs.androidx.fragment.ktx)

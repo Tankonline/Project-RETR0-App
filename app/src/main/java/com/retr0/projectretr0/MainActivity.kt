@@ -30,6 +30,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -44,7 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,6 +64,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.work.*
 import coil.compose.AsyncImage
 import com.retr0.projectretr0.installer.*
+import com.retr0.projectretr0.installer.AiResponse
 import com.retr0.projectretr0.data.skins.MusicApiClient
 import com.retr0.projectretr0.data.skins.SaveApiClient
 import com.retr0.projectretr0.data.skins.SkinInstallationIdentity
@@ -945,9 +946,18 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
+    private fun AiResponseDetails(response: AiResponse) {
+        Spacer(Modifier.height(8.dp))
+        response.confidence?.let { Text("Confidence: $it", style = MaterialTheme.typography.labelSmall, color = RetroAccent) }
+        response.followUpQuestion?.let {
+            Spacer(Modifier.height(6.dp))
+            Text("Follow-up: $it", style = MaterialTheme.typography.bodySmall, color = RetroText)
+        }
+    }
+
+    @Composable
     fun AiChatScreen() {
         val chatScrollState = rememberScrollState()
-
         // Auto-scroll to bottom when a new message is added
         LaunchedEffect(chatMessages.size) {
             if (chatMessages.isNotEmpty()) {
@@ -961,7 +971,11 @@ class MainActivity : ComponentActivity() {
         }
         
         Column(
-            Modifier.fillMaxSize().background(RetroBg).padding(horizontal = 18.dp),
+            Modifier
+                .fillMaxSize()
+                .background(RetroBg)
+                .imePadding()
+                .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -976,7 +990,10 @@ class MainActivity : ComponentActivity() {
             
             // Chat messages or Suggested prompts
             Column(
-                modifier = Modifier.weight(1f).verticalScroll(chatScrollState).padding(bottom = 16.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(chatScrollState)
+                    .padding(bottom = 16.dp)
             ) {
                 if (chatMessages.isEmpty()) {
                     Column(Modifier.fillMaxWidth().padding(vertical = 30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1009,11 +1026,17 @@ class MainActivity : ComponentActivity() {
                     chatMessages.forEach { msg ->
                         val user = msg.isUser
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
-                            Text(msg.content, color = if (user) Color.White else RetroText, style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.widthIn(max = 280.dp)
+                            Column(
+                                modifier = Modifier.widthIn(max = 300.dp)
+                                    .heightIn(max = 320.dp)
+                                    .verticalScroll(rememberScrollState())
                                     .background(if (user) RetroAccent else RetroSurface, RoundedCornerShape(14.dp))
                                     .then(if (!user) Modifier.border(1.dp, RetroBorder, RoundedCornerShape(14.dp)) else Modifier)
-                                    .padding(horizontal = 14.dp, vertical = 10.dp))
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            ) {
+                                Text(msg.content, color = if (user) Color.White else RetroText, style = MaterialTheme.typography.bodyLarge)
+                                msg.aiResponse?.let { response -> AiResponseDetails(response) }
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                     }
@@ -1050,7 +1073,13 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 isAiChatThinking = true
                 val response = Retr0Installer(this@MainActivity, service).chatWithAi(chatMessages.toList())
-                chatMessages.add(ChatMessage(response ?: "Connection error.", false))
+                chatMessages.add(
+                    ChatMessage(
+                        content = response?.answer ?: "Connection error.",
+                        isUser = false,
+                        aiResponse = response,
+                    )
+                )
                 isAiChatThinking = false
             }
         }
@@ -1482,7 +1511,7 @@ class MainActivity : ComponentActivity() {
                             isAiThinking = true
                             val currentService = service ?: return@launch
                             val response = Retr0Installer(this@MainActivity, currentService).troubleshootError(progress.errorMessage)
-                            aiFixResponse = response ?: "Could not connect to AI."
+                            aiFixResponse = response?.answer ?: "Could not connect to AI."
                             isAiThinking = false
                         }
                     }
@@ -1491,6 +1520,12 @@ class MainActivity : ComponentActivity() {
                         Spacer(modifier = Modifier.height(8.dp))
                         Box(modifier = Modifier.fillMaxWidth().background(RetroAccentTint, RoundedCornerShape(12.dp)).padding(12.dp)) {
                             Text("🤖 AI FIX: $aiFixResponse", style = MaterialTheme.typography.bodySmall, color = RetroText)
+                            // Structured metadata is shown separately from the answer so external research is explicit.
+                            // The troubleshoot card currently retains the concise answer for compatibility.
+                            if (isAiThinking) {
+                                Spacer(Modifier.height(6.dp))
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = RetroAccent)
+                            }
                         }
                     }
                 }

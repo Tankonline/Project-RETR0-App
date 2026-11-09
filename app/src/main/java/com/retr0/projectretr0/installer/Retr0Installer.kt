@@ -695,7 +695,7 @@ class Retr0Installer(
      * Temporary diagnostics log authentication metadata only. Prompts, signatures, responses, and
      * unrestricted server bodies are never logged.
      */
-    suspend fun troubleshootError(errorMessage: String): String? = withContext(Dispatchers.IO) {
+    suspend fun troubleshootError(errorMessage: String): AiResponse? = withContext(Dispatchers.IO) {
         executeAiRequest(
             mode = "troubleshoot",
             message = errorMessage,
@@ -707,7 +707,7 @@ class Retr0Installer(
     /**
      * Sends the latest user message to the AI Modding Assistant.
      */
-    suspend fun chatWithAi(history: List<ChatMessage>): String? = withContext(Dispatchers.IO) {
+    suspend fun chatWithAi(history: List<ChatMessage>): AiResponse? = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         val lastUserMessage = history.lastOrNull { it.isUser }?.content
         if (lastUserMessage.isNullOrBlank()) {
@@ -729,7 +729,7 @@ class Retr0Installer(
         connectTimeoutMs: Int,
         readTimeoutMs: Int,
         historyCount: Int? = null,
-    ): String? {
+    ): AiResponse? {
         val startedAt = System.currentTimeMillis()
         val method = "POST"
         val path = "/troubleshoot"
@@ -747,13 +747,11 @@ class Retr0Installer(
             }
             val bodyBytes = jsonRequest.toString().toByteArray(Charsets.UTF_8)
             val bodySha256 = SkinRequestCanonicalizer.sha256(bodyBytes)
-            diagnostic = diagnostic.copy(bodyBytes = bodyBytes.size, bodySha256 = bodySha256)
-            Log.i(AI_TAG, "RETR0_AI_BODY_METADATA mode=$mode bodyBytes=${bodyBytes.size} bodySha256=$bodySha256")
+            diagnostic = diagnostic.copy(bodyBytes = bodyBytes.size)
+            // Never log request body size, hashes, prompts, or device identity in production INFO logs.
 
             val identity = try {
-                SkinInstallationIdentity(context).also {
-                    Log.i(AI_TAG, "RETR0_AI_IDENTITY_CREATED mode=$mode installationId=${it.installationId}")
-                }
+                SkinInstallationIdentity(context)
             } catch (error: Exception) {
                 Log.e(AI_TAG, "RETR0_AI_IDENTITY_FAILED mode=$mode errorType=${error.javaClass.simpleName} message=${safeAiExceptionMessage(error)}", error)
                 throw error
@@ -766,13 +764,7 @@ class Retr0Installer(
                         noncePresent = it.nonce.isNotBlank(),
                         signaturePresent = it.signature.isNotBlank(),
                     )
-                    Log.i(
-                        AI_TAG,
-                        "RETR0_AI_SIGNING_SUCCEEDED mode=$mode method=$method path=$path " +
-                            "installationId=${it.installationId} timestamp=${it.timestamp} " +
-                            "nonceLength=${it.nonce.length} signatureLength=${it.signature.length} " +
-                            "signatureNonEmpty=${it.signature.isNotEmpty()} bodySha256=$bodySha256",
-                    )
+                    // Authentication values are intentionally never emitted to logs.
                 }
             } catch (error: Exception) {
                 Log.e(AI_TAG, "RETR0_AI_SIGNING_FAILED mode=$mode method=$method path=$path errorType=${error.javaClass.simpleName} message=${safeAiExceptionMessage(error)}", error)
@@ -792,50 +784,28 @@ class Retr0Installer(
                 setRequestProperty("X-Nonce", signed.nonce)
                 setRequestProperty("X-Signature", signed.signature)
             }
-            Log.i(
-                AI_TAG,
-                "RETR0_AI_AUTH_HEADERS mode=$mode " +
-                    "X-Installation-ID=${presence(signed.installationId)} " +
-                    "X-Timestamp=${presence(signed.timestamp)} X-Nonce=${presence(signed.nonce)} " +
-                    "X-Signature=${presence(signed.signature)}",
-            )
-            Log.i(
-                AI_TAG,
-                "RETR0_AI_CANONICAL_METADATA mode=$mode method=$method path=$path " +
-                    "installationId=${signed.installationId} timestamp=${signed.timestamp} " +
-                    "nonceLength=${signed.nonce.length} bodySha256=$bodySha256",
-            )
+            // Do not log auth headers, installation IDs, timestamps, nonces, signatures, or body hashes.
             connection.outputStream.use { it.write(bodyBytes) }
 
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
                 val requestId = connection.getHeaderField("X-Request-ID")
-                val traceId = connection.getHeaderField("X-Trace-ID")
-                val workerVersion = connection.getHeaderField("X-Worker-Version")
-                val workerRevision = connection.getHeaderField("X-Worker-Revision")
                 val contentType = connection.contentType
-                val contentLength = connection.contentLengthLong.takeIf { it >= 0 }
                 diagnostic = diagnostic.copy(
                     requestId = requestId,
                     responseContentType = contentType,
                 )
-                val responseBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                val safeResponseBody = safeAiDiagnosticResponseBody(responseBody)
-                Log.e(
-                    AI_TAG,
-                    "RETR0_AI_AUTH_RESPONSE mode=$mode status=$responseCode " +
-                        "elapsedMs=${System.currentTimeMillis() - startedAt} requestId=${safeLogValue(requestId)} " +
-                        "traceId=${safeLogValue(traceId)} workerVersion=${safeLogValue(workerVersion)} " +
-                        "workerRevision=${safeLogValue(workerRevision)} contentType=${safeLogValue(contentType)} " +
-                        "contentLength=${contentLength ?: "ABSENT"} responseBody=${safeResponseBody ?: "REDACTED_OR_EMPTY"}",
-                )
+                connection.errorStream?.close()
+                Log.e(AI_TAG, "RETR0_AI_REQUEST_FAILED status=$responseCode elapsedMs=${System.currentTimeMillis() - startedAt} requestId=${safeLogValue(requestId)}")
                 logAiFailure(AiErrorCode.HTTP_ERROR, mode, startedAt, httpStatus = responseCode, diagnostic = diagnostic)
                 return null
             }
 
             val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
+            val headerRequestId = connection.getHeaderField("X-Request-ID")
+            diagnostic = diagnostic.copy(requestId = headerRequestId)
             val response = runCatching {
-                JSONObject(responseBody).optString("response").takeIf { it.isNotBlank() }
+                parseAiResponse(responseBody)
             }.getOrElse {
                 logAiFailure(AiErrorCode.INVALID_RESPONSE, mode, startedAt, it, diagnostic = diagnostic)
                 return null
@@ -844,7 +814,14 @@ class Retr0Installer(
                 logAiFailure(AiErrorCode.EMPTY_RESPONSE, mode, startedAt, diagnostic = diagnostic)
                 return null
             }
-            Log.i(AI_TAG, "RETR0_AI_REQUEST_SUCCEEDED mode=$mode elapsedMs=${System.currentTimeMillis() - startedAt}")
+            Log.i(
+                AI_TAG,
+                "RETR0_AI_RESPONSE requestId=${safeLogValue(diagnostic.requestId)} status=$responseCode " +
+                    "latencyMs=${System.currentTimeMillis() - startedAt} rag_used=${response.trustedSources.isNotEmpty()} " +
+                    "research_used=${response.researchSources.isNotEmpty()} confidence=${response.confidence ?: "ABSENT"} " +
+                    "sourceCount=${response.trustedSources.size + response.researchSources.size} " +
+                    "followUpPresent=${response.followUpQuestion != null}",
+            )
             return response
         } catch (error: SocketTimeoutException) {
             logAiFailure(AiErrorCode.TIMEOUT, mode, startedAt, error, diagnostic = diagnostic)
@@ -874,12 +851,63 @@ class Retr0Installer(
         val noncePresent: Boolean = false,
         val signaturePresent: Boolean = false,
         val bodyBytes: Int? = null,
-        val bodySha256: String? = null,
         val requestId: String? = null,
         val responseContentType: String? = null,
     )
 
-    private fun presence(value: String?): String = if (value.isNullOrBlank()) "ABSENT" else "PRESENT"
+    private fun parseAiResponse(body: String): AiResponse? {
+        val json = JSONObject(body)
+        val answer = normalizeAiAnswer(json.optString("answer").ifBlank { json.optString("response") }) ?: return null
+        fun strings(key: String): List<String> = buildList {
+            val values = json.optJSONArray(key) ?: return@buildList
+            for (i in 0 until values.length()) values.optString(i).takeIf { it.isNotBlank() }?.let(::add)
+        }
+        return AiResponse(
+            answer = answer,
+            confidence = json.optString("confidence").takeIf { it.isNotBlank() },
+            trustedSources = strings("trustedSources").ifEmpty { strings("sources") },
+            researchSources = strings("researchSources"),
+            followUpQuestion = json.optString("followUpQuestion").takeIf { it.isNotBlank() },
+        )
+    }
+
+    private fun normalizeAiAnswer(value: String): String? {
+        var answer = value.trim()
+        repeat(3) {
+            val decoded = answer
+                .replace(Regex("\\\\u([0-9a-fA-F]{4})")) { it.groupValues[1].toInt(16).toChar().toString() }
+                .replace("\\\\r\\\\n", "\\n")
+                .replace("\\\\n", "\\n")
+                .replace("\\\\r", "\\n")
+                .replace("\\\\\"", "\\\"")
+                .replace("\\\\\\\\", "\\\\")
+            if (decoded == answer) return@repeat
+            answer = decoded
+        }
+        val candidate = answer.replace(Regex("^```(?:json)?\\s*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*```$"), "").trim()
+        if (candidate.startsWith("{") || candidate.startsWith("[")) {
+            runCatching { JSONObject(candidate) }.getOrNull()?.let { nested ->
+                val nestedValue = listOf("response", "answer", "text", "result", "output", "content", "message")
+                    .asSequence().map { nested.opt(it) }.filterIsInstance<String>().firstOrNull { it.isNotBlank() }
+                if (nestedValue != null && nestedValue != answer) answer = normalizeAiAnswer(nestedValue) ?: answer
+            }
+        }
+        answer = answer
+            .replace(Regex("(^|\\n)\\s*(?:#+\\s*)?(?:Documented Facts|Trusted Sources|Sources|Citations?|References?|External Research)\\s*:?\\s*(?:\\n|$)[\\s\\S]*$", RegexOption.IGNORE_CASE), "$1")
+            .replace(Regex("(^|\\n)\\s*(?:#+\\s*)?Follow[- ]?up question\\s*:?\\s*[\\s\\S]*$", RegexOption.IGNORE_CASE), "$1")
+            .replace(Regex("\\n\\s*(?:[-*]\\s*)?(?:source|citation|reference)\\s*:\\s*(?:https?://|(?:kb|r2|source|key):|[A-Za-z0-9._-]+/)[^\\n]*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\n{3,}"), "\\n\\n")
+            .trim()
+        return truncateAiAnswer(answer).takeIf { it.isNotBlank() }
+    }
+
+    private fun truncateAiAnswer(value: String, targetLength: Int = 140, hardMax: Int = 180): String {
+        if (value.length <= hardMax) return value
+        val boundary = value.substring(0, targetLength.coerceAtMost(hardMax))
+            .lastIndexOfAny(charArrayOf('.', '!', '?'))
+        return if (boundary >= 40) value.substring(0, boundary + 1).trim() else value.substring(0, hardMax).trimEnd() + "…"
+    }
 
     private fun safeLogValue(value: String?): String = value
         ?.takeIf { it.isNotBlank() && it.length <= 160 && it.all { char -> char.code in 32..126 } }
@@ -893,15 +921,6 @@ class Retr0Installer(
                 !message.contains("token", ignoreCase = true)
         }
         ?: "REDACTED_OR_EMPTY"
-
-    private fun safeAiDiagnosticResponseBody(body: String): String? {
-        val normalized = body.trim()
-        if (normalized.isEmpty() || normalized.length > 160) return null
-        val lower = normalized.lowercase()
-        val forbidden = listOf("signature", "token", "authorization", "cookie", "prompt", "response", "api_key", "auth_key")
-        if (forbidden.any(lower::contains)) return null
-        return normalized.takeIf { it.all { char -> char == '\n' || char == '\r' || char == '\t' || char.code in 32..126 } }
-    }
 
     private fun logAiFailure(
         code: AiErrorCode,
@@ -918,9 +937,7 @@ class Retr0Installer(
             "RETR0_AI_REQUEST_FAILED code=${code.name} mode=$mode elapsedMs=${System.currentTimeMillis() - startedAt}$status$errorType " +
                 "installationIdPresent=${diagnostic.installationIdPresent} " +
                 "timestampPresent=${diagnostic.timestampPresent} noncePresent=${diagnostic.noncePresent} " +
-                "signaturePresent=${diagnostic.signaturePresent} bodyBytes=${diagnostic.bodyBytes ?: "UNKNOWN"} " +
-                "bodySha256=${diagnostic.bodySha256 ?: "UNKNOWN"} requestId=${safeLogValue(diagnostic.requestId)} " +
-                "responseContentType=${safeLogValue(diagnostic.responseContentType)}",
+                "signaturePresent=${diagnostic.signaturePresent} requestId=${safeLogValue(diagnostic.requestId)}",
         )
     }
 
