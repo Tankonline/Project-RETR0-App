@@ -14,31 +14,35 @@
 *.log
 **/dev-data/
 **/dist/
+**/node_modules/
+**/staging-data/
+**/staging-data/**
 **/node-identity.json
 **/replay.log
 **/*replay*.json
 **/*replay*.log
-**/staging-data/
-**/staging-data/**
-**/private-key*
 **/*private-key*
 **/generated-binaries/
 **/generated-binaries/**
 deps.txt
 CLAUDE_CROP_EDITOR_PERFECTION_PROMPT.md
 
-# Signing files
+# Signing and certificates
 *.jks
 *.keystore
 *.p12
 *.pfx
+*.pem
+*.key
+*.mobileprovision
+credentials*
 
 # Local environment
 .env
 *.env
 local.properties
 
-# Gradle caches
+# Gradle/build caches
 .gradle/
 build/
 app/build/
@@ -50,12 +54,8 @@ app/build/
 **/.wrangler/
 /external_backup/
 
-# Sensitive files and generated dependencies
-node_modules/
+# Sensitive Firebase configuration
 app/google-services.json
-*.pem
-*.key
-*.mobileprovision
-credentials*
 
+# Generated Wrangler types
 worker-configuration.d.ts
