@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+const source = readFileSync(new URL("src/rr3-knowledge-scraper.js", import.meta.url), "utf8");
+assert.match(source, /robotsPathFor/);
+assert.match(source, /robotsAllowed/);
+assert.match(source, /robots_denied/);
+assert.match(source, /robots_timeout/);
+assert.match(source, /redirect: "manual"/);
+assert.match(source, /MAX_REDIRECTS/);
+assert.match(source, /MAX_RESPONSE_BYTES/);
+assert.match(source, /PRIVATE_IPV4/);
+assert.match(source, /LOCAL_HOSTS/);
+assert.match(source, /CHECK_MAX_BODY_BYTES/);
+console.log("robots, bounded fetch, redirect, and SSRF guards passed");

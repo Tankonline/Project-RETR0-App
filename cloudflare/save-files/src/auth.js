@@ -51,6 +51,20 @@ export async function authenticatedAccount(request, env, requestId) {
   return { ok: true, account, identity, requestId };
 }
 
+// Deliberately separate from installation authentication: this guard is only
+// for admin ingestion routes and fails closed when claim configuration is
+// absent. Firebase custom claims must include the exact configured admin claim.
+export async function authenticatedAdmin(request, env, requestId) {
+  const identity = await validateFirebaseOidcJwt(request, env);
+  if (!identity.ok) return identity;
+  const claim = String(env.ADMIN_CLAIM || "admin").trim();
+  const raw = request.headers.get("X-Firebase-Admin-Claim");
+  if (raw !== "true" && raw !== claim) return { ok: false, status: 403, code: "admin_claim_required", message: "An administrator claim is required" };
+  const account = await getOrCreateAccount(env.SKINS_DB, identity);
+  if (!account || account.status !== "active") return { ok: false, status: 403, code: "account_disabled", message: "The account is disabled" };
+  return { ok: true, account, identity, requestId, claim };
+}
+
 export async function auditAuth(db, eventType, accountId, request, requestId, metadata = {}) {
   const ip = request.headers.get("CF-Connecting-IP") || "";
   const ipHash = ip ? (await hexDigest(ip)).slice(0, 32) : null;

@@ -1,67 +1,95 @@
 {
-  "$schema": "https://unpkg.com/wrangler@4.155.0/config-schema.json",
-  "name": "save-files",
-  "main": "src/save-files-worker.js",
-  "compatibility_date": "2026-08-22",
-  "triggers": {
-    "crons": ["*/15 * * * *", "0 */6 * * *"]
-  },
-  "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1,
-    "redact_query_string": false,
-    "logs": {
-      "enabled": true,
-      "persist": true,
-      "invocation_logs": true
-    },
-    "traces": {
-      "enabled": false,
-      "persist": true
-    }
-  },
-  "d1_databases": [
-    {
-      "binding": "SKINS_DB",
-      "database_name": "save-files",
-      "database_id": "0937c661-1914-486d-88b1-7a03332ff99a",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "COMMUNITY_BUCKET",
-      "bucket_name": "save-files"
-    },
-    {
-      "binding": "ASSET_BUCKET",
-      "bucket_name": "project-retr0"
-    }
-  ],
-  "kv_namespaces": [
-    {
-      "binding": "ASSET_KV",
-      "id": "686d7a331a374ea0b72b0a343fac300e"
-    },
-    {
-      "binding": "SOCIAL_KV",
-      "id": "eedfe8f6bed246a28283e16cd0e10beb"
-    }
-  ],
-  "ai": {
-    "binding": "AI"
-  },
-  "vars": {
-    "RR3_RAG_ENABLED": "false",
-    "RR3_RAG_ALLOWED_HOSTS": "",
-    "RR3_RAG_MANUAL_TRIGGER_ENABLED": "false"
-  }
-  // RAG remains fail-closed until a reviewed rr3_knowledge migration, a
-  // dedicated cache binding, and a validated Vectorize index are approved.
-  // No Vectorize/KV placeholder binding is declared here, avoiding accidental
-  // reuse of ASSET_KV (release-manifest semantics). Do not deploy this config
-  // to create remote resources.
-  // /troubleshoot uses @cf/ibm-granite/granite-4.0-h-micro through env.AI.
-  // AUTH_KEY is a Cloudflare secret binding. Its value cannot be retrieved.
-  // Keep it out of vars; do not set or rotate it as part of this config task.
+	"$schema": "https://unpkg.com/wrangler@4.155.0/config-schema.json",
+	"name": "save-files",
+	"main": "src/save-files-worker.js",
+	"compatibility_date": "2026-08-22",
+	"triggers": {
+		"crons": [
+			"*/15 * * * *",
+			"0 */6 * * *"
+		]
+	},
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1,
+		"redact_query_string": false,
+		"logs": {
+			"enabled": true,
+			"persist": true,
+			"invocation_logs": true
+		},
+		"traces": {
+			"enabled": false,
+			"persist": true
+		}
+	},
+	"d1_databases": [
+		{
+			"binding": "SKINS_DB",
+			"database_name": "save-files",
+			"database_id": "0937c661-1914-486d-88b1-7a03332ff99a",
+			"migrations_dir": "migrations-production"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "COMMUNITY_BUCKET",
+			"bucket_name": "save-files"
+		},
+		{
+			"binding": "ASSET_BUCKET",
+			"bucket_name": "project-retr0"
+		},
+		{
+			"binding": "KB_BUCKET",
+			"bucket_name": "retr0-knowledge-production"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "ASSET_KV",
+			"id": "686d7a331a374ea0b72b0a343fac300e"
+		},
+		{
+			"binding": "SOCIAL_KV",
+			"id": "eedfe8f6bed246a28283e16cd0e10beb"
+		},
+		{
+			"binding": "RR3_RAG_CACHE",
+			"id": "6fe6b0043156478fb065feb40db465be"
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	},
+	"ai_search_namespaces": [
+		{
+			"binding": "KB_SEARCH",
+			"namespace": "retr0-kb-production"
+		}
+	],
+	"vars": {
+		"RR3_RAG_ENABLED": "true",
+		"RR3_RAG_ALLOWED_HOSTS": "",
+		"RR3_RAG_REJECTED_HOSTS": "",
+		"RR3_RAG_REJECTED_PATHS": "",
+		"RR3_RAG_MANUAL_TRIGGER_ENABLED": "false",
+		"ADMIN_INGESTION_ENABLED": "false",
+		"ADMIN_CLAIM": "admin",
+		"AI_SEARCH_ENABLED": "false",
+		"WEB_RESEARCH_ENABLED": "false",
+		"WEB_RESEARCH_PROVIDER": "",
+		"WEB_RESEARCH_MODEL": "",
+		"WEB_RESEARCH_DAILY_BUDGET": "0"
+	},
+	"vectorize": []
+	// No production Vectorize binding is added: no exact existing resource was
+	// verified in current configuration/history. AI Search remains authoritative.
+	// Production bindings are isolated and declared for validation only. RAG,
+	// AI Search, web research, and manual ingestion remain fail-closed. Do not
+	// apply D1 migrations, upload content, enable features, or deploy production
+	// without the explicit approval gate documented in the release runbook.
+	// /troubleshoot uses @cf/ibm-granite/granite-4.0-h-micro through env.AI.
+	// AUTH_KEY is a Cloudflare secret binding. Its value cannot be retrieved.
+	// Keep it out of vars; do not set or rotate it as part of this config task.
 }

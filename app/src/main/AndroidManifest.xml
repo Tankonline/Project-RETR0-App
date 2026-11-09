@@ -67,6 +67,21 @@
 
         </activity>
 
+        <!-- Email-link preparation only: this Activity is isolated and intentionally does not
+             complete links. Activation requires constructing EmailLinkAuthManager with
+             enabled=true and explicitly forwarding this intent from the integration boundary. -->
+        <activity
+            android:name="com.retr0.projectretr0.auth.EmailLinkHandlerActivity"
+            android:exported="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="auth.projectretr0.web.app" android:pathPrefix="/emailLink" />
+            </intent-filter>
+        </activity>
+
         <!-- Foreground Service for background installation -->
         <service
             android:name="com.retr0.projectretr0.installer.Retr0InstallService"

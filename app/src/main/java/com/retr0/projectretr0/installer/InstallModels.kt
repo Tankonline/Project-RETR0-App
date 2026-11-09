@@ -124,13 +124,25 @@ data class LibraryMusic(
     val artworkUrl: String? = null,
 )
 
+/** Structured response returned by the signed /troubleshoot endpoint. */
+data class AiResponse(
+    val answer: String,
+    val confidence: String? = null,
+    val trustedSources: List<String> = emptyList(),
+    val researchSources: List<String> = emptyList(),
+    val followUpQuestion: String? = null,
+) {
+    val hasExternalResearch: Boolean get() = researchSources.isNotEmpty()
+}
+
 /**
  * Represents a single message in the AI Chat.
  */
 data class ChatMessage(
     val content: String,
     val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val aiResponse: AiResponse? = null,
 )
 
 /**

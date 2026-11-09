@@ -6,7 +6,7 @@ Observations captured during task-oriented work.
 
 ---
 
-## 2026-11-05
+## 2026-11-06
 
 ### Observation 1: Preserve Cloudflare multipart Worker package boundaries
 
@@ -44,7 +44,7 @@ Observations captured during task-oriented work.
 **Date:** 2026-11-01
 **Session context:** Preparing a staging-only PUT_OBJECT verification without remote mutation.
 **Skill:** workers-best-practices
-**Type:** open-source
+**Type: open-source
 **Phase/Area:** Safe staging verification and operator handoff
 
 **Issue:** The installed Wrangler version exposed bucket metadata but no R2 object-list command, so selecting an object key would require inventing metadata or using a mutating/application route.
@@ -79,7 +79,7 @@ Observations captured during task-oriented work.
 
 **Issue:** A release tag can be an annotated tag whose object ID differs from its peeled commit. Checking only the tag ref obscures whether the tag points at the release metadata commit; comparing both `refs/tags/<tag>` and `refs/tags/<tag>^{}` against `versionName` history is required before proposing repair commands.
 
-**Suggested improvement:** Add an explicit annotated-tag audit step that records tag object, peeled commit, tagger/message, and matching release metadata before any tag repair or push recommendation.
+**Suggested improvement:** Add an explicit annotated-tag audit step that records tag object, peeled commit, tagger/message, and matching release metadata before any tag repair or push.
 
 **Principle:** Git release references have multiple layers; validate the tag object and peeled commit independently.
 
@@ -87,43 +87,148 @@ Observations captured during task-oriented work.
 
 **Status:** OPEN
 **Date:** 2026-11-05
-**Session context:** Safely comparing local save-files Worker source with production and staging deployments without overwriting local changes or deploying.
+**Session context:** Auditing local save-files Worker source with no deployment.
 **Skill:** workers-best-practices
 **Type:** open-source
 **Phase/Area:** Remote source synchronization and verification
 
-**Issue:** The installed Wrangler exposed deployment/version metadata, handlers, bindings, variables, and secret names, but offered no `versions download` command; attempted retrieval therefore could not produce remote source for a cryptographic or line-level comparison.
+**Issue:** Deployment metadata does not establish source equivalence when source retrieval is unavailable.
 
-**Suggested improvement:** Add a remote-source-availability decision point: record exact version metadata and retrieval-command limitations, compare only locally generated dry-run bundles, and never infer source equality from matching bindings or timestamps.
+**Suggested improvement:** Record exact metadata and compare only locally generated dry-run bundles; never infer source equality from bindings or timestamps.
 
-**Principle:** Remote metadata verifies deployment identity and configuration shape, not source equivalence; source synchronization requires an actual retrievable artifact.
+**Principle:** Remote metadata verifies deployment identity and configuration shape, not source equivalence.
 
 ### Observation 7: Generated-bundle guards must be regenerated after source edits
 
 **Status:** OPEN
 **Date:** 2026-11-05
-**Session context:** Updating local troubleshoot authentication and deterministic route/deployment guards.
+**Session context:** Updating Worker guards.
 **Skill:** workers-best-practices
 **Type:** open-source
 **Phase/Area:** Generated artifact verification
 
-**Issue:** A source-only fix correctly triggered the stale-bundle guard until the production dry-run artifact was regenerated locally.
+**Issue:** Source-only changes can leave stale generated bundles.
 
-**Suggested improvement:** Make the verification sequence explicit: edit canonical source, run Wrangler dry-run with the production config, then execute source, generated-bundle, and provenance guards; never treat a stale derived bundle as evidence of a source defect.
+**Suggested improvement:** Regenerate dry-run artifacts before source, bundle, and provenance guards.
 
-**Principle:** Derived deployment artifacts are test inputs and must be regenerated deterministically from the canonical source before validation.
+**Principle:** Derived deployment artifacts must be regenerated deterministically before validation.
 
 ### Observation 8: Feature flags should fail closed when remote bindings are unapproved
 
 **Status:** OPEN
 **Date:** 2026-11-05
-**Session context:** Assessing a proposed Vectorize/RAG cache feature in a Cloudflare Worker without remote mutation.
+**Session context:** Assessing optional AI infrastructure.
 **Skill:** workers-best-practices
 **Type:** open-source
 **Phase/Area:** Optional AI infrastructure and safe rollout
 
-**Issue:** A proposal can mention valid product APIs while still lacking validated index dimensions, binding IDs, migration state, or source-ingestion policy. Adding guessed bindings or enabling scheduled ingestion would risk remote failures, unexpected cost, and policy violations.
+**Issue:** Unvalidated external bindings risk remote failures and unintended cost.
 
-**Suggested improvement:** Keep optional retrieval features disabled by default, add only a reviewed migration and static guards, and document explicit operator prerequisites before enabling bindings or ingestion.
+**Suggested improvement:** Keep optional retrieval features disabled by default and require explicit operator prerequisites.
 
-**Principle:** Unvalidated external dependencies should be represented as explicit, fail-closed rollout prerequisites rather than inferred configuration.
+**Principle:** Unvalidated dependencies are rollout prerequisites, not inferred configuration.
+
+### Observation 9: Read-only Wrangler diagnostics need command-by-command capture
+
+**Status:** OPEN
+**Date:** 2026-11-06
+**Session context:** Auditing staging RAG ingestion.
+**Skill:** workers-best-practices
+**Type: open-source
+**Phase/Area:** Operational diagnostics and evidence capture
+
+**Issue:** Chained diagnostics make error attribution ambiguous.
+
+**Suggested improvement:** Capture each read-only operational probe separately.
+
+**Principle:** Operational conclusions require evidence mapped to the individual probe.
+
+### Observation 10: Secret-binding investigations need a read-only verification boundary
+
+**Status:** OPEN
+**Date:** 2026-11-06
+**Session context:** Investigating auth configuration.
+**Skill:** workers-best-practices
+**Type: open-source
+**Phase/Area:** Secret/config diagnostics
+
+**Issue:** Config intent cannot verify secret values.
+
+**Suggested improvement:** Record binding names and gates without retrieving or mutating secret values.
+
+**Principle:** Separate configuration intent from secret-value verification.
+
+### Observation 11: Verify AI product bindings before writing integration code
+
+**Status:** OPEN
+**Date:** 2026-11-06
+**Session context:** Preparing AI Search integration.
+**Skill:** workers-best-practices
+**Type: open-source
+**Phase/Area:** Optional AI service integration
+
+**Issue:** A guessed binding/API can make dry runs appear configured without proving runtime support.
+
+**Suggested improvement:** Require authoritative binding/API verification before enabling an external AI integration.
+
+**Principle:** External service availability is not equivalent to verified runtime integration.
+
+### Observation 12: Provider verification must precede Web Research fallback implementation
+
+**Status:** OPEN
+**Date:** 2026-11-06
+**Session context:** Preparing web-research fallback.
+**Skill:** workers-best-practices
+**Type: open-source
+**Phase/Area:** External search provider integration
+
+**Issue:** Provider API and billing were not verified.
+
+**Suggested improvement:** Keep research disabled and require authoritative provider evidence before activation.
+
+**Principle:** An unverified capability must be treated as unavailable.
+
+### Observation 13: Production resource identity must be verified per product before mutation
+
+**Status:** OPEN
+**Date:** 2026-11-07
+**Session context:** Reviewing production AI resource configuration.
+**Skill:** workers-best-practices
+**Type:** open-source
+**Phase/Area:** Production resource provisioning
+
+**Issue:** Resource identity and supported inspection paths were ambiguous.
+
+**Suggested improvement:** Require exact per-product identity and read-only inspection before any production mutation.
+
+**Principle:** Production mutation requires independently verifiable names, IDs, and API capability.
+
+### Observation 14: Production safety audit must treat enabled ancillary flags as behavior
+
+**Status:** OPEN
+**Date:** 2026-11-08
+**Session context:** Auditing production web-research and AI ingestion safeguards.
+**Skill:** workers-best-practices
+**Type:** open-source
+**Phase/Area:** Production fail-closed invariants
+
+**Issue:** Production had web research and manual trigger disabled, but ancillary RAG/AI Search/vector bindings and flags remained enabled or declared, contradicting the requested production-disabled invariant and weakening audit confidence.
+
+**Suggested improvement:** Add a single production invariant test covering every ingestion/retrieval flag and optional binding, and require production config to use false/empty values unless independently verified and explicitly approved.
+
+**Principle:** A feature is not production-disabled if any activation path or optional binding remains enabled or ambiguously configured.
+
+### Observation 15: Existing invariant tests can intentionally reject an approved canary state
+
+**Status:** OPEN
+**Date:** 2026-11-08
+**Session context:** Enabling the explicitly approved production AI/RAG canary flags.
+**Skill:** workers-best-practices
+**Type:** open-source
+**Phase/Area:** Release verification and feature-flag test maintenance
+
+**Issue:** Relevant static tests hard-coded the previous production-disabled expectation for RR3_RAG_ENABLED, so they failed after the requested canary change even though syntax, Wrangler types, and dry-run binding checks passed.
+
+**Suggested improvement:** Parameterize or split invariant tests into production-disabled and explicitly approved canary profiles, and ensure the selected test profile matches the release gate before deployment.
+
+**Principle:** Verification assertions must encode the current approved rollout state, not only the historical default state.

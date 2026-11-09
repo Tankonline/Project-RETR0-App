@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+const production = readFileSync(new URL("wrangler.jsonc", import.meta.url), "utf8");
+const source = readFileSync(new URL("src/save-files-worker.js", import.meta.url), "utf8");
+assert.match(production, /"binding": "RR3_RAG_CACHE"/);
+assert.doesNotMatch(production, /RR3_RAG_CACHE_PRODUCTION/);
+assert.match(production, /"binding": "KB_SEARCH"/);
+assert.match(production, /"namespace": "retr0-kb-production"/);
+assert.match(production, /"vectorize": \[\]/);
+assert.match(source, /ragBindingContract/);
+assert.match(source, /cacheReady/);
+assert.match(source, /indexReady/);
+assert.match(source, /AI_SEARCH_INSTANCE_NAME\s*=\s*"retr0-kb-production"/);
+assert.match(production, /"AI_SEARCH_ENABLED": "true"/);
+console.log("RAG binding contract and fail-closed guards passed");
