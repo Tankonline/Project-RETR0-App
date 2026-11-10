@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import { approvedUrl, approvedRedirectUrl, allowedHosts, rejectedHosts, rejectedPrefixes, configuredPrefixes, sourceEntries, reviewDiagnostic } from "./src/rr3-knowledge-scraper.js";
+
+const env = { RR3_RAG_ALLOWED_HOSTS: "realracing3.fandom.com wiki.realracing3.fandom.com rr3.fandom.com", RR3_RAG_REJECTED_HOSTS: "wiki.realracing3.fandom.com", RR3_RAG_REJECTED_PATHS: "/blocked/", RR3_RAG_ALLOWED_PATH_PREFIXES: "/wiki/,/api/", RR3_RAG_SOURCE_ENTRIES: "realracing3.fandom.com|/wiki/Real_Racing_3 rr3.fandom.com|/wiki/" };
+assert.deepEqual(allowedHosts(env), ["realracing3.fandom.com", "wiki.realracing3.fandom.com", "rr3.fandom.com"]);
+assert.deepEqual(configuredPrefixes(env), ["/wiki/", "/api/"]);
+assert.equal(approvedUrl("https://realracing3.fandom.com/wiki/Real%20Racing_3#x", env), null);
+assert.equal(approvedUrl("http://realracing3.fandom.com/wiki/x", env), null);
+assert.equal(approvedUrl("https://user:pass@realracing3.fandom.com/wiki/x", env), null);
+assert.equal(approvedUrl("https://realracing3.fandom.com:444/wiki/x", env), null);
+assert.equal(approvedUrl("https://evil.example/wiki/x", env), null);
+assert.equal(rejectedHosts(env)[0], "wiki.realracing3.fandom.com");
+assert.equal(rejectedPrefixes(env)[0], "/blocked/");
+assert.equal(approvedUrl("https://wiki.realracing3.fandom.com/wiki/x", env), null);
+assert.equal(approvedUrl("https://realracing3.fandom.com/blocked/x", env), null);
+assert.equal(approvedUrl("https://rr3.fandom.com/wiki/approved", env)?.hostname, "rr3.fandom.com");
+assert.deepEqual(reviewDiagnostic("https://wiki.realracing3.fandom.com/wiki/x", env, "rejected_host"), { host: "wiki.realracing3.fandom.com", path: "/wiki/x", reason: "rejected_host", status: "rejected" });
+assert.equal(approvedUrl("https://realracing3.fandom.com.evil.example/wiki/x", env), null);
+const root = approvedUrl("https://realracing3.fandom.com/wiki/Real_Racing_3", env);
+assert.equal(approvedRedirectUrl("/wiki/Real%20Racing_3/", root, env)?.pathname, "/wiki/Real%20Racing_3/");
+assert.equal(approvedRedirectUrl("https://wiki.realracing3.fandom.com/wiki/Real_Racing_3", root, env), null);
+assert.equal(approvedRedirectUrl("//evil.example/wiki/x", root, env), null);
+assert.equal(approvedRedirectUrl("/outside/x", root, env), null);
+assert.equal(approvedRedirectUrl("https://realracing3.fandom.com/wiki/x#fragment", root, env), null);
+assert.equal(approvedRedirectUrl("https://realracing3.fandom.com:443/wiki/x", root, env)?.protocol, "https:");
+assert.equal(sourceEntries(env).length, 2);
+console.log("RR3 URL adapter canonicalization and SSRF protections passed");

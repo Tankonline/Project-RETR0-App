@@ -1,0 +1,37 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const source = readFileSync(new URL("src/save-files-worker.js", import.meta.url), "utf8");
+const production = readFileSync(new URL("wrangler.jsonc", import.meta.url), "utf8");
+const staging = readFileSync(new URL("wrangler.staging.jsonc", import.meta.url), "utf8");
+const migration = readFileSync(new URL("migrations-staging/0009_rr3_research_queue.sql", import.meta.url), "utf8");
+
+assert.match(production, /"WEB_RESEARCH_ENABLED"\s*:\s*"false"/);
+assert.match(staging, /"WEB_RESEARCH_ENABLED"\s*:\s*"true"/);
+assert.match(staging, /"WEB_RESEARCH_PROVIDER"\s*:\s*"ceramic"/);
+assert.match(staging, /"WEB_RESEARCH_GATEWAY_ID"\s*:\s*"default"/);
+assert.match(staging, /"WEB_RESEARCH_DAILY_BUDGET"\s*:\s*"50"/);
+assert.doesNotMatch(staging, /WEB_RESEARCH_MODEL/);
+assert.match(source, /WEB_RESEARCH_ENABLED/);
+assert.match(source, /STORAGE_ENVIRONMENT === "staging"/);
+assert.match(source, /max_num_results/);
+assert.match(source, /pending_review/);
+assert.match(source, /content_sha256/);
+assert.match(source, /research_used/);
+assert.match(source, /research_sources/);
+assert.match(source, /content_untrusted/);
+assert.match(source, /safeResearchUrl/);
+assert.match(source, /provider_failure/);
+assert.match(source, /searchKnowledgeBase/);
+assert.match(source, /instance\.search/);
+assert.match(source, /AI_SEARCH_ENABLED/);
+assert.match(staging, /"binding": "KB_SEARCH"/);
+assert.match(staging, /"ai_search_namespaces"/);
+assert.match(staging, /"namespace": "retr0-kb"/);
+assert.match(source, /AI_SEARCH_INSTANCE_NAME\s*=\s*"retr0-kb-production"/);
+assert.match(staging, /"compatibility_date": "2026-08-22"/);
+assert.match(source, /budget_exhausted/);
+assert.match(migration, /CREATE TABLE IF NOT EXISTS rr3_research_queue/);
+assert.match(migration, /content_sha256 TEXT/);
+assert.doesNotMatch(source, /RR3_RAG_INDEX\.upsert\([^)]*research/i);
+console.log("Web research staging-only fail-closed and human-review guards passed");
