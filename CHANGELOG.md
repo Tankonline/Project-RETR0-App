@@ -2,6 +2,35 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.5]
+
+### Added
+- Added diagnostics and provenance fields for RAG/AI Search troubleshooting responses, including retrieval usage, source identifiers, confidence, request IDs, and failure reasons.
+- Added isolated, opt-in Firebase email-link authentication preparation with encrypted pending-email storage, link validation, collision handling, and an inactive forwarding activity. The active login flow remains unchanged.
+
+### Changed
+- Normalized AI troubleshooting responses across provider shapes, removed duplicated presentation headings/citations, and made answers more concise and direct while preserving structured confidence and source metadata.
+- Added fail-closed guards around RAG and AI Search when bindings, configuration, or retrieval dependencies are unavailable; retrieved content remains untrusted reference data.
+- Added bounded source handling with explicit provenance, robots.txt enforcement, HTTPS/host/path allowlists, redirect validation, response limits, timeout handling, and SSRF/private-network protections.
+- Hardened repository and security boundaries so secrets, signing material, Firebase configuration, generated bundles, build output, staging/runtime data, and other local artifacts remain excluded.
+
+### Validation
+- Added/updated static and runtime-oriented checks for AI response normalization, troubleshooting quality/authentication contracts, provenance, robots behavior, URL/redirect policy, admin-ingestion scaffolding, and scheduled isolation.
+- Android release metadata is `versionName "1.1.5"` and `versionCode 17`; debug unit tests and debug APK assembly are the intended local validation gates.
+
+### Not included / disabled
+- Admin ingestion and manual knowledge promotion remain disabled; the scaffolding does not make ingestion available to users.
+- Web research remains disabled and no provider, model, budget, or production research integration is claimed.
+- RAG/AI Search production use is not a deployment claim: current configuration is guarded/fail-closed and requires separately approved operational setup before enabling or populating production resources.
+- No production deployment, GitHub release, tag, signed artifact publication, or runtime feature-flag enablement is part of this documentation change.
+
+### Compatibility and limitations
+- Minimum Android version remains Android 8.0/API 26; target and compile SDK remain 35.
+- Shizuku is required for privileged RR3 file and package operations; behavior also depends on the RR3 package variant and OEM Shizuku support.
+- Community Hub, profile pictures, metadata lookup, and remote downloads require network access and use the configured HTTPS services.
+- Music is imported from local storage or obtained externally; the app does not provide an in-app YouTube converter or APK self-updater.
+- The release still requires a configured release keystore; no signing credentials are stored in the repository.
+
 ## [1.1.4]
 
 ### Added

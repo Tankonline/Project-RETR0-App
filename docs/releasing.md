@@ -39,9 +39,9 @@ Configure these protected environment or repository secrets:
 - `RELEASE_KEY_ALIAS`: signing-key alias.
 - `RELEASE_KEY_PASSWORD`: signing-key password.
 
-The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag matching `versionName`, such as `v1.1.4`.
+The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag matching `versionName`, such as `v1.1.5`.
 
-For v1.1.4, the expected Android metadata is `versionName "1.1.4"` and `versionCode 16`.
+For the locally prepared v1.1.5 release, the expected Android metadata is `versionName "1.1.5"` and `versionCode 17`. This task does not create the tag, GitHub Release, signed artifact, or deployment.
 
 ## Release procedure
 
@@ -54,6 +54,24 @@ For v1.1.4, the expected Android metadata is `versionName "1.1.4"` and `versionC
 7. Verify the GitHub Release contains the APK, checksum, source tag, and release notes.
 8. Submit the same source/tag and documented build instructions to IzzyOnDroid.
 9. If rollback is required, publish a newer corrective version. Do not reuse or move an existing release tag.
+
+## v1.1.5 local release notes
+
+This section records the release notes prepared from the current repository state. It is not a claim that v1.1.5 has been tagged, published, or deployed.
+
+### Highlights
+- AI troubleshooting responses are normalized across provider response shapes, concise by default, and retain structured confidence/source metadata.
+- RAG and AI Search diagnostics expose retrieval usage, provenance, source identifiers, request/failure information, and fail-closed reasons without treating retrieved text as trusted instructions.
+- Source handling applies robots.txt checks, HTTPS/allowlist/path validation, redirect revalidation, bounded responses, timeouts, and SSRF/private-network protections.
+- Firebase email-link authentication is prepared in an isolated, encrypted, explicitly opt-in layer; the active login flow remains unchanged.
+- Repository/security ignore rules keep Firebase configuration, signing credentials, generated bundles, build/runtime artifacts, and local secrets out of source control.
+- Static/runtime checks and Android debug unit-test/debug-assembly gates are documented for validation.
+
+### Explicitly not included
+- Admin ingestion and manual knowledge promotion remain disabled.
+- Web research remains disabled; no provider, model, budget, or production integration is included.
+- RAG/AI Search production enablement, knowledge population, and deployment remain separate approved operational work; no production claim is made here.
+- No GitHub release, tag, signed APK/checksum publication, deployment, or feature-flag enablement was performed.
 
 ## v1.1.4 release description
 
