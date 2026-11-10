@@ -1,5 +1,17 @@
 # Project RETR0 Release Checklist
 
+## v1.1.5 Release (local preparation)
+- [x] Version metadata is `versionName "1.1.5"` and `versionCode 17`.
+- [x] Changelog updated with AI normalization/conciseness, RAG/AI Search diagnostics and provenance, fail-closed safeguards, robots/SSRF protections, inactive email-link preparation, hardening, validation, and explicit exclusions.
+- [x] README current-release metadata updated.
+- [x] Release guidance documents the v1.1.5 notes and disabled/not-included features.
+- [x] Production configuration, flags, deployments, tags, and releases were not changed or enabled.
+- [x] Secrets, `google-services.json`, keystores, generated bundles, build output, and runtime artifacts remain excluded.
+- [ ] Run `./gradlew :app:testDebugUnitTest :app:assembleDebug` (safe local validation).
+- [ ] Run repository-specific static/syntax checks for changed Cloudflare/AI tests.
+- [ ] Create tag `v1.1.5` only in a separate approved release action.
+- [ ] Publish signed APK/checksum only in a separate approved release action.
+
 ## v1.1.4 Release
 - [x] Version metadata is `versionName "1.1.4"` and `versionCode 16`.
 - [x] Changelog updated with code-evidenced features, improvements, fixes, compatibility, and limitations.
@@ -37,8 +49,8 @@
 - [ ] All release-relevant documentation updated (README, CHANGELOG, RELEASE_CHECKLIST, docs/releasing.md, privacy/community policy, IzzyOnDroid metadata, and workflow-generated notes). Unrelated Cloudflare/extension-server docs are out of scope unless app-release behavior changes.
 
 ## Build and Configuration
-- [x] `versionName` and `versionCode` incremented in `app/build.gradle.kts` to `1.1.4` / `16`.
-- [ ] Confirm the release tag is exactly `v1.1.4` before publishing.
+- [x] `versionName` and `versionCode` are `1.1.5` / `17` in `app/build.gradle.kts`.
+- [ ] Confirm the release tag is exactly `v1.1.5` before publishing (not part of this local preparation).
 - [ ] Confirm release signing environment variables are present in the local shell or CI environment.
 - [ ] Clean build successful: `./gradlew clean`.
 - [ ] Debug build successful: `./gradlew :app:assembleDebug`.
