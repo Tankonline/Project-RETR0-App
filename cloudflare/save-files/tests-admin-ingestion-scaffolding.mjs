@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+const source = readFileSync(new URL("src/save-files-worker.js", import.meta.url), "utf8");
+const auth = readFileSync(new URL("src/auth.js", import.meta.url), "utf8");
+const admin = readFileSync(new URL("src/rr3-admin-ingestion.js", import.meta.url), "utf8");
+const config = readFileSync(new URL("wrangler.jsonc", import.meta.url), "utf8");
+assert.match(source, /rr3-ingestion/);
+assert.match(source, /authenticatedAdmin/);
+assert.match(source, /pending_review/);
+assert.match(source, /transitionReview/);
+assert.match(auth, /admin_claim_required/);
+assert.match(admin, /hash_mismatch/);
+assert.match(admin, /safeKnowledgePath/);
+assert.match(admin, /idempotent/);
+assert.match(config, /"ADMIN_INGESTION_ENABLED": "false"/);
+assert.match(config, /"RR3_RAG_MANUAL_TRIGGER_ENABLED": "false"/);
+assert.match(config, /"WEB_RESEARCH_ENABLED": "false"/);
+console.log("admin ingestion fail-closed scaffolding guards passed");
