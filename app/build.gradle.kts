@@ -17,8 +17,8 @@ android {
         applicationId = "com.retr0.projectretr0"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "1.1.6"
+        versionCode = 19
+        versionName = "1.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

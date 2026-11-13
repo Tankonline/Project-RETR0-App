@@ -2,6 +2,22 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.7]
+
+### Fixed
+- Fixed Community Hub car-model covers to use the canonical Worker cover route when a `coverUploaded` response omits `coverUrl`, while still canonicalizing stale or foreign cover URLs.
+- Added safe car-model image request diagnostics for request start, Coil success/error, decoded-content rendering, and retry failures without logging credentials or signed request data.
+- Fixed the `SubcomposeAsyncImage` success slot to render Coil's decoded painter instead of replacing successful artwork with an empty slot.
+
+### Verification
+- Added/retained parser coverage for missing `coverUrl`, snake-case cover fields, canonical Worker routes, and stale/foreign URL normalization.
+- Release verification includes debug unit tests, `assembleDebug`, lint/static inspections, and device smoke testing of Community Hub car-model covers and retry/error rendering.
+
+### Compatibility and limitations
+- This release does not enable Firebase/account authentication, AI/web research, admin ingestion, new Cloudflare/Firebase behavior, or production flags. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; admin ingestion remains a guarded server-side workflow.
+- Minimum Android version remains Android 8.0/API 26; target and compile SDK remain 35. Shizuku is still required for privileged RR3 operations, and Community Hub behavior remains network/device/data-contract dependent.
+- Music acquisition remains external and no APK self-updater is released.
+
 ## [1.1.6]
 
 ### Fixed
