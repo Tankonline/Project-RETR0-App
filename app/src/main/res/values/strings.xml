@@ -59,6 +59,7 @@
 
     <!-- Buttons -->
     <string name="btn_install">INSTALL PROJECT RETR0</string>
+    <string name="btn_enable_privileged_services">ENABLE PRIVILEGED SERVICES</string>
     <string name="btn_safe_test">RUN SAFE PIPELINE TEST</string>
     <string name="btn_launch_game">LAUNCH GAME</string>
     <string name="btn_dismiss">DISMISS</string>

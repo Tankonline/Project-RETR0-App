@@ -1,5 +1,11 @@
 # Releasing Project RETR0 installer
 
+## v1.1.6 preparation status
+
+The current checkout is prepared for Android release `v1.1.6` with `versionCode 18`. The dashboard's primary action is named **Install Project RETR0**. The dashboard fix keeps status truthful while Shizuku UserService binding is pending or unavailable, and the Shizuku lifecycle now documents feedback, timeout, stale-callback, binder-death, and retry handling.
+
+This preparation does not enable new Firebase, Cloudflare, AI, authentication, or runtime-update behavior. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; music acquisition remains external; and no APK self-updater is released.
+
 ## One canonical APK
 
 Each release produces one signed APK, `app-release.apk`. That same artifact may be attached to the GitHub Release and used for the IzzyOnDroid submission. The app does not contain a separate GitHub or F-Droid product flavor.
@@ -9,103 +15,68 @@ The APK does not self-update. Users receive app updates from GitHub or IzzyOnDro
 ## Prerequisites
 
 - A clean checkout of the release commit.
-- A monotonic `versionCode` and semantic `versionName` in `app/build.gradle.kts`.
+- Monotonic `versionCode` and semantic `versionName` in `app/build.gradle.kts`.
 - A release keystore stored outside the repository.
-- All unit tests passing.
-- Review of `docs/izzyondroid-compatibility.md` and `docs/privacy-and-community-policy.md`.
+- All unit tests, debug build, lint/static checks, and release build passing.
+- Review of `CHANGELOG.md`, `README.md`, `RELEASE_CHECKLIST.md`, `docs/izzyondroid-compatibility.md`, and `docs/privacy-and-community-policy.md`.
+- Manual dashboard and Shizuku smoke testing on supported devices.
 
-## Local signed build
+## PowerShell verification commands
 
-Set signing values only in your shell or secure CI secret store:
+Run from the repository root:
 
 ```powershell
-$env:RELEASE_STORE_FILE = "C:\secure\project-retr0-release.keystore"
-$env:RELEASE_STORE_PASSWORD = "your-store-password"
-$env:RELEASE_KEY_ALIAS = "your-key-alias"
-$env:RELEASE_KEY_PASSWORD = "your-key-password"
+Set-Location 'C:\Users\armaa\AndroidStudioProjects\ProjectRETR0installer'
+& .\gradlew.bat :app:testDebugUnitTest
+& .\gradlew.bat :app:assembleDebug
+& .\gradlew.bat :app:lintDebug
+& .\gradlew.bat :app:compileDebugKotlin
+```
 
-.\gradlew :app:testDebugUnitTest :app:assembleRelease
+For a signed release build, set signing values only in your shell or secure CI secret store:
+
+```powershell
+$env:RELEASE_STORE_FILE = 'C:\secure\project-retr0-release.keystore'
+$env:RELEASE_STORE_PASSWORD = '<secure value>'
+$env:RELEASE_KEY_ALIAS = '<secure alias>'
+$env:RELEASE_KEY_PASSWORD = '<secure value>'
+
+& .\gradlew.bat :app:assembleRelease
 Get-FileHash .\app\build\outputs\apk\release\app-release.apk -Algorithm SHA256
 ```
 
-The release output is `app/build/outputs/apk/release/app-release.apk`.
+The debug output is `app/build/outputs/apk/debug/app-debug.apk`; the signed release output is `app/build/outputs/apk/release/app-release.apk`.
 
 ## GitHub Actions release secrets
 
-Configure these protected environment or repository secrets:
+Configure protected secrets only in CI:
 
-- `RELEASE_KEYSTORE_BASE64`: base64-encoded release keystore file.
-- `RELEASE_STORE_PASSWORD`: keystore password.
-- `RELEASE_KEY_ALIAS`: signing-key alias.
-- `RELEASE_KEY_PASSWORD`: signing-key password.
+- `RELEASE_KEYSTORE_BASE64`
+- `RELEASE_STORE_PASSWORD`
+- `RELEASE_KEY_ALIAS`
+- `RELEASE_KEY_PASSWORD`
+- `FIREBASE_GOOGLE_SERVICES_JSON_BASE64`
 
-The workflow at `.github/workflows/release.yml` validates unit tests, builds `:app:assembleRelease`, creates a SHA-256 checksum, and publishes both files on a semantic version tag matching `versionName`, such as `v1.1.5`.
+The existing workflow validates the version tag against `versionName`, runs unit tests, builds a signed release APK, creates a checksum, and publishes release assets. It is not run or changed as part of this preparation task.
 
-For the locally prepared v1.1.5 release, the expected Android metadata is `versionName "1.1.5"` and `versionCode 17`. This task does not create the tag, GitHub Release, signed artifact, or deployment.
+## Release gates for v1.1.6
 
-## Release procedure
+1. Confirm `versionName "1.1.6"` and `versionCode 18` in Gradle and metadata.
+2. Run unit tests, `assembleDebug`, lint/static checks, and a signed `assembleRelease`.
+3. Inspect the diff for documentation-only/version metadata scope; reject secrets, generated files, runtime artifacts, and unrelated flag changes.
+4. Manually verify dashboard navigation, the **Install Project RETR0** label, status refresh, and Shizuku unavailable/denied/delayed/retry/reconnect paths.
+5. Verify supported RR3 ROW and NA operations and recovery behavior on target devices.
+6. Generate and independently verify the signed APK SHA-256 checksum.
+7. Only after approval may a maintainer commit, create annotated tag `v1.1.6`, push it, and run the protected workflow.
 
-1. Update `versionCode` and `versionName`.
-2. Review local music-import documentation and any dependency changes for license/provenance implications.
-3. Run the full release checklist.
-4. Build from a clean checkout and verify the APK checksum independently.
-5. Commit all release changes and create an annotated source tag matching `v<versionName>`.
-6. Push the tag to run the protected GitHub release workflow.
-7. Verify the GitHub Release contains the APK, checksum, source tag, and release notes.
-8. Submit the same source/tag and documented build instructions to IzzyOnDroid.
-9. If rollback is required, publish a newer corrective version. Do not reuse or move an existing release tag.
+Do not commit, tag, push, or create a GitHub release during release preparation.
 
-## v1.1.5 local release notes
+## Known limitations
 
-This section records the release notes prepared from the current repository state. It is not a claim that v1.1.5 has been tagged, published, or deployed.
-
-### Highlights
-- AI troubleshooting responses are normalized across provider response shapes, concise by default, and retain structured confidence/source metadata.
-- RAG and AI Search diagnostics expose retrieval usage, provenance, source identifiers, request/failure information, and fail-closed reasons without treating retrieved text as trusted instructions.
-- Source handling applies robots.txt checks, HTTPS/allowlist/path validation, redirect revalidation, bounded responses, timeouts, and SSRF/private-network protections.
-- Firebase email-link authentication is prepared in an isolated, encrypted, explicitly opt-in layer; the active login flow remains unchanged.
-- Repository/security ignore rules keep Firebase configuration, signing credentials, generated bundles, build/runtime artifacts, and local secrets out of source control.
-- Static/runtime checks and Android debug unit-test/debug-assembly gates are documented for validation.
-
-### Explicitly not included
-- Admin ingestion and manual knowledge promotion remain disabled.
-- Web research remains disabled; no provider, model, budget, or production integration is included.
-- RAG/AI Search production enablement, knowledge population, and deployment remain separate approved operational work; no production claim is made here.
-- No GitHub release, tag, signed APK/checksum publication, deployment, or feature-flag enablement was performed.
-
-## v1.1.4 release description
-
-Project RETR0 installer v1.1.4 expands RR3 asset management with richer car-model media workflows, stronger Community Hub integration, and more resilient Shizuku-powered installation services. This release is suitable as the GitHub Release and IzzyOnDroid-facing summary; replace the checksum placeholder with the value generated from the signed APK before publishing.
-
-Project RETR0 installer is a user-authorized RR3 utility: it does not self-update, and privileged file operations require Shizuku permission. Back up game data before applying changes and use the app's revert flow where available.
-
-### Highlights
-- Car-model media selection, previews, removal, cover assignment, and Community Hub uploads.
-- Profile-picture editing and persisted Community Hub identity.
-- Improved Shizuku authorization, reconnect/retry handling, stale-service recovery, and OEM diagnostics.
-- Improved car-model discovery, path normalization, backup/rollback, skin image processing, save snapshots, and music-library metadata/artwork handling.
-- Additional validation and rollback safeguards for downloads, archives, backups, graphics changes, and remote media.
-
-### Compatibility and known limitations
 - Android 8.0/API 26 minimum; target/compile SDK 35.
 - Shizuku is required for privileged RR3 operations, and OEM/package support can vary.
-- Network access is required for Community Hub, profile pictures, metadata lookup, and remote downloads.
+- Community Hub, profile pictures, metadata lookup, AI help, and remote downloads require network access.
+- Firebase email-link/Google authentication is prepared but inactive.
+- AI/RAG quality and backend availability are not guaranteed offline.
 - Music is imported locally or obtained externally; there is no in-app YouTube converter or APK self-updater.
 - A release keystore is required to produce the signed APK.
-
-## Release notes template
-
-```markdown
-## Project RETR0 installer vX.Y.Z
-
-- Source commit: `<commit SHA>`
-- Minimum Android version: Android 8.0 (API 26)
-- Supported RR3 packages: `com.ea.games.r3_row`, `com.ea.games.r3_na`
-- Distribution: one signed APK for GitHub and IzzyOnDroid
-- Shizuku is required for privileged installation operations.
-- Back up game data before applying asset changes. Use the app's revert flow where available.
-- Music is downloaded or converted externally and imported from local storage; the app does not provide an in-app YouTube converter.
-- Community Hub and profile-picture features use the documented remote service.
-- Known limitations: `<list>`
-- SHA-256: `<checksum>`
-```

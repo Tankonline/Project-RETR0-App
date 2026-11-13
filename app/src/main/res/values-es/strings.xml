@@ -59,6 +59,7 @@
 
     <!-- Buttons -->
     <string name="btn_install">INSTALAR PROYECTO RETR0</string>
+    <string name="btn_enable_privileged_services">HABILITAR SERVICIOS PRIVILEGIADOS</string>
     <string name="btn_safe_test">EJECUTAR PRUEBA DE SEGURIDAD</string>
     <string name="btn_launch_game">INICIAR JUEGO</string>
     <string name="btn_dismiss">DESCARTAR</string>

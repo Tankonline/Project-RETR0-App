@@ -14,14 +14,24 @@ Description: |-
     backup/revert support, and Community Hub features. Privileged file
     operations require the user to configure and grant Shizuku access.
 
-    The app does not self-update. App updates are distributed through the
-    selected repository. Music is downloaded or converted externally and
-    imported from local device storage through the Android file picker.
+    The dashboard primary action is labelled "Install Project RETR0". The app
+    does not self-update. App updates are distributed through the selected
+    repository. Music is downloaded or converted externally and imported from
+    local device storage through the Android file picker. Firebase email-link
+    authentication remains prepared but inactive, and no new AI capability is
+    enabled by this release.
 
 RepoType: git
 Repo: https://github.com/Tankonline/Project-RETR0-App.git
 
 Builds:
+  - versionName: '1.1.6'
+    versionCode: 18
+    commit: v1.1.6
+    subdir: app
+    gradle:
+      - yes
+
   - versionName: '1.1.5'
     versionCode: 17
     commit: v1.1.5
@@ -59,5 +69,5 @@ Builds:
 
 AutoUpdateMode: None
 UpdateCheckMode: None
-CurrentVersion: '1.1.5'
-CurrentVersionCode: 17
+CurrentVersion: '1.1.6'
+CurrentVersionCode: 18
