@@ -2,6 +2,35 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.6]
+
+### Fixed
+- Fixed the dashboard's primary installation action and renamed it to **Install Project RETR0** so the action is explicit and consistent with the product name.
+- Fixed dashboard status handling so the UI does not report a privileged service as ready until a live Shizuku UserService binder has connected.
+
+### Changed
+- Hardened Shizuku feedback and recovery: binder/permission preflight, timeout diagnostics, stale-callback and binder-death handling, explicit retry/backoff, and a user-visible refresh/retry path now remain aligned.
+- Preserved the dashboard's storage, graphics, diagnostics, music, saves, and privileged-service status cards while improving the dashboard's refresh behavior.
+
+### Verification
+- Debug unit tests, `assembleDebug`, lint/static analysis, and release documentation checks are tracked in `RELEASE_CHECKLIST.md`; their final status must be recorded from the current checkout before publication.
+- This release does not enable new Firebase, Cloudflare, AI, authentication, or runtime-update behavior.
+
+### Compatibility and limitations
+- Minimum Android version remains Android 8.0/API 26; target and compile SDK remain 35.
+- Shizuku is required for privileged RR3 file and package operations; OEM behavior, startup method, and RR3 package variant can affect availability.
+- Community Hub, profile pictures, metadata lookup, AI help, and remote downloads require network access and their configured services.
+- Firebase email-link/Google authentication remains prepared but inactive; it is not a release feature or a change to the active installation identity model.
+- AI/RAG help remains backend-dependent and is not guaranteed offline; this release does not add or enable an AI capability.
+- Music is imported from local storage or obtained externally; the app does not provide an in-app YouTube converter or APK self-updater.
+- Graphics and car-model workflows are present where supported by the current RR3 data contracts, but device/package compatibility still requires validation.
+- The release still requires a configured release keystore; no signing credentials are stored in the repository.
+
+## [1.1.5]
+
+### Release notes
+- Current source metadata was advanced to `versionCode 17` / `versionName 1.1.5`; see v1.1.6 for the next documented release.
+
 ## [1.1.4]
 
 ### Added

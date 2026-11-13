@@ -19,13 +19,13 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 ### Current release
 
-- **Version:** `1.1.4` (`versionCode 16`)
+- **Version:** `1.1.6` (`versionCode 18`)
 - **Application ID / namespace:** `com.retr0.projectretr0`
 - **Minimum Android:** Android 8.0 / API 26
 - **Target and compile SDK:** API 35
 - **Supported RR3 packages:** `com.ea.games.r3_row` (Global/ROW) and `com.ea.games.r3_na` (North America)
 
-The app requires Shizuku for privileged RR3 file and package operations; local browsing and other non-privileged UI may still open without an active Shizuku session.
+The app requires Shizuku for privileged RR3 file and package operations; local browsing and other non-privileged UI may still open without an active Shizuku session. On the dashboard, the primary action is labeled **Install Project RETR0**. The dashboard status/refresh path now reports unavailable services clearly and retries failed Shizuku UserService connections without claiming readiness before a live binder is available.
 
 ---
 
@@ -896,7 +896,7 @@ Check:
 
 # Known Issues
 
-The following limitations and warnings apply to the current **v1.1.4** release. They do not all prevent normal use of the installer, but they should be considered when testing or distributing a build.
+The following limitations and warnings apply to the current **v1.1.6** release. They do not all prevent normal use of the installer, but they should be considered when testing or distributing a build.
 
 ## Music import limitations
 
@@ -1059,8 +1059,8 @@ Project RETR0 installer is an active development project.
 The current repository configuration identifies the application as:
 
 ```text
-Version: 1.1.4
-Version code: 16
+Version: 1.1.6
+Version code: 18
 ```
 
 The implementation and documentation may evolve as additional asset types, installation safeguards, community functionality, and compatibility improvements are introduced.

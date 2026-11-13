@@ -1125,7 +1125,7 @@ class MainActivity : ComponentActivity() {
             AnimatedVisibility(visible = showButtons) {
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     PrimaryButton("Launch Real Racing 3", icon = Icons.Filled.PlayArrow) { launchGame() }
-                    SecondaryButton("Update Project RETR0", Modifier.fillMaxWidth(), icon = Icons.Filled.Download) {
+                    SecondaryButton("Install Project RETR0", Modifier.fillMaxWidth(), icon = Icons.Filled.Download) {
                         startInstallServiceAction("START_INSTALL")
                     }
                 }
@@ -1287,17 +1287,30 @@ class MainActivity : ComponentActivity() {
 
     /** Starts the install service with [action] ("START_INSTALL", "START_SAFE_TEST"), as the Dashboard buttons always have. */
     private fun startInstallServiceAction(action: String) {
-        service?.let { binder ->
+        val binder = service
+        if (binder == null || !isServiceBound) {
+            Log.w(TAG, "code=INSTALL_ACTION_BLOCKED action=$action reason=privileged_service_unavailable")
+            shizukuStatus = "RETR0 service is not connected. Tap Enable privileged services to retry."
+            Toast.makeText(this@MainActivity, "Connect Privileged Services first.", Toast.LENGTH_LONG).show()
+            if (canAttemptServiceBind()) bindRetr0Service(forceRebind = true) else requestShizukuPermission()
+            return
+        }
+        if (InstallServiceState.busy) {
+            Toast.makeText(this@MainActivity, "An installation is already running.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
             val intent = Intent(this@MainActivity, Retr0InstallService::class.java).apply {
                 this.action = action
-                val bundle = Bundle()
-                bundle.putBinder("USER_SERVICE_BINDER", binder.asBinder())
-                putExtras(bundle)
+                putExtras(Bundle().apply { putBinder("USER_SERVICE_BINDER", binder.asBinder()) })
             }
+            Log.i(TAG, "code=INSTALL_ACTION_START action=$action")
             startForegroundService(intent)
             bindService(intent, installServiceConnection, BIND_AUTO_CREATE)
-        } ?: run {
-            Toast.makeText(this@MainActivity, "Connect Privileged Services first.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@MainActivity, "Installation started.", Toast.LENGTH_SHORT).show()
+        } catch (error: Exception) {
+            Log.e(TAG, "code=INSTALL_ACTION_FAILURE action=$action", error)
+            Toast.makeText(this@MainActivity, "Could not start installation: ${error.message ?: "unknown error"}", Toast.LENGTH_LONG).show()
         }
     }
 
