@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { checkSource, checkSources } from "./src/rr3-knowledge-scraper.js";
+const env = { RR3_RAG_ALLOWED_HOSTS: "realracing3.fandom.com rr3.fandom.com raw.githubusercontent.com github.com www.reddit.com pub-f87b4daf1b344ca39c9ba6de6812a777.r2.dev", RR3_RAG_ALLOWED_PATH_PREFIXES: "/ /wiki/ /api/ /dev/" };
+const response = (status, headers = {}) => new Response(null, { status, headers });
+let calls = [];
+const reachable = await checkSource(env, "https://realracing3.fandom.com/wiki/Real_Racing_3", async (request) => { calls.push(request.method); return response(200, { "content-type": "text/html", "content-length": "10" }); });
+assert.equal(reachable.category, "reachable"); assert.deepEqual(calls, ["HEAD"]); assert.equal(reachable.contentLengthHeaderPresent, true);
+const fallback = await checkSource(env, "https://realracing3.fandom.com/wiki/Real_Racing_3", async (request) => request.method === "HEAD" ? response(405) : response(200, { "content-type": "text/html" }));
+assert.equal(fallback.category, "challenge_or_blocked");
+const blocked = await checkSource(env, "https://127.0.0.1/wiki/x", async () => response(200)); assert.equal(blocked.category, "ssrf_or_policy_blocked");
+const challenge = await checkSource(env, "https://github.com/", async () => response(403, { server: "cloudflare", "content-type": "text/html" })); assert.equal(challenge.category, "challenge_or_blocked");
+const redirected = await checkSource(env, "https://realracing3.fandom.com/wiki/Real_Racing_3", async () => response(302, { location: "https://evil.example/" })); assert.equal(redirected.category, "unapproved_redirect");
+const batch = await checkSources(env, ["https://github.com/", "https://raw.githubusercontent.com/"]); assert.equal(batch.count, 2); assert.equal(typeof batch.results[0].category, "string");
+console.log("RR3 source checker safety and no-body-persistence tests passed");
