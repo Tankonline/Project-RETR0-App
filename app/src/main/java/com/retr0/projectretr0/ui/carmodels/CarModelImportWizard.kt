@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -682,8 +683,18 @@ private fun CarModelMediaStrip(
 ) {
     val items = buildList { cover?.let { add(it to true) }; screenshots.forEach { add(it to false) } }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items.forEach { (asset, isCover) ->
+        // LazyRow is important here: the wizard body is vertically scrollable, so a plain
+        // Row makes the gallery wider than its parent but provides no horizontal scroll
+        // state or gesture target. LazyRow keeps the gallery constrained to the viewport,
+        // supports touch and accessibility scrolling, and only composes the visible cards.
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(136.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(end = 2.dp),
+        ) {
+            items(items, key = { (asset, _) -> asset.sha256 }) { (asset, isCover) ->
                 Box(Modifier.size(136.dp), contentAlignment = Alignment.TopEnd) {
                     val bitmap = remember(asset.file.absolutePath) { android.graphics.BitmapFactory.decodeFile(asset.file.absolutePath) }
                     if (bitmap != null) Image(
@@ -698,10 +709,14 @@ private fun CarModelMediaStrip(
                 }
             }
             if (cover == null) {
-                SecondaryButton("Add cover", Modifier.width(136.dp).height(136.dp), Icons.Filled.Image, onPickCover)
+                item(key = "add-cover") {
+                    SecondaryButton("Add cover", Modifier.size(136.dp), Icons.Filled.Image, onPickCover)
+                }
             }
             if (screenshots.size < 8) {
-                SecondaryButton("+", Modifier.width(136.dp).height(136.dp), Icons.Filled.AddPhotoAlternate, onPickScreenshots)
+                item(key = "add-screenshots") {
+                    SecondaryButton("+", Modifier.size(136.dp), Icons.Filled.AddPhotoAlternate, onPickScreenshots)
+                }
             }
         }
         Text("${screenshots.size} / 8 screenshots", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)

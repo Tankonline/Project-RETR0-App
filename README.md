@@ -19,7 +19,7 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 ### Current release
 
-- **Version:** `1.1.6` (`versionCode 18`)
+- **Version:** `1.1.7` (`versionCode 19`)
 - **Application ID / namespace:** `com.retr0.projectretr0`
 - **Minimum Android:** Android 8.0 / API 26
 - **Target and compile SDK:** API 35
@@ -896,7 +896,7 @@ Check:
 
 # Known Issues
 
-The following limitations and warnings apply to the current **v1.1.6** release. They do not all prevent normal use of the installer, but they should be considered when testing or distributing a build.
+The following limitations and warnings apply to the current **v1.1.7** release. They do not all prevent normal use of the installer, but they should be considered when testing or distributing a build.
 
 ## Music import limitations
 
@@ -1059,8 +1059,8 @@ Project RETR0 installer is an active development project.
 The current repository configuration identifies the application as:
 
 ```text
-Version: 1.1.6
-Version code: 18
+Version: 1.1.7
+Version code: 19
 ```
 
 The implementation and documentation may evolve as additional asset types, installation safeguards, community functionality, and compatibility improvements are introduced.
