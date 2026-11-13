@@ -212,7 +212,7 @@ class CarModelApiClient(
             // asset metadata produced by its R2 integrity check. Never render D1-only ghosts.
             model?.takeIf {
                 it.id.isNotBlank() && it.name.isNotBlank() && it.fileCount > 0 &&
-                    it.totalBytes > 0L && it.coverUrl?.isNotBlank() == true
+                    it.totalBytes > 0L
             }
         }
     }
@@ -220,7 +220,13 @@ class CarModelApiClient(
     private fun parseModel(body: String): CommunityCarModel = parseModel(JSONObject(body))
     private fun parseModel(json: JSONObject): CommunityCarModel {
         val screenshots = json.optJSONArray("screenshotPositions")
-        val base = baseUrlForAsset(json.optString("id"))
+        val modelId = json.optString("id")
+        val base = baseUrlForAsset(modelId)
+        val cover = json.optString("coverUrl").trim().takeIf { it.isNotBlank() }
+            ?.let { resolvePublicAssetUrl(it, modelId) }
+            ?: json.optString("cover_url").trim().takeIf { it.isNotBlank() }
+                ?.let { resolvePublicAssetUrl(it, modelId) }
+            ?: json.optBoolean("coverUploaded", false).takeIf { it }?.let { baseUrlForAsset(modelId, "cover") }
         return CommunityCarModel(
             id = json.optString("id"), name = json.optString("title"), creator = json.optString("creatorName"),
             description = json.optString("description"), vehicleDirectory = json.optString("targetVehicleDirectory"),
@@ -228,12 +234,29 @@ class CarModelApiClient(
             gameBuild = json.optString("supportedVersions"), fileCount = json.optInt("fileCount"),
             totalBytes = json.optLong("totalSize"), likes = json.optInt("likes"), downloads = 0,
             verifiedManifest = json.optString("manifestSha256").matches(Regex("[0-9a-fA-F]{64}")), updatedAt = "",
-            coverUrl = json.optString("coverUrl").takeIf { it.isNotBlank() },
-            screenshotUrls = if (screenshots == null) emptyList() else (0 until screenshots.length()).map { "$base/screenshots/${screenshots.getInt(it)}" },
+            coverUrl = cover,
+            screenshotUrls = if (screenshots == null) emptyList() else (0 until screenshots.length()).mapNotNull {
+                val position = screenshots.optInt(it, -1)
+                if (position !in 1..8) null else "$base/screenshots/$position"
+            },
             shareUrl = null,
         )
     }
-    private fun baseUrlForAsset(id: String) = paths.model(id).toString()
+    private fun baseUrlForAsset(id: String, vararg segments: String) = paths.model(id, *segments).toString()
+
+    /**
+     * Asset URLs are public read routes, not signed write routes. Accept only HTTPS URLs
+     * on the configured Worker host; if the API returns a stale/foreign URL, rebuild the
+     * canonical route rather than sending credentials to an untrusted host.
+     */
+    private fun resolvePublicAssetUrl(value: String, modelId: String): String? {
+        val canonical = paths.model(modelId, "cover").toString()
+        val parsed = runCatching { value.toHttpUrl() }.getOrNull()
+        val canonicalUrl = canonical.toHttpUrl()
+        return if (parsed != null && parsed.scheme == "https" && parsed.host == base.host &&
+            parsed.encodedPath == canonicalUrl.encodedPath) value else canonical
+    }
+
     private fun CommunityCarModel.matches(query: String): Boolean = listOf(name, creator, description, vehicleDirectory).any { it.contains(query, true) }
 
     /** Registration deliberately disables the fallback to avoid recursive registration on a bad identity/route. */

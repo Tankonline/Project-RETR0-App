@@ -256,10 +256,17 @@ fun HubCarModelDetails(model: CommunityCarModel, repository: CarModelHubReposito
     var currentModel by remember(model.id) { mutableStateOf(model) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageCode by remember { mutableStateOf<String?>(null) }
+    // Details is authoritative only when it contains a usable cover. A partial Worker
+    // response must not erase the catalog cover that is already on screen.
+    fun mergeDetails(previous: CommunityCarModel, refreshed: CommunityCarModel): CommunityCarModel =
+        refreshed.copy(
+            coverUrl = refreshed.coverUrl ?: previous.coverUrl,
+            screenshotUrls = refreshed.screenshotUrls.ifEmpty { previous.screenshotUrls },
+        )
     fun failed(what: String, error: Throwable) { val coded = error.asCarModelException(); CarModelLog.fail(coded.error, "hub $what failed: ${coded.message} (model=${model.id})"); message = coded.message; messageCode = coded.error.code }
     LaunchedEffect(model.id) {
         runCatching { repository.details(model.id) }
-            .onSuccess { currentModel = it }
+            .onSuccess { currentModel = mergeDetails(currentModel, it) }
             .onFailure { error ->
                 failed("details", error)
                 if ((error as? com.retr0.projectretr0.data.skins.SkinApiException)?.statusCode == 404) onBack()

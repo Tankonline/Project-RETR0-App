@@ -2,6 +2,7 @@ package com.retr0.projectretr0.ui.carmodels
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -16,6 +17,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import android.util.Log
+import coil.request.ImageRequest
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -174,10 +182,57 @@ fun BackHeader(title: String, subtitle: String, onBack: () -> Unit, modifier: Mo
 
 @Composable
 fun ModelCover(model: Any?, modifier: Modifier = Modifier) {
-    val placeholder: @Composable () -> Unit = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(Icons.Filled.DirectionsCar, "Car model artwork placeholder", tint = Color.White.copy(.10f), modifier = Modifier.size(44.dp)) } }
+    // Keep the last successful request identity across transient parent recompositions.
+    // A detail refresh may briefly publish an equal-looking model with a missing URL;
+    // that must not replace already-rendered artwork with a loading/error placeholder.
+    var retryToken by remember { mutableStateOf(0) }
+    var lastSuccessfulModel by remember { mutableStateOf<Any?>(null) }
+    val requestModel = model ?: lastSuccessfulModel
+    val requestKey = requestModel?.toString()
+    androidx.compose.runtime.LaunchedEffect(requestKey) {
+        if (requestKey != null) Log.d("RETR0-CarModelImage", "request model=$requestKey retry=$retryToken")
+        else Log.d("RETR0-CarModelImage", "request model=<none>")
+    }
+    val placeholder: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.DirectionsCar, "Car model artwork placeholder", tint = Color.White.copy(.10f), modifier = Modifier.size(44.dp))
+        }
+    }
     Box(modifier.clip(RoundedCornerShape(12.dp)).background(RetroCover), contentAlignment = Alignment.Center) {
-        if (model == null) placeholder()
-        else SubcomposeAsyncImage(model = model, contentDescription = "Car model artwork", contentScale = ContentScale.Crop, loading = { placeholder() }, error = { placeholder() }, modifier = Modifier.fillMaxSize())
+        if (requestModel == null) placeholder()
+        else SubcomposeAsyncImage(
+            model = ImageRequest.Builder(LocalContext.current).data(requestModel)
+                .memoryCacheKey("car-model-cover:$requestModel:$retryToken").listener(
+                    onStart = { Log.d("RETR0-CarModelImage", "start model=${requestKey ?: "<none>"}") },
+                    onSuccess = { _, result -> Log.d("RETR0-CarModelImage", "success model=${result.request.data.toString().take(120)}") },
+                    onError = { _, result -> Log.e("RETR0-CarModelImage", "error model=${result.request.data.toString().take(120)} type=${result.throwable.javaClass.simpleName}") },
+                ).build(),
+            contentDescription = "Car model artwork", contentScale = ContentScale.Crop,
+            loading = { if (lastSuccessfulModel == null) placeholder() },
+            success = { state ->
+                // SubcomposeAsyncImage's success slot is content, not a callback: the
+                // previous implementation only logged here and therefore replaced the
+                // decoded image with an empty slot after Coil reported success.
+                Image(
+                    painter = state.painter,
+                    contentDescription = "Car model artwork",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                lastSuccessfulModel = state.result.request.data
+                Log.d("RETR0-CarModelImage", "render-success model=${state.result.request.data.toString().take(120)}")
+            },
+            error = {
+                Log.e("RETR0-CarModelImage", "render-error model=${requestKey ?: "<none>"}")
+                if (lastSuccessfulModel == null) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        placeholder()
+                        SmallActionButton("Retry", icon = Icons.Filled.Refresh, onClick = { retryToken++ })
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

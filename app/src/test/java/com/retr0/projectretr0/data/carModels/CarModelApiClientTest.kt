@@ -40,9 +40,11 @@ class CarModelApiClientTest {
         assertEquals(1, catalog.size)
         assertEquals("Roadster", catalog.single().name)
         assertEquals("r3_row", catalog.single().supportedPackages.single())
-        val detail = client.parseModelForTest("""{"id":"m1","title":"Roadster","creatorName":"A","description":"desc","targetVehicleDirectory":"car_01","packageId":"r3_row","supportedVersions":"13","status":"published","fileCount":2,"totalSize":42,"likes":3,"manifestSha256":"0123456789012345678901234567890123456789012345678901234567890123","screenshotPositions":[1]}""")
+        assertEquals("https://save-files.armaandeep08-ap.workers.dev/v1/car-models/m1/cover", catalog.single().coverUrl)
+        val detail = client.parseModelForTest("""{"id":"m1","title":"Roadster","creatorName":"A","description":"desc","targetVehicleDirectory":"car_01","packageId":"r3_row","supportedVersions":"13","status":"published","fileCount":2,"totalSize":42,"likes":3,"coverUrl":"https://save-files.armaandeep08-ap.workers.dev/v1/car-models/m1/cover","manifestSha256":"0123456789012345678901234567890123456789012345678901234567890123","screenshotPositions":[1]}""")
         assertEquals("desc", detail.description)
         assertEquals(true, detail.verifiedManifest)
+        assertEquals("https://save-files.armaandeep08-ap.workers.dev/v1/car-models/m1/cover", detail.coverUrl)
         assertEquals(1, detail.screenshotUrls.size)
     }
 
@@ -51,13 +53,30 @@ class CarModelApiClientTest {
         assertEquals(0, CarModelApiClient().parseCatalogForTest("{}").size)
     }
 
-    @Test fun catalogDropsRowsThatCannotBeDownloaded() {
+    @Test fun catalogKeepsValidRowsWhenCoverIsTemporarilyUnavailable() {
         val body = """{"items":[
             {"id":"missing-assets","title":"Ghost","creatorName":"A","fileCount":0,"totalSize":0},
-            {"id":"valid","title":"Roadster","creatorName":"A","fileCount":1,"totalSize":42,"coverUrl":"https://worker/v1/car-models/valid/cover"}
+            {"id":"valid","title":"Roadster","creatorName":"A","fileCount":1,"totalSize":42}
         ]}"""
         val items = CarModelApiClient().parseCatalogForTest(body)
         assertEquals(listOf("valid"), items.map { it.id })
+        assertEquals(null, items.single().coverUrl)
+    }
+
+    @Test fun detailDerivesCoverUrlWhenCoverIsUploadedButUrlIsMissing() {
+        val model = CarModelApiClient().parseModelForTest("""{"id":"m1","title":"Roadster","creatorName":"A","fileCount":1,"totalSize":42,"coverUploaded":true}""")
+        assertEquals("https://save-files.armaandeep08-ap.workers.dev/v1/car-models/m1/cover", model.coverUrl)
+    }
+
+    @Test fun catalogAcceptsSnakeCaseCoverUrlAndCanonicalizesIt() {
+        val body = """{"items":[{"id":"valid","title":"Roadster","creatorName":"A","fileCount":1,"totalSize":42,"cover_url":"https://save-files.armaandeep08-ap.workers.dev/v1/car-models/valid/cover"}]}"""
+        val item = CarModelApiClient().parseCatalogForTest(body).single()
+        assertEquals("https://save-files.armaandeep08-ap.workers.dev/v1/car-models/valid/cover", item.coverUrl)
+    }
+
+    @Test fun staleOrForeignCoverUrlIsCanonicalizedToWorkerRoute() {
+        val model = CarModelApiClient().parseModelForTest("""{"id":"m1","title":"Roadster","creatorName":"A","fileCount":1,"totalSize":42,"coverUrl":"https://attacker.example/image.webp"}""")
+        assertEquals("https://save-files.armaandeep08-ap.workers.dev/v1/car-models/m1/cover", model.coverUrl)
     }
 
     @Test fun limitsAreExplicitAndStable() {
