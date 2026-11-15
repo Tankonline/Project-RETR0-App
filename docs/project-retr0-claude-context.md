@@ -11,6 +11,7 @@
 - Namespace/application ID: `com.retr0.projectretr0` — **verified**, `app/build.gradle.kts`, `MainActivity`.
 - Current checked-in build metadata: versionCode `20`, versionName `1.1.8`, min/target/compile SDK `26/35/35` — **verified**, `app/build.gradle.kts`.
 - Release docs and metadata are aligned to v1.1.8/versionCode 20; older versions remain historical entries.
+- v1.1.8 includes verified/resumable Community Hub car-model downloads, Downloaded Mods navigation, multi-vehicle/add-on package handling, backup-first application and rollback, Shizuku reconnect hardening, atomic skin operations, and native Sonic archive-safety improvements.
 - Supported RR3 package targets: `com.ea.games.r3_row` (Global/ROW) and `com.ea.games.r3_na` (North America) — **verified**, manifest and installer/service constants.
 - License/product distribution claims are documented in `README.md`; verify repository license files before publishing.
 

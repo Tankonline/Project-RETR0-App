@@ -4,7 +4,22 @@
 
 The current checkout is prepared for Android release `v1.1.8` with `versionCode 20`. Community Hub car-model media now falls back to the canonical Worker cover route when `coverUploaded` is true but `coverUrl` is absent, canonicalizes stale/foreign cover URLs, logs safe image request diagnostics, and renders Coil's decoded `SubcomposeAsyncImage` success content.
 
-This preparation does not enable new Firebase/account, Cloudflare, AI/web research, authentication, admin-ingestion, production-flag, or runtime-update behavior. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; admin ingestion remains guarded server-side; music acquisition remains external; and no APK self-updater is released.
+This release includes the v1.1.8 car-model download/import pipeline, Downloaded Mods UI, multi-vehicle and add-on package handling, stronger backup/restore verification, Shizuku reconnect hardening, atomic skin operations, and native Sonic archive-safety improvements. It does not enable new Firebase/account authentication, production Cloudflare behavior, AI/web research, admin-ingestion flags, or runtime-update behavior. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; admin ingestion remains guarded server-side; music acquisition remains external; and no APK self-updater is released.
+
+## v1.1.8 change summary
+
+The Android release contains the following functional areas:
+
+- Community Hub car-model download plans with manifest/file checksums, size limits, free-space checks, resumable verified downloads, optional media, and safe library import.
+- Downloaded Mods navigation for downloaded Community Hub skins and car models.
+- Multi-vehicle package inspection, shared-root collision detection, ADDON/REPLACE handling, backup-first application, stale-file cleanup, and rollback/revert behavior.
+- Import staging and manifest validation that keeps picked folders out of RR3 until the user explicitly applies a verified model.
+- Shizuku lifecycle hardening for binder death, delayed binding, permission state, reconnect throttling, and pending skin-operation recovery.
+- Atomic skin replacement and restoration with pre/post SHA-256 verification.
+- Native Sonic extractor hardening for unsafe paths, ZIP64/data-descriptor handling, compression checks, and secure directory creation.
+- Worker contract validation for asset-backed downloads, checksums, cover/screenshots, R2 object availability, and related AI/diagnostics response schemas.
+
+The release does not introduce Firebase account sign-in, an APK self-updater, an in-app music downloader, or an enabled production admin-ingestion flag.
 
 ## One canonical APK
 

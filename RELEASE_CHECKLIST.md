@@ -3,6 +3,7 @@
 ## v1.1.8 Release
 - [x] Version metadata is `versionName "1.1.8"` and `versionCode 20`.
 - [x] Changelog, README, release guidance, and IzzyOnDroid metadata are aligned to v1.1.8.
+- [x] Changelog and release guidance document the Community Hub download/import pipeline, Downloaded Mods UI, package safety, Shizuku reliability, atomic skin operations, and native extractor hardening.
 - [x] Release-specific version metadata changes are documented; build and device verification remain pending.
 
 ## v1.1.7 Release
