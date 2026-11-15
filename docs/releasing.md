@@ -1,8 +1,8 @@
 # Releasing Project RETR0 installer
 
-## v1.1.7 preparation status
+## v1.1.8 preparation status
 
-The current checkout is prepared for Android release `v1.1.7` with `versionCode 19`. Community Hub car-model media now falls back to the canonical Worker cover route when `coverUploaded` is true but `coverUrl` is absent, canonicalizes stale/foreign cover URLs, logs safe image request diagnostics, and renders Coil's decoded `SubcomposeAsyncImage` success content.
+The current checkout is prepared for Android release `v1.1.8` with `versionCode 20`. Community Hub car-model media now falls back to the canonical Worker cover route when `coverUploaded` is true but `coverUrl` is absent, canonicalizes stale/foreign cover URLs, logs safe image request diagnostics, and renders Coil's decoded `SubcomposeAsyncImage` success content.
 
 This preparation does not enable new Firebase/account, Cloudflare, AI/web research, authentication, admin-ingestion, production-flag, or runtime-update behavior. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; admin ingestion remains guarded server-side; music acquisition remains external; and no APK self-updater is released.
 
@@ -59,15 +59,15 @@ Configure protected secrets only in CI:
 
 The existing workflow validates the version tag against `versionName`, runs unit tests, builds a signed release APK, creates a checksum, and publishes release assets. It is not run or changed as part of this preparation task.
 
-## Release gates for v1.1.7
+## Release gates for v1.1.8
 
-1. Confirm `versionName "1.1.7"` and `versionCode 19` in Gradle and metadata.
+1. Confirm `versionName "1.1.8"` and `versionCode 20` in Gradle and metadata.
 2. Run unit tests, `assembleDebug`, lint/static checks, and a signed `assembleRelease`.
 3. Inspect the diff for documentation-only/version metadata scope; reject secrets, generated files, runtime artifacts, and unrelated flag changes.
 4. Manually verify dashboard navigation, the **Install Project RETR0** label, status refresh, and Shizuku unavailable/denied/delayed/retry/reconnect paths.
 5. Verify supported RR3 ROW and NA operations and recovery behavior on target devices.
 6. Generate and independently verify the signed APK SHA-256 checksum.
-7. Only after approval may a maintainer commit, create annotated tag `v1.1.7`, push it, and run the protected workflow.
+7. Only after approval may a maintainer commit, create annotated tag `v1.1.8`, push it, and run the protected workflow.
 
 Do not commit, tag, push, or create a GitHub release during release preparation.
 

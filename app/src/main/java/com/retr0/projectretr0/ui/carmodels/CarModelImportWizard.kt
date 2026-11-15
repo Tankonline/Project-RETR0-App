@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.retr0.projectretr0.IRetr0UserService
 import com.retr0.projectretr0.data.carModels.CarModelErrorCode
 import com.retr0.projectretr0.data.carModels.local.AddonInspection
+import com.retr0.projectretr0.data.carModels.local.PackageAddonInspection
 import com.retr0.projectretr0.data.carModels.local.ApplyOutcome
 import com.retr0.projectretr0.data.carModels.local.InstallMode
 import androidx.compose.foundation.selection.selectable
@@ -57,6 +58,18 @@ private const val STEPS = 7
 
 /** Wizard step numbers and the gates between them; the install type is chosen before any file is picked. */
 internal object WizardSteps {
+    /** Upper bound for the Step 4 destination check before it is reported as a failure. */
+    const val INSPECT_TIMEOUT_MS = 60_000L
+
+    /**
+     * Where Apply installs. REPLACE: the chosen existing vehicle. ADDON: the typed folder for a single car; for a
+     * multi-vehicle package, the package's first vehicle (the record key; every package folder is owned by it).
+     */
+    fun addonDestination(addon: Boolean, isPackage: Boolean, packageVehicles: List<String>, typedFolder: String, replaceVehicle: String?): String? = when {
+        !addon -> replaceVehicle
+        isPackage -> packageVehicles.first().takeIf { CarModelPaths.SAFE_VEHICLE_DIR.matches(it) }
+        else -> typedFolder.takeIf { CarModelPaths.SAFE_VEHICLE_DIR.matches(it) }
+    }
     const val MODE = 1
     const val FOLDER = 2
     const val VALIDATE = 3
@@ -72,12 +85,31 @@ internal object WizardSteps {
         else -> FOLDER
     }
 
+    /** Inspection is a hard gate for every target/proceed action; null means loading or not inspected. */
+    fun canAdvanceTarget(
+        mode: InstallMode?,
+        inspectionComplete: Boolean,
+        inspectionSucceeded: Boolean,
+    ): Boolean = mode != null && inspectionComplete && inspectionSucceeded
+
+    /** The package-level result is authoritative for multi-vehicle add-ons. */
+    fun packageInspectionSucceeded(inspection: PackageAddonInspection?, error: UiError?): Boolean =
+        error == null && inspection != null && inspection.targets.isNotEmpty() && inspection.targets.all { it.occupiedBy == null }
+
+    /** Only a single-target result can unlock a legacy single-vehicle add-on. */
+    fun targetInspectionSucceeded(inspection: AddonInspection?, error: UiError?): Boolean =
+        error == null && inspection != null && inspection.occupiedBy == null
+
     /** REPLACE keeps the verified whole-folder backup gate; ADDON only needs a free destination folder. */
     fun canApply(mode: InstallMode?, backupVerified: Boolean, addon: AddonInspection?): Boolean = when (mode) {
         null -> false
         InstallMode.REPLACE -> backupVerified
         InstallMode.ADDON -> addon != null && addon.occupiedBy == null
     }
+
+    /** Stable, testable identity for one inspection request. */
+    fun inspectionFingerprint(model: String, source: String, manifestHash: String, gamePackage: String, mode: String, vehicle: String, service: String): String =
+        listOf(model, source, manifestHash, gamePackage, mode, vehicle, service).joinToString("|")
 
     /** Turns a picked folder name into a safe vehicle directory name for a new add-on folder. */
     fun suggestAddonFolder(name: String?): String = name.orEmpty().trim().replace(Regex("[^A-Za-z0-9_-]+"), "_").trim('_').take(120)
@@ -136,10 +168,18 @@ fun CarModelImportWizard(
     var vehicleQuery by remember { mutableStateOf("") }
     var vehicle by remember { mutableStateOf<String?>(null) }
     var inspection by remember { mutableStateOf<TargetInspection?>(null) }
+    var targetInspectionRunning by remember { mutableStateOf(false) }
+    var targetInspectionError by remember { mutableStateOf<UiError?>(null) }
     var zeroMatchAccepted by remember { mutableStateOf(false) }
     var addonFolder by remember { mutableStateOf("") }
     var addonInspection by remember { mutableStateOf<AddonInspection?>(null) }
+    var packageAddonInspection by remember { mutableStateOf<PackageAddonInspection?>(null) }
     var addonError by remember { mutableStateOf<UiError?>(null) }
+    // Inspection is keyed by immutable input data, not by the manifest object identity. The
+    // result is retained for that fingerprint, so committing success cannot restart the effect.
+    var addonInspectionFingerprint by remember { mutableStateOf<String?>(null) }
+    var addonInspectionRunning by remember { mutableStateOf(false) }
+    var addonInspectionGeneration by remember { mutableIntStateOf(0) }
 
     val context = LocalContext.current
     val mediaCache = remember(context) { SkinImportCache(context, "car-model-media") }
@@ -166,7 +206,9 @@ fun CarModelImportWizard(
     val applying = step == WizardSteps.RESULT && outcome == null
     val addon = mode == InstallMode.ADDON
     // Where the model lands: an existing vehicle for REPLACE, the chosen (usually new) folder for ADDON.
-    val destination: String? = if (addon) addonFolder.takeIf { CarModelPaths.SAFE_VEHICLE_DIR.matches(it) } else vehicle
+    val packageVehicles = manifest?.vehicleDirectories.orEmpty()
+    val isPackage = packageVehicles.size > 1
+    val destination: String? = WizardSteps.addonDestination(addon, isPackage, packageVehicles, addonFolder, vehicle)
 
     fun exit() { if (modelId == null) viewModel.importer.discardStaging(); onExit() }
     // The install type can be changed by going Back until the review/apply step; it is fixed from there on.
@@ -273,23 +315,112 @@ fun CarModelImportWizard(
             }
     }
     LaunchedEffect(step, mode, gamePackage, vehicle, manifest, liveService) {
-        inspection = null; zeroMatchAccepted = false
+        inspection = null
+        targetInspectionError = null
+        targetInspectionRunning = false
+        zeroMatchAccepted = false
         val selected = vehicle
-        if (step == WizardSteps.TARGET && mode == InstallMode.REPLACE && selected != null && manifest != null && liveService != null) inspection = viewModel.inspectTarget(liveService, manifest, gamePackage.id, selected).getOrNull()
+        if (step != WizardSteps.TARGET || mode != InstallMode.REPLACE || selected == null || manifest == null) return@LaunchedEffect
+        if (liveService == null) {
+            targetInspectionError = CarModelErrorCode.SERVICE_UNAVAILABLE.toUiError("Connect Shizuku to inspect the destination.")
+            return@LaunchedEffect
+        }
+        targetInspectionRunning = true
+        viewModel.inspectTarget(liveService, manifest, gamePackage.id, selected)
+            .onSuccess { inspection = it }
+            .onFailure { targetInspectionError = it.toUiError("Destination could not be inspected.") }
+        targetInspectionRunning = false
     }
     // Target step (ADDON): suggest a new folder named after the model, then check what adding it would touch.
     LaunchedEffect(step, mode) {
         if (step == WizardSteps.TARGET && addon && addonFolder.isBlank()) addonFolder = WizardSteps.suggestAddonFolder(savedModel?.vehicleDirectory ?: staged?.folderName)
     }
-    LaunchedEffect(step, mode, gamePackage, addonFolder, manifest, liveService) {
-        addonInspection = null; addonError = null
-        if (!addon || (step != WizardSteps.TARGET && step != WizardSteps.REVIEW)) return@LaunchedEffect
-        val folder = destination ?: return@LaunchedEffect
-        if (liveService == null) { addonError = CarModelErrorCode.SERVICE_UNAVAILABLE.toUiError("Connect Shizuku to check the destination folder."); return@LaunchedEffect }
-        if (manifest == null) return@LaunchedEffect
-        viewModel.inspectAddonTarget(liveService, manifest, gamePackage.id, folder)
-            .onSuccess { addonInspection = it }
-            .onFailure { addonError = it.toUiError("RR3 ${gamePackage.short} vehicles could not be read. Is the game installed?") }
+    LaunchedEffect(step, mode, gamePackage.id, addonFolder, modelId, manifest?.packageId, manifest?.vehicleDirectories, manifest?.files?.hashCode(), liveService) {
+        val currentManifest = manifest
+        val currentService = liveService
+        val folder = destination
+        val fingerprint = currentManifest?.let { m ->
+            buildString {
+                append(m.packageId).append('|').append(mode?.name ?: "NONE").append('|')
+                append(m.target.vehicleDirectory).append('|')
+                append(m.vehicleDirectories.sorted().joinToString(",")).append('|')
+                append(m.files.joinToString(";") { "${it.destinationRoot}:${it.destinationPath}:${it.sizeBytes}:${it.sha256}" })
+                append('|').append(gamePackage.id).append('|').append(mode?.name ?: "NONE").append('|').append(folder).append('|')
+                append(System.identityHashCode(currentService))
+            }
+        }
+        if (!addon || (step != WizardSteps.TARGET && step != WizardSteps.REVIEW) || currentManifest == null || currentService == null || fingerprint == null) {
+            addonInspectionRunning = false
+            return@LaunchedEffect
+        }
+        if (addonInspectionFingerprint == fingerprint && (packageAddonInspection != null || addonInspection != null || addonError != null)) {
+            com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_DEDUP", "skip fingerprint=$fingerprint")
+            return@LaunchedEffect
+        }
+        addonInspectionGeneration++
+        val generation = addonInspectionGeneration
+        addonInspection = null
+        packageAddonInspection = null
+        addonError = null
+        addonInspectionFingerprint = fingerprint
+        addonInspectionRunning = true
+        com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_START", "fingerprint=$fingerprint mode=${mode?.name} step=$step package=${gamePackage.id} vehicles=${currentManifest.vehicleDirectories.size}")
+        com.retr0.projectretr0.data.carModels.CarModelLog.info("CM-WIZARD-INSPECT-START", "generation=$generation vehicles=${currentManifest.vehicleDirectories.size} files=${currentManifest.files.size}")
+        try {
+            // Bounded: a wedged helper must end in a visible error, never an endless "Checking destination…".
+            val finished = kotlinx.coroutines.withTimeoutOrNull(WizardSteps.INSPECT_TIMEOUT_MS) {
+            if (currentManifest.vehicleDirectories.size > 1) {
+                viewModel.inspectAddonPackage(currentService, currentManifest, gamePackage.id)
+                    .onSuccess {
+                        if (addonInspectionFingerprint == fingerprint && addonInspectionGeneration == generation) {
+                            packageAddonInspection = it
+                            com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_COMPLETE", "fingerprint=$fingerprint kind=package targets=${it.targets.size}")
+                        }
+                    }
+                    .onFailure {
+                        if (addonInspectionFingerprint == fingerprint && addonInspectionGeneration == generation) {
+                            addonError = it.toUiError("RR3 ${gamePackage.short} package targets could not be read. Is the game installed?")
+                            com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_FAILED", "fingerprint=$fingerprint kind=package error=${it.javaClass.simpleName}")
+                        }
+                    }
+            } else {
+                val targetFolder = folder
+                if (targetFolder != null) {
+                    viewModel.inspectAddonTarget(currentService, currentManifest, gamePackage.id, targetFolder)
+                        .onSuccess {
+                            if (addonInspectionFingerprint == fingerprint && addonInspectionGeneration == generation) {
+                                addonInspection = it
+                                com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_COMPLETE", "fingerprint=$fingerprint kind=target exists=${it.exists} new=${it.newFiles.size} overwrites=${it.overwrites.size}")
+                            }
+                        }
+                        .onFailure {
+                            if (addonInspectionFingerprint == fingerprint && addonInspectionGeneration == generation) {
+                                addonError = it.toUiError("RR3 ${gamePackage.short} vehicles could not be read. Is the game installed?")
+                                com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_FAILED", "fingerprint=$fingerprint kind=target folder=$targetFolder error=${it.javaClass.simpleName}")
+                            }
+                        }
+                }
+            }
+            Unit
+            }
+            if (addonInspectionGeneration == generation) {
+                if (finished == null) {
+                    addonError = UiError("Checking the RR3 destination took too long. Make sure Shizuku is running, then go Back and try again.", CarModelErrorCode.SERVICE_UNAVAILABLE.code)
+                    com.retr0.projectretr0.data.carModels.CarModelLog.info("CM-WIZARD-INSPECT-TIMEOUT", "generation=$generation timeoutMs=${WizardSteps.INSPECT_TIMEOUT_MS}")
+                } else {
+                    com.retr0.projectretr0.data.carModels.CarModelLog.info(if (addonError == null) "CM-WIZARD-INSPECT-COMPLETE" else "CM-WIZARD-INSPECT-FAILED", "generation=$generation package=${packageAddonInspection != null} target=${addonInspection != null} error=${addonError?.code}")
+                }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // A newer run (or leaving the step) replaced this one; it owns the state now. Not an error.
+            com.retr0.projectretr0.data.carModels.CarModelLog.info("CM-WIZARD-INSPECT-CANCELLED", "generation=$generation latest=$addonInspectionGeneration")
+            throw cancelled
+        } finally {
+            if (addonInspectionGeneration == generation) {
+                addonInspectionRunning = false
+                com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("INSPECT_JOB_END", "fingerprint=$fingerprint generation=$generation")
+            }
+        }
     }
     // Review step (REPLACE only): the gate. Creating (or re-verifying) the original backup is the only way to unlock Apply.
     LaunchedEffect(step, backupAttempt) {
@@ -301,7 +432,14 @@ fun CarModelImportWizard(
             .fold({ BackupCardState.Verified(it.files.size, it.totalBytes) }, { error -> error.toUiError().let { BackupCardState.Failed(it.message, it.code) } })
     }
 
-    val canApply = liveService != null && WizardSteps.canApply(mode, backupState is BackupCardState.Verified, addonInspection)
+    val packageInspectionSucceeded = WizardSteps.packageInspectionSucceeded(packageAddonInspection, addonError)
+    val targetInspectionSucceeded = WizardSteps.targetInspectionSucceeded(addonInspection, addonError)
+    val addonInspectionSucceeded = if ((manifest?.vehicleDirectories?.size ?: 0) > 1) packageInspectionSucceeded else targetInspectionSucceeded
+    val canApply = liveService != null && !addonInspectionRunning && (!addon || addonInspectionSucceeded) && when (mode) {
+        InstallMode.ADDON -> addonInspectionSucceeded
+        InstallMode.REPLACE -> backupState is BackupCardState.Verified
+        null -> false
+    }
     fun startApply() {
         val id = modelId; val selected = destination; val chosen = mode
         if (id == null || selected == null || chosen == null || liveService == null || !canApply) return
@@ -347,8 +485,12 @@ fun CarModelImportWizard(
     val alreadyInstalled = activeOnVehicle != null
     val addonOnVehicle = activeOnVehicle?.isAddon == true
     val relativeFiles = manifest?.files?.map { it.sourcePath }.orEmpty()
-    val targetReady = if (addon) addonInspection != null && addonInspection?.occupiedBy == null
-        else !addonOnVehicle && (inspection?.status == TargetStatus.FOUND || (inspection?.status == TargetStatus.INCOMPATIBLE && zeroMatchAccepted))
+    val addonInspectionComplete = !addonInspectionRunning && (packageAddonInspection != null || addonInspection != null || addonError != null)
+    val targetReady = if (addon) {
+        WizardSteps.canAdvanceTarget(mode, addonInspectionComplete, addonInspectionSucceeded)
+    } else {
+        WizardSteps.canAdvanceTarget(mode, !targetInspectionRunning && (inspection != null || targetInspectionError != null), targetInspectionError == null && !addonOnVehicle && (inspection?.status == TargetStatus.FOUND || (inspection?.status == TargetStatus.INCOMPATIBLE && zeroMatchAccepted)))
+    }
     val reviewLabel = if (addon) "Next · Review" else "Next · Backup"
 
     WizardScaffold(
@@ -361,7 +503,7 @@ fun CarModelImportWizard(
                 }
                 WizardSteps.FOLDER -> { SecondaryButton("Back", Modifier.weight(1f), onClick = ::back); PrimaryButton("Next · Validate", Modifier.weight(1f), enabled = staged != null && stageProgress == null) { step = WizardSteps.VALIDATE } }
                 WizardSteps.VALIDATE -> { SecondaryButton("Back", Modifier.weight(1f), onClick = ::back); PrimaryButton("Next · Target", Modifier.weight(1f), enabled = scan?.report?.isValid == true && hashProgress == null) { step = WizardSteps.TARGET } }
-                WizardSteps.TARGET -> { SecondaryButton("Back", Modifier.weight(1f), onClick = ::back); PrimaryButton(if (modelId == null) "Next · Details" else reviewLabel, Modifier.weight(1f), enabled = targetReady) { backupState = null; backupAttempt++; step = if (modelId == null) WizardSteps.DETAILS else WizardSteps.REVIEW } }
+                WizardSteps.TARGET -> { SecondaryButton("Back", Modifier.weight(1f), onClick = ::back); PrimaryButton(if (modelId == null) "Next · Details" else reviewLabel, Modifier.weight(1f), enabled = targetReady && !targetInspectionRunning && !addonInspectionRunning && (!addon || addonInspectionSucceeded) && (if (addon) (packageAddonInspection != null || addonInspection != null) else true)) { backupState = null; backupAttempt++; step = if (modelId == null) WizardSteps.DETAILS else WizardSteps.REVIEW } }
                 WizardSteps.DETAILS -> {
                     SecondaryButton("Back", Modifier.weight(1f), onClick = ::back)
                     PrimaryButton(
@@ -378,7 +520,7 @@ fun CarModelImportWizard(
                         if (current == null || scanned == null || selected == null) return@PrimaryButton
                         saving = true; saveError = null; uploadError = null; uploadProgress = "Saving locally…"
                         scope.launch {
-                            viewModel.importer.saveToLibrary(current, scanned, CarModelDetailsInput(form.name, form.creator, form.description, form.gameVersion, form.license, form.supportedPackages, selected, form.cover, form.screenshots))
+                            viewModel.importer.saveToLibrary(current, scanned, CarModelDetailsInput(form.name, form.creator, form.description, form.gameVersion, form.license, form.supportedPackages, selected, form.cover, form.screenshots, installMode = if (addon) "ADDON" else "REPLACE"))
                                 .onSuccess { saved ->
                                     modelId = saved.id
                                     backupState = null
@@ -431,10 +573,10 @@ fun CarModelImportWizard(
             WizardSteps.MODE -> StepInstallMode(mode) { mode = it }
             WizardSteps.FOLDER -> StepSelectFolder(staged, stageProgress, stageError) { folderPicker.launch(null) }
             WizardSteps.VALIDATE -> StepValidate(hashProgress, relativeFiles, staged?.ignoredFiles.orEmpty(), scan?.report?.errors.orEmpty())
-            WizardSteps.TARGET -> if (addon) StepAddonTarget(gamePackage, { gamePackage = it }, addonFolder, { addonFolder = it.take(120) }, addonInspection, addonError)
+            WizardSteps.TARGET -> if (addon) StepAddonTarget(gamePackage, { gamePackage = it }, addonFolder, { addonFolder = it.take(120) }, addonInspection, addonError, packageAddonInspection, packageVehicles.takeIf { isPackage })
                 else StepTarget(gamePackage, { gamePackage = it; vehicle = null }, vehicles, vehiclesError, vehicleQuery, { vehicleQuery = it }, vehicle, { vehicle = it }, staged?.displayPath ?: "Library · ${savedModel?.name.orEmpty()}", targetPath, inspection, alreadyInstalled, zeroMatchAccepted, { zeroMatchAccepted = it }, addonOnVehicle)
             WizardSteps.DETAILS -> StepDetails(form, { form = it }, destination.orEmpty(), saveError, uploadError, uploadProgress, mediaError, { coverPicker.launch("image/*") }, { screenshotPicker.launch("image/*") }, if (uploadError != null) ::retryCommunityPublish else null, targetLabel = if (addon) "New car folder" else "Replaced vehicle", removeMedia = ::removeMedia, setCover = ::setCover)
-            WizardSteps.REVIEW -> if (addon) StepAddonReview(addonInspection, addonError, destination.orEmpty(), gamePackage, manifest, uploadError, uploadProgress)
+            WizardSteps.REVIEW -> if (addon) StepAddonReview(addonInspection, addonError, destination.orEmpty(), gamePackage, manifest, uploadError, uploadProgress, packageAddonInspection)
                 else StepBackup(backupState, vehicle?.let { runCatching { paths.backupDir(gamePackage.id, it) }.getOrNull() }.orEmpty(), relativeFiles, alreadyInstalled, uploadError, uploadProgress) { backupAttempt++ }
             else -> StepResult(outcome, applyProgress, destination.orEmpty(), gamePackage, relativeFiles.size, onViewBackups, onRevert = { destination?.let { onRevertRequested(gamePackage.id, it) } }, mode = mode ?: InstallMode.REPLACE)
         }
@@ -613,9 +755,14 @@ fun StepTarget(gamePackage: GamePackage, onPackage: (GamePackage) -> Unit, vehic
 }
 
 @Composable
-fun StepAddonTarget(gamePackage: GamePackage, onPackage: (GamePackage) -> Unit, folder: String, onFolder: (String) -> Unit, inspection: AddonInspection?, error: UiError?) {
+fun StepAddonTarget(gamePackage: GamePackage, onPackage: (GamePackage) -> Unit, folder: String, onFolder: (String) -> Unit, inspection: AddonInspection?, error: UiError?, packageInspection: PackageAddonInspection? = null, packageVehicles: List<String>? = null) {
     Text("Choose where to add it", color = RetroText, style = MaterialTheme.typography.titleLarge)
     SegmentedTabs(listOf("Global (r3_row)", "N. America (r3_na)"), GamePackage.entries.indexOf(gamePackage)) { onPackage(GamePackage.entries[it]) }
+    if (packageVehicles != null) {
+        // A multi-vehicle package installs each car into its own folder; there is no folder to choose.
+        StepPackageTarget(packageVehicles, packageInspection, error)
+        return
+    }
     RetroField("New car folder", folder, onFolder, placeholder = "e.g. 2001_bmw_m3_gtr_street_addon", mono = true)
     Text("The model is installed into this folder under RR3's vehicles. Letters, numbers, _ and - only.", color = RetroTextMuted, style = MaterialTheme.typography.bodyMedium)
     val valid = CarModelPaths.SAFE_VEHICLE_DIR.matches(folder)
@@ -754,13 +901,25 @@ fun StepBackup(state: BackupCardState?, destination: String, relativeFiles: List
 
 /** Add-on counterpart of [StepBackup]: nothing existing is replaced, so there is no whole-folder backup gate. */
 @Composable
-fun StepAddonReview(inspection: AddonInspection?, error: UiError?, folder: String, gamePackage: GamePackage, manifest: CarModelManifest? = null, uploadError: UiError? = null, uploadProgress: String? = null) {
+fun StepAddonReview(inspection: AddonInspection?, error: UiError?, folder: String, gamePackage: GamePackage, manifest: CarModelManifest? = null, uploadError: UiError? = null, uploadProgress: String? = null, packageInspection: PackageAddonInspection? = null) {
     Text("Review complete add-on scan", color = RetroText, style = MaterialTheme.typography.titleLarge)
     uploadProgress?.let { InfoNote(Icons.Filled.CloudUpload, it, RetroAccent) }
     uploadError?.let { InfoNote(Icons.Filled.ErrorOutline, it.message + " The model remains available in your library for retry.", RetroDanger, code = it.code) }
     error?.let { InfoNote(Icons.Filled.ErrorOutline, it.message, RetroDanger, code = it.code) }
-    if (inspection == null) {
-        if (error == null) RetroCard { Text("Checking destination…", color = RetroTextSoft); Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = RetroAccent, trackColor = RetroStatBg) }
+    if (inspection == null && packageInspection == null) {
+        if (error == null) RetroCard { Text("Checking package destinations…", color = RetroTextSoft); Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = RetroAccent, trackColor = RetroStatBg) }
+        return
+    }
+    if (packageInspection != null) {
+        InfoNote(Icons.Filled.Layers, "Multi-vehicle package: ${packageInspection.vehicleDirectories.size} vehicle destinations; wrapper folder is not a target.", RetroAccent)
+        RetroCard {
+            InfoRow("Vehicle destinations", packageInspection.vehicleDirectories.size.toString())
+            packageInspection.vehicleDirectories.forEach { MonoText(it, Modifier.padding(vertical = 2.dp), RetroTextSoft) }
+            InfoRow("Shared roots", if (packageInspection.sharedRoots.isEmpty()) "None" else packageInspection.sharedRoots.joinToString())
+            InfoRow("Resolved targets", packageInspection.targets.size.toString())
+            InfoRow("Existing files replaced", packageInspection.overwrites.size.toString(), valueColor = if (packageInspection.nothingOverwritten) RetroSuccess else RetroGold)
+            InfoRow("New files", packageInspection.newFiles.size.toString(), valueColor = RetroSuccess)
+        }
         return
     }
     val files = manifest?.files.orEmpty()
@@ -768,42 +927,42 @@ fun StepAddonReview(inspection: AddonInspection?, error: UiError?, folder: Strin
     val eventWarning = files.any { it.sourcePath.equals("events.dat.nct", true) || it.destinationPath.equals("events.dat.nct", true) }
     val localization = files.filter { it.destinationRoot.name == "DEPOT_ROOT" && (it.destinationPath.substringAfterLast('/').equals("gametext.txt", true) || it.destinationPath.substringAfterLast('/').startsWith("text_", true) || it.destinationPath.substringAfterLast('/').equals("asset_list_base.txtCache.txt", true)) }
     val createdDirectories = buildList {
-        if (!inspection.exists) add(folder)
+        if (inspection?.exists == false) add(folder)
         byRoot.keys.filterNot { it.name == "VEHICLE" }.forEach { add(it.name.lowercase().replace('_', '/')) }
     }.distinct()
-    val summary = if (inspection.nothingOverwritten) "Adds ${files.size} files · nothing overwritten · removable later" else "Adds ${files.size} files · overwrites ${inspection.overwrites.size} · one verified transaction backup"
-    InfoNote(Icons.Filled.Layers, summary, if (inspection.nothingOverwritten) RetroSuccess else RetroGold)
+    val summary = if (inspection?.nothingOverwritten == true) "Adds ${files.size} files · nothing overwritten · removable later" else "Adds ${files.size} files · overwrites ${inspection?.overwrites?.size ?: 0} · one verified transaction backup"
+    InfoNote(Icons.Filled.Layers, summary, if (inspection?.nothingOverwritten == true) RetroSuccess else RetroGold)
     if (eventWarning) WarningBanner("events.dat.nct warning", "This file can affect depot event data globally. Review the complete scan before continuing.")
     RetroCard {
         InfoRow("Folder", folder, mono = true)
         InfoRow("Package", "${packageLabel(gamePackage.id)} (${gamePackage.short})")
-        InfoRow("Folder status", if (inspection.exists) "Exists" else "New")
+        InfoRow("Folder status", if (inspection?.exists == true) "Exists" else "New")
         InfoRow("Vehicle files", byRoot[com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE]?.toString() ?: "0")
         InfoRow("Vehicles/data files", byRoot[com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA]?.toString() ?: "0")
         InfoRow("Depot data/global files", ((byRoot[com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA] ?: 0) + (byRoot[com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT] ?: 0)).toString())
         InfoRow("Depot-root localization/cache", localization.size.toString())
-        InfoRow("Existing files replaced", inspection.overwrites.size.toString(), valueColor = if (inspection.overwrites.isEmpty()) RetroSuccess else RetroGold)
-        InfoRow("New files", inspection.newFiles.size.toString(), valueColor = RetroSuccess)
+        InfoRow("Existing files replaced", (inspection?.overwrites?.size ?: 0).toString(), valueColor = if (inspection?.overwrites.isNullOrEmpty()) RetroSuccess else RetroGold)
+        InfoRow("New files", (inspection?.newFiles?.size ?: 0).toString(), valueColor = RetroSuccess)
         InfoRow("New directories", createdDirectories.size.toString(), valueColor = RetroSuccess)
-        InfoRow("Local transaction backup", "1 folder${if (inspection.overwrites.isEmpty()) " (manifest only)" else " · overwritten files verified"}", valueColor = RetroAccent)
+        InfoRow("Local transaction backup", "1 folder${if (inspection?.overwrites.isNullOrEmpty()) " (manifest only)" else " · overwritten files verified"}", valueColor = RetroAccent)
     }
-    if (inspection.overwrites.isNotEmpty()) {
+    if (!inspection?.overwrites.isNullOrEmpty()) {
         SectionHeader("Destinations that exist and will be replaced", Icons.Filled.Shield, trailingCount = inspection.overwrites.size)
         RetroCard {
-            inspection.overwrites.take(12).forEach { MonoText(it, Modifier.padding(vertical = 3.dp), RetroTextSoft, maxLines = 1) }
-            if (inspection.overwrites.size > 12) Text("+ ${inspection.overwrites.size - 12} more files", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
+            inspection?.overwrites.orEmpty().take(12).forEach { MonoText(it, Modifier.padding(vertical = 3.dp), RetroTextSoft, maxLines = 1) }
+            if ((inspection?.overwrites?.size ?: 0) > 12) Text("+ ${(inspection?.overwrites?.size ?: 0) - 12} more files", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
         }
-        inspection.collisions.groupingBy { it.classification }.eachCount().forEach { (classification, count) ->
+        inspection?.collisions.orEmpty().groupingBy { it.classification }.eachCount().forEach { (classification, count) ->
             InfoRow(classification.name.lowercase().replaceFirstChar { it.uppercase() }, count.toString(), valueColor = if (classification.name == "DIFFERENT") RetroGold else RetroTextSoft)
         }
     }
-    SectionHeader("Files and directories newly created", Icons.Filled.Add, trailingCount = inspection.newFiles.size + createdDirectories.size)
+    SectionHeader("Files and directories newly created", Icons.Filled.Add, trailingCount = (inspection?.newFiles?.size ?: 0) + createdDirectories.size)
     RetroCard {
         createdDirectories.forEach { MonoText("$it/", Modifier.padding(vertical = 2.dp), RetroAccent, maxLines = 1) }
-        inspection.newFiles.take(12).forEach { MonoText(it, Modifier.padding(vertical = 2.dp), RetroTextSoft, maxLines = 1) }
-        if (inspection.newFiles.size > 12) Text("+ ${inspection.newFiles.size - 12} more files", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
+        inspection?.newFiles.orEmpty().take(12).forEach { MonoText(it, Modifier.padding(vertical = 2.dp), RetroTextSoft, maxLines = 1) }
+        if ((inspection?.newFiles?.size ?: 0) > 12) Text("+ ${(inspection?.newFiles?.size ?: 0) - 12} more files", color = RetroTextMuted, style = MaterialTheme.typography.labelMedium)
     }
-    inspection.occupiedBy?.let { InfoNote(Icons.Filled.ErrorOutline, CarModelErrorCode.ADDON_TARGET_OCCUPIED.userMessage, RetroDanger, code = CarModelErrorCode.ADDON_TARGET_OCCUPIED.code) }
+    inspection?.occupiedBy?.let { InfoNote(Icons.Filled.ErrorOutline, CarModelErrorCode.ADDON_TARGET_OCCUPIED.userMessage, RetroDanger, code = CarModelErrorCode.ADDON_TARGET_OCCUPIED.code) }
 }
 
 @Composable
@@ -865,5 +1024,33 @@ private fun ResultHeader(icon: androidx.compose.ui.graphics.vector.ImageVector, 
         Box(Modifier.size(64.dp).background(color.copy(alpha = .14f), CircleShape).border(1.5.dp, color, CircleShape), contentAlignment = Alignment.Center) { Icon(icon, null, tint = color, modifier = Modifier.size(32.dp)) }
         Spacer(Modifier.height(10.dp))
         Text(title, color = color, style = MaterialTheme.typography.headlineMedium)
+    }
+}
+
+/** Step 4 for a multi-vehicle add-on package: per-vehicle status from the finished package inspection. */
+@Composable
+private fun StepPackageTarget(vehicles: List<String>, inspection: PackageAddonInspection?, error: UiError?) {
+    Text("This package adds ${vehicles.size} cars, each into its own RR3 vehicle folder.", color = RetroTextMuted, style = MaterialTheme.typography.bodyMedium)
+    when {
+        error != null -> { WarningBanner("Destination unavailable", error.message); ErrorCodeText(error.code) }
+        inspection == null -> RetroCard { Text("Checking ${vehicles.size} destinations…", color = RetroTextSoft); Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = RetroAccent, trackColor = RetroStatBg) }
+        else -> {
+            RetroCard {
+                InfoRow("Add-on vehicles", inspection.vehicleDirectories.size.toString())
+                InfoRow("New files", inspection.newFiles.size.toString(), valueColor = RetroSuccess)
+                InfoRow("Existing files replaced", inspection.overwrites.size.toString(), valueColor = if (inspection.nothingOverwritten) RetroSuccess else RetroGold)
+                inspection.targets.forEach { target ->
+                    val name = target.targetPath.substringAfterLast('/')
+                    InfoRow(name, when { target.occupiedBy != null -> "In use by ${target.occupiedBy.modelName}"; target.exists -> "Existing folder"; else -> "New add-on" },
+                        valueColor = if (target.occupiedBy != null) RetroDanger else RetroTextSoft)
+                }
+            }
+            val occupied = inspection.targets.firstOrNull { it.occupiedBy != null }
+            when {
+                occupied != null -> { WarningBanner("Vehicle folder in use", "“${occupied.occupiedBy!!.modelName}” is installed on ${occupied.targetPath.substringAfterLast('/')}. Remove or revert it first."); ErrorCodeText(CarModelErrorCode.ADDON_TARGET_OCCUPIED.code) }
+                !inspection.nothingOverwritten -> WarningBanner("Shared game files will be updated", "${inspection.overwrites.size} existing files are replaced. Each is backed up and verified first, and put back when you remove the add-on.")
+                else -> InfoNote(Icons.Filled.CheckCircle, "Nothing existing is overwritten — no backup is needed.", RetroSuccess)
+            }
+        }
     }
 }

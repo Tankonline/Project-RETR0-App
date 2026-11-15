@@ -19,7 +19,7 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 ### Current release
 
-- **Version:** `1.1.7` (`versionCode 19`)
+- **Version:** `1.1.8` (`versionCode 20`)
 - **Application ID / namespace:** `com.retr0.projectretr0`
 - **Minimum Android:** Android 8.0 / API 26
 - **Target and compile SDK:** API 35

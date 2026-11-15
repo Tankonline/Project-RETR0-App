@@ -99,6 +99,8 @@ enum class CarModelErrorCode(val code: String, val userMessage: String) {
 
     HUB_UNAVAILABLE("CM-HUB-001", "Unable to load car models from the Community Hub."),
     HUB_DOWNLOAD_UNSUPPORTED("CM-HUB-002", "Car-model downloads are not available in this build yet."),
+    HUB_DOWNLOAD_FAILED("CM-HUB-003", "The car model could not be downloaded. Check your connection and try again."),
+    HUB_DOWNLOAD_NO_SPACE("CM-HUB-004", "Not enough free storage to download this car model."),
 
     IMPORT_FOLDER_UNOPENABLE("CM-IMPORT-001", "The selected folder could not be opened."),
     IMPORT_NOT_A_FOLDER("CM-IMPORT-002", "Select a car-model folder, not a file."),
@@ -122,6 +124,7 @@ enum class CarModelErrorCode(val code: String, val userMessage: String) {
     ADDON_RESTORE_FAILED("CM-ADDON-006", "Unable to restore a file the add-on overwrote."),
     ADDON_NOT_INSTALLED("CM-ADDON-007", "No add-on is installed on this folder."),
     REPLACE_ON_ADDON("CM-ADDON-008", "An add-on is installed on this vehicle. Remove it before replacing the vehicle."),
+    ADDON_SHARED_CONFLICT("CM-ADDON-009", "Another installed add-on already changed shared game files this add-on needs. Remove it first."),
 
     UNSAFE_PATH("CM-FILEOP-001", "A file path in this car model is unsafe."),
     UNEXPECTED("CM-FILEOP-002", "A file operation failed unexpectedly."),

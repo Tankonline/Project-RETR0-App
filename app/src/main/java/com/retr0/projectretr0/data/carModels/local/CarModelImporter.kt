@@ -52,6 +52,9 @@ data class CarModelDetailsInput(
     val vehicleDirectory: String,
     val cover: CarModelMediaAsset?,
     val screenshots: List<CarModelMediaAsset>,
+    val remoteId: String? = null,
+    /** The mode chosen in the wizard (ADDON/REPLACE); null keeps the scanned manifest's mode (Hub downloads). */
+    val installMode: String? = null,
 ) {
     val mediaValid: Boolean get() = screenshots.size <= CarModelLimits.MAX_SCREENSHOTS &&
         (cover == null || (cover.mimeType == "image/webp" && cover.sizeBytes <= CarModelLimits.MAX_COVER_BYTES)) &&
@@ -102,50 +105,77 @@ class CarModelImporter(private val context: Context, private val store: CarModel
     fun discardStaging() { store.stagingDir.deleteRecursively() }
 
     suspend fun saveToLibrary(staged: StagedCarModel, scanned: CarModelManifest, details: CarModelDetailsInput): Result<LocalCarModel> = withContext(Dispatchers.IO) {
+        val id = UUID.randomUUID().toString()
+        val home = store.libraryDir(id)
+        val files = File(home, "files")
+        var persisted = false
         coded(CarModelErrorCode.IMPORT_SAVE_FAILED) {
             ensure(details.name.isNotBlank(), CarModelErrorCode.IMPORT_NAME_REQUIRED)
-            ensure(CarModelPaths.SAFE_VEHICLE_DIR.matches(details.vehicleDirectory), CarModelErrorCode.IMPORT_TARGET_REQUIRED)
-            val id = UUID.randomUUID().toString()
-            val home = store.libraryDir(id)
-            val files = File(home, "files")
+            ensure(details.remoteId != null || CarModelPaths.SAFE_VEHICLE_DIR.matches(details.vehicleDirectory), CarModelErrorCode.IMPORT_TARGET_REQUIRED)
             home.mkdirs()
-            ensure(staged.root.renameTo(files) || (staged.root.copyRecursively(files, overwrite = true) && staged.root.deleteRecursively()), CarModelErrorCode.IMPORT_SAVE_FAILED)
+            val moved = staged.root.renameTo(files)
+            if (!moved) {
+                staged.root.copyRecursively(files, overwrite = true)
+                staged.root.deleteRecursively()
+            }
+            // A picked folder has no manifest.json (the scanner builds the manifest in memory), so verify the
+            // files the manifest lists instead: every one must have arrived with its scanned size.
+            ensure(files.isDirectory, CarModelErrorCode.IMPORT_SAVE_FAILED) { "The library folder could not be created." }
+            val missing = missingLibraryFiles(files, scanned)
+            ensure(missing.isEmpty(), CarModelErrorCode.IMPORT_SAVE_FAILED) {
+                "${missing.size} of ${scanned.files.size} files did not reach the library, e.g. ${missing.take(3).joinToString { it.sourcePath }}"
+            }
             val manifest = scanned.copy(
                 metadata = PackageMetadata(details.name.trim(), description = details.description.trim(), creator = details.creator.trim()),
-                packageId = details.supportedPackages.firstOrNull().orEmpty(),
-                supportedVersions = listOfNotNull(details.gameVersion.trim().takeIf { it.isNotEmpty() }),
-                supportedGamePackages = details.supportedPackages,
-                target = TargetVehicle(details.vehicleDirectory, details.vehicleDirectory),
+                packageId = scanned.packageId.ifBlank { details.supportedPackages.firstOrNull().orEmpty() },
+                supportedVersions = if (details.gameVersion.isBlank()) scanned.supportedVersions else listOf(details.gameVersion.trim()),
+                supportedGamePackages = details.supportedPackages.ifEmpty { scanned.supportedGamePackages },
+                target = if (details.remoteId != null) scanned.target else TargetVehicle(details.vehicleDirectory, details.vehicleDirectory),
+                // Persist the wizard's choice: the details-screen Apply routes on manifest.installMode.
+                installMode = details.installMode?.uppercase() ?: scanned.installMode,
             )
             try {
                 CarModelManifestValidator.validate(manifest)
             } catch (error: IllegalArgumentException) {
                 throw CarModelException(CarModelErrorCode.IMPORT_INVALID_MANIFEST, error.message ?: CarModelErrorCode.IMPORT_INVALID_MANIFEST.userMessage, error)
             }
-            ensure(details.mediaValid, CarModelErrorCode.IMPORT_SAVE_FAILED) { "Cover is required and media must be processed WebP within Community Hub limits." }
-            val model = LocalCarModel(
+            ensure(details.remoteId != null || details.mediaValid, CarModelErrorCode.IMPORT_SAVE_FAILED) { "Cover is required and media must be processed WebP within Community Hub limits." }
+            var model = LocalCarModel(
                 id = id,
                 name = details.name.trim(),
                 creator = details.creator.trim(),
                 description = details.description.trim(),
                 gameVersion = details.gameVersion.trim(),
                 license = details.license.trim(),
-                supportedPackages = details.supportedPackages,
+                supportedPackages = details.supportedPackages.ifEmpty { scanned.supportedGamePackages },
                 manifest = manifest,
                 filesRoot = files.absolutePath,
-                coverPath = details.cover?.let { copyMedia(it.file, File(home, "media/cover.webp")) },
+                coverPath = details.cover?.let { copyMedia(it.file, File(home, "media/cover.webp")) }
+                    ?: File(staged.root, "cover.webp").takeIf(File::isFile)?.let { source -> copyMedia(source, File(home, "media/cover.webp")) },
                 screenshotPaths = details.screenshots.take(CarModelLimits.MAX_SCREENSHOTS).mapIndexedNotNull { index, asset -> copyMedia(asset.file, File(home, "media/screenshot_${index + 1}.webp")) },
                 ignoredFiles = staged.ignoredFiles,
                 media = listOfNotNull(details.cover?.let { CarModelMediaRecord("cover", "media/cover.webp", it.mimeType, it.sizeBytes, sha256(File(home, "media/cover.webp"))) }) + details.screenshots.take(CarModelLimits.MAX_SCREENSHOTS).mapIndexed { index, asset -> CarModelMediaRecord("screenshot", "media/screenshot_${index + 1}.webp", asset.mimeType, asset.sizeBytes, sha256(File(home, "media/screenshot_${index + 1}.webp"))) },
                 importedAt = System.currentTimeMillis(),
             )
-            store.update { state -> state.copy(models = state.models + model) }
+            model = model.copy(remoteId = details.remoteId)
+            val saved = store.update { state -> state.copy(models = state.models.filterNot { it.remoteId == model.remoteId && model.remoteId != null } + model) }
+            persisted = true
+            CarModelLog.info("CM-LIBRARY-PERSIST", "models=${saved.models.size} localId=${model.id} remoteId=${model.remoteId} stateFile=${store.root.absolutePath}")
             store.log(CarModelActivityKind.IMPORT, model.name, "${model.fileCount} files imported to your library", true)
             discardStaging()
             model
         }.onSuccess { CarModelLog.info("CM-IMPORT-OK", "saved to library: ${it.fileCount} files ${CarModelLog.where(null, it.vehicleDirectory)}") }
             .onFailure { error ->
                 logFailure("save to library failed", error)
+                // Put the staged files back so Next can retry without re-picking, and drop the half-built entry.
+                if (!persisted && home.exists()) {
+                    if (files.isDirectory && !staged.root.exists()) {
+                        staged.root.parentFile?.mkdirs()
+                        if (!files.renameTo(staged.root)) runCatching { files.copyRecursively(staged.root, overwrite = true) }
+                    }
+                    home.deleteRecursively()
+                    CarModelLog.info("CM-IMPORT-ROLLBACK", "save failed before persisting; staged files restored=${staged.root.isDirectory}")
+                }
                 store.log(CarModelActivityKind.IMPORT, details.name.ifBlank { staged.folderName }, "[${error.asCarModelException().error.code}] ${error.message}", false)
             }
     }
@@ -202,3 +232,7 @@ class CarModelImporter(private val context: Context, private val store: CarModel
         const val MAX_DEPTH = 6
     }
 }
+
+/** Manifest entries that are absent from [filesDir] or whose size differs from the scanned size. */
+internal fun missingLibraryFiles(filesDir: File, manifest: CarModelManifest): List<com.retr0.projectretr0.data.carModels.manifest.CarModelFile> =
+    manifest.files.filterNot { entry -> File(filesDir, entry.sourcePath).let { it.isFile && it.length() == entry.sizeBytes } }

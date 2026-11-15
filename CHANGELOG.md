@@ -2,6 +2,12 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.8]
+
+### Release preparation
+- Advanced the Android release metadata to `versionCode 20` / `versionName 1.1.8`.
+- Updated the release-facing documentation and distribution metadata for v1.1.8.
+
 ## [1.1.7]
 
 ### Fixed

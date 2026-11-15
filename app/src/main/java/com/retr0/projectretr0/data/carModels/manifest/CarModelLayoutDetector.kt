@@ -22,12 +22,18 @@ object CarModelLayoutDetector {
         val best = matches.maxWithOrNull(compareBy<Detection> { score(it) }.thenByDescending { it.effectivePrefix.length })!!
         val equallyValid = matches.filter { score(it) == score(best) && it.effectivePrefix != best.effectivePrefix }
         require(equallyValid.isEmpty()) { "Ambiguous RR3 layout; select the effective depot-content folder" }
-        val mixed = best.vehicleDirectory != null && best.paths.any { path ->
-            path.startsWith("vehicles/") && path.split('/').size > 2 &&
-                path.split('/')[1] != best.vehicleDirectory && path.split('/')[1] != "data"
-        }
-        require(!mixed) { "Mixed RR3 layout contains multiple vehicle directories" }
-        return best.copy(warnings = if (best.effectivePrefix.isNotEmpty()) listOf("Wrapper folder ignored; using effective RR3 content root '${best.effectivePrefix}'") else emptyList())
+        val vehicleDirectories = best.paths.mapNotNull { path ->
+            if (path.startsWith("vehicles/") && path.split('/').size > 2 && path.split('/')[1] != "data") path.split('/')[1] else null
+        }.distinct()
+        val multiVehicle = vehicleDirectories.size > 1
+        return best.copy(
+            kind = if (multiVehicle) Kind.DEPOT_CONTENT else best.kind,
+            vehicleDirectory = if (multiVehicle) null else best.vehicleDirectory,
+            warnings = buildList {
+                if (best.effectivePrefix.isNotEmpty()) add("Wrapper folder ignored; using effective RR3 content root '${best.effectivePrefix}'")
+                if (multiVehicle) add("Multi-vehicle package detected: ${vehicleDirectories.size} vehicle directories")
+            },
+        )
     }
 
     private fun classify(paths: List<String>, prefix: String): Detection? {
@@ -43,7 +49,6 @@ object CarModelLayoutDetector {
         val vehicleDirs = relative.mapNotNull { path ->
             if (path.startsWith("vehicles/") && path.split('/').size >= 3 && path.split('/')[1] != "data") path.split('/')[1] else null
         }.distinct()
-        require(vehicleDirs.size <= 1) { "Mixed RR3 layout contains multiple vehicle directories" }
         val vehicle = vehicleDirs.singleOrNull()
         val hasDepotMarkers = relative.any { it == "data/events.dat.nct" || it.startsWith("vehicles/data/") || it.startsWith("gametext/") || it.startsWith("data/") || it == "asset_list_base.txtCache.txt" }
         val hasVehicleContent = vehicle != null && relative.any { it.startsWith("vehicles/$vehicle/") }

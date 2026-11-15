@@ -30,16 +30,7 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
     }
     data class UploadResult(val draftId: String, val status: String, val uploadedFiles: Int, val uploadedMedia: Int, val manifest: CarModelManifest)
 
-    private fun normalizeWireSource(value: String): String {
-        val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
-        return withoutDisplayPrefix.removePrefix("depot/")
-    }
 
-    private fun normalizeWireDestination(value: String): String {
-        return value.replace('\\', '/')
-            .replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("^depot/", RegexOption.IGNORE_CASE), "")
-    }
 
     suspend fun upload(request: UploadRequest, onProgress: (UploadProgress) -> Unit = {}): UploadResult {
         coroutineContext.ensureActive()
@@ -52,24 +43,7 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
         val manifest = scan.manifest.copy(packageId = request.packageId, supportedVersions = request.supportedVersions, supportedGamePackages = request.supportedGamePackages, installMode = request.installMode.uppercase(), backupRequired = request.installMode.uppercase() != "ADDON", transactionId = null, localInstallJournal = null)
         // The local manifest keeps each destination relative to its declared depot root.
         // The Worker validates the complete wire destination, including non-vehicle roots.
-        val wireManifest = manifest.copy(files = manifest.files.map { file ->
-            val normalizedDestinationPath = normalizeWireDestination(file.destinationPath)
-            CarModelLog.step("upload_manifest_file source=${file.sourcePath} wireSource=${normalizeWireSource(file.sourcePath)} root=${file.destinationRoot} rawDestination=${file.destinationPath} normalizedDestination=$normalizedDestinationPath")
-            val wireDestination = when (file.destinationRoot) {
-                com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE ->
-                    "${manifest.target.vehicleDirectory}/${normalizedDestinationPath.removePrefix("vehicles/").removePrefix("${manifest.target.vehicleDirectory}/")}"
-                com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA ->
-                    "vehicles/data/${normalizedDestinationPath.removePrefix("vehicles/data/").removePrefix("data/")}"
-                com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA ->
-                    "data/${normalizedDestinationPath.removePrefix("data/")}"
-                com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT ->
-                    normalizedDestinationPath
-            }
-            file.copy(
-                sourcePath = normalizeWireSource(file.sourcePath),
-                destinationPath = wireDestination,
-            )
-        })
+        val wireManifest = toWireManifest(manifest)
         val manifestJson = wireManifest.toJson().toString()
         val manifestPreview = wireManifest.files
             .filter { it.destinationRoot == com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT }
@@ -136,4 +110,49 @@ internal class CarModelUploadManager(private val api: CarModelUploadApi) {
     }
     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     private fun sha256(file: File): String = sha256(file.readBytes())
+}
+
+/**
+ * Wire destination for a VEHICLE file: `<car>/<path inside the car folder>`.
+ * In a multi-car package a file under another package car keeps that car as its folder; prefixing the
+ * first car would make every download nest cars 2..n inside car 1. Single-car output is unchanged.
+ */
+internal fun wireVehicleDestination(manifest: com.retr0.projectretr0.data.carModels.manifest.CarModelManifest, normalizedDestination: String): String {
+    val target = manifest.target.vehicleDirectory
+    val path = normalizedDestination.removePrefix("vehicles/")
+    val owner = path.substringBefore('/', "").takeIf { manifest.vehicleDirectories.size > 1 && it in manifest.vehicleDirectories }
+    return if (owner != null) path else "$target/${path.removePrefix("$target/")}"
+}
+
+internal fun normalizeWireSource(value: String): String {
+    val withoutDisplayPrefix = value.replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+    return withoutDisplayPrefix.removePrefix("depot/")
+}
+
+internal fun normalizeWireDestination(value: String): String {
+    return value.replace('\\', '/')
+        .replace(Regex("^paste\\s+to\\s+depot/", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("^depot/", RegexOption.IGNORE_CASE), "")
+}
+
+/** The manifest exactly as uploaded to the Worker (and later served to downloading phones). */
+internal fun toWireManifest(manifest: com.retr0.projectretr0.data.carModels.manifest.CarModelManifest): com.retr0.projectretr0.data.carModels.manifest.CarModelManifest {
+    return manifest.copy(files = manifest.files.map { file ->
+        val normalizedDestinationPath = normalizeWireDestination(file.destinationPath)
+        CarModelLog.step("upload_manifest_file source=${file.sourcePath} wireSource=${normalizeWireSource(file.sourcePath)} root=${file.destinationRoot} rawDestination=${file.destinationPath} normalizedDestination=$normalizedDestinationPath")
+        val wireDestination = when (file.destinationRoot) {
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE ->
+                wireVehicleDestination(manifest, normalizedDestinationPath)
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA ->
+                "vehicles/data/${normalizedDestinationPath.removePrefix("vehicles/data/").removePrefix("data/")}"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA ->
+                "data/${normalizedDestinationPath.removePrefix("data/")}"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT ->
+                normalizedDestinationPath
+        }
+        file.copy(
+            sourcePath = normalizeWireSource(file.sourcePath),
+            destinationPath = wireDestination,
+        )
+    })
 }

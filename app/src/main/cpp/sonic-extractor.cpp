@@ -118,7 +118,10 @@ bool mkdir_secure(const std::string& root, const std::string& relative) {
         size_t slash = relative.find('/', start);
         std::string part = relative.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
         if (!part.empty()) {
-            if (mkdirat(dir, part.c_str(), 0755) != 0 && errno != EEXIST) { close(dir); return false; }
+            // RR3 (uid u0_aNNN) only reaches this tree through group ext_data_rw: the shell-owned folders
+            // must be group-writable or the game cannot save (EACCES on doc/, .depot/CC_Data, apk/).
+            if (mkdirat(dir, part.c_str(), 0770) == 0) fchmodat(dir, part.c_str(), 0770, 0);
+            else if (errno != EEXIST) { close(dir); return false; }
             int next = openat(dir, part.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
             if (next < 0) { close(dir); return false; }
             close(dir); dir = next;
@@ -240,8 +243,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_retr0_projectretr0_Retr0UserService_n
         if (!parent.empty() && !mkdir_secure(root, parent)) { LOGE("Cannot create parent for %s: %s", full.c_str(), strerror(errno)); goto fail; }
         std::string temp = full + ".retr0-partial-" + std::to_string(count) + ".tmp";
         unlink(temp.c_str());
-        int out = open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);
+        int out = open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0660);
         if (out < 0) { LOGE("Cannot open output %s: %s", temp.c_str(), strerror(errno)); goto fail; }
+        fchmod(out, 0660); // past the umask: the game must be able to rewrite its own files
         bool ok = extract_one(r, method, flags, c32, u32, expectedCrc, out, (flags & FLAG_DESCRIPTOR) != 0);
         if (fsync(out) != 0 || close(out) != 0) ok = false;
         if (!ok) { LOGE("Data/CRC extraction failed for %s (method=%u flags=0x%04x c=%u u=%u)", name.c_str(), method, flags, c32, u32); unlink(temp.c_str()); goto fail; }

@@ -69,5 +69,8 @@ interface IRetr0UserService {
 
     String graphicsDiagnostics(String packageRoot) = 34;
 
+    /** Adds group read/write to shell-owned files under an RR3 data root so the game can save. Returns a summary. */
+    String repairGameDataPermissions(String packageRoot) = 35;
+
     void destroy() = 16777114;
 }

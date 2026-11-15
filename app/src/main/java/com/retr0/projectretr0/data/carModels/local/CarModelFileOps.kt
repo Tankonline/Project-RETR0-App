@@ -12,6 +12,8 @@ data class RemoteFile(val relativePath: String, val sizeBytes: Long, val sha256:
 /** Privileged file operations the car-model engine needs. Backed by the same Shizuku service the skin flow uses. */
 interface CarModelFileOps {
     fun exists(path: String): Boolean
+    /** Returns the regular-file size without enumerating any parent directory, or null when unavailable. */
+    fun fileSize(path: String): Long?
     fun isDirectory(path: String): Boolean
     /** Names of the direct sub-directories of [directory], which must be inside [packageRoot]. */
     fun listDirectories(packageRoot: String, directory: String): List<String>
@@ -43,19 +45,35 @@ class CarModelPaths(
     fun vehiclesRoot(gamePackage: String): String = "${depotRoot(gamePackage)}/vehicles"
     fun vehiclesDataRoot(gamePackage: String): String = "${vehiclesRoot(gamePackage)}/data"
     fun depotDataRoot(gamePackage: String): String = "${depotRoot(gamePackage)}/data"
-    fun destination(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile): String {
-        val relative = file.destinationPath
-            .replace('\\', '/')
-            .removePrefix("paste to depot/")
-            .removePrefix("depot/")
-        val vehicleRelative = relative.removePrefix("vehicles/").removePrefix("$vehicleDirectory/").removePrefix("$vehicleDirectory/").removePrefix("$vehicleDirectory/")
-        val vehiclesDataRelative = relative.removePrefix("vehicles/data/").removePrefix("data/")
-        val depotDataRelative = relative.removePrefix("data/").removePrefix("data/")
+    /** Canonical mapping from a manifest path to the actual RR3 depot destination. */
+    /**
+     * [packageVehicles]: every vehicle folder of a multi-vehicle package. A VEHICLE file whose path starts with
+     * one of them (e.g. `vehicles/1990_bmw_m3_e36/x`) goes to that vehicle, not under [vehicleDirectory]; without
+     * this, a 4-car package would be nested as `vehicles/<first>/1990_bmw_m3_e36/x`. Single-vehicle models are
+     * unaffected (the list is empty or just [vehicleDirectory]).
+     */
+    fun destination(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile, packageVehicles: Collection<String> = emptyList()): String {
+        val raw = file.destinationPath.replace('\\', '/').removePrefix("paste to depot/").removePrefix("depot/")
+        // Defense in depth: manifests are validated on import, but every privileged write re-checks that the
+        // path is relative, has no '.'/'..'/empty segments and therefore cannot leave the RR3 depot.
+        val relative = try {
+            com.retr0.projectretr0.data.carModels.manifest.CarModelManifestValidator.validateRelativePath(raw)
+        } catch (error: IllegalArgumentException) {
+            throw CarModelException(CarModelErrorCode.UNSAFE_PATH, "Unsafe destination path: $raw", error)
+        }
         return when (file.destinationRoot) {
-            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> "${vehicleDir(gamePackage, vehicleDirectory)}/$vehicleRelative"
-            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA -> "${vehiclesDataRoot(gamePackage)}/$vehiclesDataRelative"
-            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA -> "${depotDataRoot(gamePackage)}/$depotDataRelative"
-            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT -> "${depotRoot(gamePackage)}/$relative"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE -> {
+                val path = relative.removePrefix("vehicles/")
+                val owner = path.substringBefore('/', "").takeIf { packageVehicles.size > 1 && it in packageVehicles }
+                if (owner != null) "${vehicleDir(gamePackage, owner)}/${path.removePrefix("$owner/")}"
+                else "${vehicleDir(gamePackage, vehicleDirectory)}/${path.removePrefix("$vehicleDirectory/")}"
+            }
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLES_DATA ->
+                "${vehiclesDataRoot(gamePackage)}/${relative.removePrefix("vehicles/data/")}"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_DATA ->
+                "${depotDataRoot(gamePackage)}/${relative.removePrefix("data/")}"
+            com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.DEPOT_ROOT ->
+                "${depotRoot(gamePackage)}/$relative"
         }
     }
     fun vehicleDir(gamePackage: String, vehicleDirectory: String): String {
@@ -83,6 +101,7 @@ class CarModelPaths(
 
 class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelFileOps {
     override fun exists(path: String) = service.exists(path)
+    override fun fileSize(path: String): Long? = service.getFileSize(path).takeIf { it >= 0L }
     override fun isDirectory(path: String) = service.isDirectory(path)
 
     override fun listDirectories(packageRoot: String, directory: String): List<String> {
@@ -114,8 +133,9 @@ class ShizukuCarModelFileOps(private val service: IRetr0UserService) : CarModelF
     override fun sha256(path: String): String = service.sha256File(path).orEmpty().lowercase()
     override fun copy(source: String, destination: String) = service.copyFile(source, destination)
     override fun importLocal(source: File, destination: String): Boolean =
-        // The service closes the descriptor once it has streamed the file to a temp sibling and renamed it.
-        service.importFile(ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY), destination)
+        // The helper receives its own dup of the descriptor; the app's copy must be closed here or every
+        // imported file leaks one FD until GC (an 80-file model would hold 80 open descriptors).
+        ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY).use { service.importFile(it, destination) }
     override fun createDirectory(path: String) = service.createDirectory(path)
     override fun delete(path: String) = service.delete(path)
     override fun writeText(path: String, text: String) = service.writeFile(path, text.toByteArray(Charsets.UTF_8))

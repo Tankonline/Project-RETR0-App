@@ -12,8 +12,10 @@ class CarModelLayoutDetectorTest {
         assertTrue(detection.warnings.single().contains("Wrapper"))
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun rejectsMultipleVehicleDirectories() {
-        CarModelLayoutDetector.detect(listOf("vehicles/car_a/body.m3g", "vehicles/car_b/body.m3g"))
+    @Test fun detectsMultipleVehicleDirectoriesForAddonFlow() {
+        val detection = CarModelLayoutDetector.detect(listOf("vehicles/car_a/body.m3g", "vehicles/car_b/body.m3g"))
+        assertEquals(CarModelLayoutDetector.Kind.DEPOT_CONTENT, detection.kind)
+        assertEquals(null, detection.vehicleDirectory)
+        assertTrue(detection.warnings.single().contains("Multi-vehicle"))
     }
 }

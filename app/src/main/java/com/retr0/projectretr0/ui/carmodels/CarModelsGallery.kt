@@ -75,7 +75,7 @@ fun LocalCarModel.toDetailsUi(gamePackage: GamePackage): CarModelDetailsUi {
         name, creator, "imported ${formatDate(importedAt)}", description, vehicleDirectory, supportedPackages, fileCount, totalBytes, manifestVerified = true,
         gameBuild = gameVersion, compat = compatFor(supportedPackages, gamePackage),
         fileSummary = "$fileCount files across ${parts.joinToString(", ").ifBlank { "the vehicle folder" }}",
-        cover = coverPath?.let(::File), screenshots = screenshotPaths.map(::File),
+        cover = coverPath?.let(::File) ?: File(filesRoot, "cover.webp").takeIf(File::isFile), screenshots = screenshotPaths.map(::File),
     )
 }
 
@@ -115,6 +115,8 @@ fun CarModelsGallery(
         models = emptyList()
         state = CarGalleryState.LOADING
         val result = runCatching { repository.list(query, sortOrder) }
+        // Leaving the screen cancels this load. That is not a Hub failure: no CM-FILEOP-002, no error state.
+        result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         result.onSuccess { items ->
             models = refreshedCatalogItems(result)
             state = if (items.isEmpty()) CarGalleryState.EMPTY else CarGalleryState.CONTENT
@@ -184,6 +186,7 @@ fun CarModelDetailsScreen(
     primaryEnabled: Boolean = true,
     message: String? = null,
     messageCode: String? = null,
+    downloadProgress: Float? = null,
     onShare: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
@@ -205,6 +208,9 @@ fun CarModelDetailsScreen(
                 }
             }
             item {
+                downloadProgress?.let { progress ->
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth(), color = RetroAccent, trackColor = RetroStatBg)
+                }
                 Text(ui.name, color = RetroText, style = MaterialTheme.typography.headlineMedium)
                 Text("by ${ui.creator.ifBlank { "Unknown creator" }} · ${ui.updatedLabel}", color = RetroTextMuted, style = MaterialTheme.typography.bodyMedium)
             }
@@ -248,9 +254,16 @@ fun CarModelDetailsScreen(
     }
 }
 
-/** Hub model details wired to the (currently stubbed) repository. Failures are shown, never simulated away. */
+/** Hub model details. [downloadAndImport] is the whole download → library transaction; [onImported] runs only after it persisted. */
 @Composable
-fun HubCarModelDetails(model: CommunityCarModel, repository: CarModelHubRepository, gamePackage: GamePackage, onBack: () -> Unit, onDownloaded: (String) -> Unit) {
+fun HubCarModelDetails(
+    model: CommunityCarModel,
+    repository: CarModelHubRepository,
+    gamePackage: GamePackage,
+    onBack: () -> Unit,
+    downloadAndImport: suspend (CommunityCarModel, (Long, Long) -> Unit) -> Result<LocalCarModel>,
+    onImported: (localId: String) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var currentModel by remember(model.id) { mutableStateOf(model) }
@@ -268,19 +281,29 @@ fun HubCarModelDetails(model: CommunityCarModel, repository: CarModelHubReposito
         runCatching { repository.details(model.id) }
             .onSuccess { currentModel = mergeDetails(currentModel, it) }
             .onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 failed("details", error)
                 if ((error as? com.retr0.projectretr0.data.skins.SkinApiException)?.statusCode == 404) onBack()
             }
     }
     var downloading by remember { mutableStateOf(false) }
+    var downloadDone by remember { mutableLongStateOf(0L) }
+    var downloadTotal by remember { mutableLongStateOf(model.totalBytes.coerceAtLeast(1L)) }
     CarModelDetailsScreen(
         ui = currentModel.toDetailsUi(gamePackage), gamePackage = gamePackage, onBack = onBack,
-        primaryLabel = if (downloading) "Downloading…" else "Download model · ${formatMb(model.totalBytes)}", primaryIcon = Icons.Filled.Download, primaryEnabled = !downloading, message = message, messageCode = messageCode,
+        primaryLabel = if (downloading) "Downloading…" else "Download model · ${formatMb(model.totalBytes)}", primaryIcon = Icons.Filled.Download, primaryEnabled = !downloading, message = message, messageCode = messageCode, downloadProgress = if (downloading) (downloadDone.toFloat() / downloadTotal.toFloat()).coerceIn(0f, 1f) else null,
         onPrimary = {
             downloading = true
             scope.launch {
-                runCatching { repository.download(model) { _, _ -> } }.onSuccess(onDownloaded).onFailure { failed("download", it) }
+                // One awaited transaction: download → verify → library → state. Navigation happens only after
+                // the model is persisted; any failure stays on this screen with its exact message and code.
+                val result = downloadAndImport(model) { done, total -> downloadDone = done.coerceAtLeast(0); downloadTotal = total.coerceAtLeast(1); message = if (downloadDone >= downloadTotal) "Verifying files and saving to your library…" else "Downloading ${formatMb(downloadDone)} / ${formatMb(downloadTotal)}…"; messageCode = null }
                 downloading = false
+                result.map { it.id }.onSuccess { localId ->
+                    message = "Saved to Downloaded Mods."; messageCode = null
+                    CarModelLog.info("CM-NAV-DOWNLOADED", "localId=$localId remoteId=${model.id}")
+                    onImported(localId)
+                }.onFailure { failed("download", it) }
             }
         },
         onShare = {
@@ -294,7 +317,7 @@ fun HubCarModelDetails(model: CommunityCarModel, repository: CarModelHubReposito
 
 /** Car Models tab for the Community Hub: gallery plus a full-screen details drill-in. */
 @Composable
-fun CarModelsHubTab(gamePackage: GamePackage, onOpenMyModels: () -> Unit, modifier: Modifier = Modifier, onFullScreenChange: (Boolean) -> Unit = {}, refreshToken: Int = 0, sortOrder: String = "newest", onRefresh: () -> Unit = {}) {
+fun CarModelsHubTab(gamePackage: GamePackage, onOpenMyModels: () -> Unit, onOpenDownloaded: (localId: String) -> Unit, modifier: Modifier = Modifier, onFullScreenChange: (Boolean) -> Unit = {}, refreshToken: Int = 0, sortOrder: String = "newest", onRefresh: () -> Unit = {}) {
     val context = LocalContext.current
     val viewModel = remember(context) { CarModelsViewModel.get(context) }
     val local by viewModel.state.collectAsState()
@@ -311,7 +334,7 @@ fun CarModelsHubTab(gamePackage: GamePackage, onOpenMyModels: () -> Unit, modifi
     LaunchedEffect(selected != null) { onFullScreenChange(selected != null) }
     DisposableEffect(Unit) { onDispose { onFullScreenChange(false) } }
     Box(modifier.fillMaxSize()) {
-        if (selected != null) HubCarModelDetails(selected, viewModel.hub, gamePackage, { selectedId = null }) { onOpenMyModels() }
+        if (selected != null) HubCarModelDetails(selected, viewModel.hub, gamePackage, { selectedId = null }, viewModel::downloadAndImportCommunityModel) { localId -> selectedId = null; onOpenDownloaded(localId) }
         else CarModelsGallery(
             viewModel.hub, gamePackage, local,
             onOpen = { cache = cache + (it.id to it); selectedId = it.id },

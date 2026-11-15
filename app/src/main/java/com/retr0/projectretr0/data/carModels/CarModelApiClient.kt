@@ -8,6 +8,7 @@ import com.retr0.projectretr0.data.skins.SkinInstallationIdentity
 import com.retr0.projectretr0.data.skins.SkinRequestCanonicalizer
 import com.retr0.projectretr0.data.skins.SkinMutationResponse
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -24,6 +25,8 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipInputStream
+import org.json.JSONArray
 
 /** Signed, transport-only client for generic car-model packages. It deliberately has no UI or upload orchestration. */
 internal interface CarModelUploadApi {
@@ -61,6 +64,40 @@ class CarModelApiClient(
 
     suspend fun getPublishedDetails(modelId: String): CommunityCarModel = io {
         parseModel(executePublic("GET", paths.model(modelId)))
+    }
+
+    /** `GET /v1/car-models/{id}/download`: the file list (with sizes and SHA-256) plus cover/screenshot routes. */
+    suspend fun downloadPlan(model: CommunityCarModel): CarModelDownloadPlan = io {
+        client.newCall(Request.Builder().url(paths.model(model.id, "download")).get().build()).execute().use { response ->
+            if (!response.isSuccessful) throw CarModelHttpException(response.code, "Car-model download failed: HTTP ${response.code}")
+            val body = response.body?.string() ?: throw IOException("Car-model download returned an empty response")
+            CarModelDownloadPlan.parse(JSONObject(body), model)
+        }
+    }
+
+    /** Streams one public asset to [output]. Only HTTPS URLs on the configured Worker host are fetched. */
+    suspend fun fetchAsset(pathOrUrl: String, output: File, onBytes: (Long) -> Unit): Unit = withContext(Dispatchers.IO) {
+        val url = resolveDownloadUrl(pathOrUrl)
+        output.parentFile?.mkdirs()
+        client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+            if (!response.isSuccessful) throw CarModelHttpException(response.code, "Car-model asset download failed: HTTP ${response.code} (${url.encodedPath})")
+            val body = response.body ?: throw IOException("Car-model asset response was empty")
+            body.byteStream().use { input -> output.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024); var written = 0L
+                while (true) {
+                    ensureActive() // cancellation stops the transfer between reads
+                    val count = input.read(buffer); if (count < 0) break
+                    out.write(buffer, 0, count); written += count; onBytes(written)
+                }
+                out.fd.sync()
+            } }
+        }
+    }
+
+    internal fun resolveDownloadUrl(pathOrUrl: String): HttpUrl {
+        val resolved = if (pathOrUrl.startsWith("/")) base.resolve(pathOrUrl) else runCatching { pathOrUrl.toHttpUrl() }.getOrNull()
+        require(resolved != null && resolved.isHttps && resolved.host == base.host) { "Refusing to download from an untrusted location" }
+        return resolved
     }
 
     internal fun parseCatalogForTest(body: String): List<CommunityCarModel> = parseCatalog(body)

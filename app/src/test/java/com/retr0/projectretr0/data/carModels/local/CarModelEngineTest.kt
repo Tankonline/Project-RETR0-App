@@ -286,6 +286,14 @@ class CarModelEngineTest {
         assertEquals(CarModelErrorCode.ADDON_NOT_INSTALLED, engine.removeAddon(ops, pkg, vehicle).code())
     }
 
+    @Test fun packageInspectionUsesDirectMetadataInsteadOfAnUnrelatedTree() = runBlocking {
+        val model = importModel()
+        ops.listTreeLimit = 0
+        val result = engine.inspectAddonPackage(ops, model.manifest, pkg).getOrThrow()
+        assertEquals(setOf("body.m3g", "extra.bin", "livery/skin_01.atc.dds.z"), result.collisions.map { it.destinationPath }.toSet())
+        assertEquals(3, result.collisions.size)
+    }
+
     @Test fun addonInspectionReportsNewAndOverwrittenFiles() = runBlocking {
         val model = importModel()
         val fresh = engine.inspectAddonTarget(ops, model.manifest, pkg, "bmw_addon").getOrThrow()
@@ -294,6 +302,24 @@ class CarModelEngineTest {
         val existing = engine.inspectAddonTarget(ops, model.manifest, pkg, vehicle).getOrThrow()
         assertEquals("only exact manifest destinations are inspected", 1, existing.newFiles.size)
         assertTrue("the non-destination file remains new", existing.newFiles.contains("extra.bin"))
+        assertTrue("colliding manifest files must be shown", existing.overwrites.contains("body.m3g"))
+        assertTrue("a collision must never be presented as nothing overwritten", !existing.nothingOverwritten)
+    }
+
+    @Test fun bracketedSourceFolderNameDoesNotChangeDestinationCollisionPreview() = runBlocking {
+        // The Windows/SAF source display name is deliberately not a destination path. A sanitized
+        // add-on directory still probes the real RR3 folder and reports its existing files.
+        val modelFiles = File(store.libraryDir("bracketed"), "files/[S2RR3] v0.4 early access").apply { mkdirs() }
+        File(modelFiles, "body.m3g").writeText("bracketed-model")
+        val scanned = CarModelFolderScanner.scan(modelFiles).manifest
+        val model = LocalCarModel("bracketed", "[S2RR3] v0.4 early access", "tester", "", "", "", listOf(pkg), scanned, modelFiles.absolutePath, null, emptyList(), emptyList(), 0L)
+        store.update { it.copy(models = it.models + model) }
+        val destinationFolder = File(vehiclesRoot, "S2RR3_v0_4_early_access").apply { mkdirs() }
+        File(destinationFolder, "body.m3g").writeText("existing-destination")
+        val result = engine.inspectAddonTarget(ops, model.manifest, pkg, "S2RR3_v0_4_early_access").getOrThrow()
+        assertTrue(result.targetPath.endsWith("/S2RR3_v0_4_early_access"))
+        assertTrue(result.overwrites.contains("body.m3g"))
+        assertEquals(1, result.overwrites.size)
     }
 
     @Test fun addonStateSurvivesAReload() = runBlocking {
@@ -302,15 +328,69 @@ class CarModelEngineTest {
         assertEquals(store.current, CarModelStore(File(temp, "store")).current)
     }
 
+    // ---- Shizuku helper death during privileged operations -------------------------------------
+
+    /** The helper process dies when [dieOn] is imported; while [dead], every privileged call throws like a dead binder. */
+    private class DyingOps(private val inner: DiskOps, private val dieOn: String, private val permanent: Boolean) : CarModelFileOps by inner {
+        var dead = false
+        private fun alive() { if (dead) throw android.os.DeadObjectException() }
+        override fun importLocal(source: File, destination: String): Boolean {
+            alive()
+            if (destination.endsWith(dieOn)) { dead = permanent; throw android.os.DeadObjectException() }
+            return inner.importLocal(source, destination)
+        }
+        override fun copy(source: String, destination: String): Boolean { alive(); return inner.copy(source, destination) }
+        override fun sha256(path: String): String { alive(); return inner.sha256(path) }
+        override fun delete(path: String): Boolean { alive(); return inner.delete(path) }
+        override fun exists(path: String): Boolean { alive(); return inner.exists(path) }
+        override fun listTree(packageRoot: String, directory: String): List<RemoteFile> { alive(); return inner.listTree(packageRoot, directory) }
+    }
+
+    @Test fun transientBinderDeathMidApplyIsReportedAsServiceUnavailableAndRolledBack() = runBlocking {
+        importModel()
+        engine.ensureBackup(ops, pkg, vehicle).getOrThrow()
+        val dying = DyingOps(ops, "livery/skin_01.atc.dds.z", permanent = false)
+        val outcome = engine.apply(dying, "model", pkg, vehicle) as ApplyOutcome.Failed
+        assertEquals(CarModelErrorCode.SERVICE_UNAVAILABLE.code, outcome.code)
+        assertTrue(outcome.gameFilesTouched)
+        assertTrue(outcome.originalRestored)
+        assertEquals("stock-body", File(target, "body.m3g").readText())
+        assertEquals(null, store.current.activeInstall(pkg, vehicle))
+    }
+
+    @Test fun permanentBinderDeathKeepsTheVerifiedBackupForRevertAfterReconnect() = runBlocking {
+        importModel()
+        engine.ensureBackup(ops, pkg, vehicle).getOrThrow()
+        val dying = DyingOps(ops, "livery/skin_01.atc.dds.z", permanent = true)
+        val outcome = engine.apply(dying, "model", pkg, vehicle) as ApplyOutcome.Failed
+        assertEquals(CarModelErrorCode.SERVICE_UNAVAILABLE.code, outcome.code)
+        assertFalse("rollback cannot run on a dead binder", outcome.originalRestored)
+        assertEquals(null, store.current.activeInstall(pkg, vehicle))
+        // Operations on the dead binder are refused with the same stable code, never a misleading copy/hash error.
+        val whileDead = engine.revert(dying, pkg, vehicle).exceptionOrNull() as CarModelException
+        assertEquals(CarModelErrorCode.SERVICE_UNAVAILABLE, whileDead.error)
+
+        // Reconnected (fresh helper = fresh ops): the untouched verified backup restores the stock folder.
+        assertTrue(engine.verifyBackup(ops, pkg, vehicle).getOrThrow().verified)
+        engine.revert(ops, pkg, vehicle).getOrThrow()
+        assertEquals("stock-body", File(target, "body.m3g").readText())
+        assertEquals("stock-livery", File(target, "livery/skin_01.atc.dds.z").readText())
+        assertFalse(File(target, "extra.bin").exists())
+    }
+
     /** Runs the privileged operations against the local disk so the engine is exercised end to end. */
     private class DiskOps : CarModelFileOps {
         var failImportOf: String? = null
+        var listTreeLimit: Int? = null
         override fun exists(path: String) = File(path).exists()
+        override fun fileSize(path: String): Long? = File(path).takeIf { it.isFile }?.length()
         override fun isDirectory(path: String) = File(path).isDirectory
         override fun listDirectories(packageRoot: String, directory: String) = File(directory).listFiles().orEmpty().filter { it.isDirectory }.map { it.name }
         override fun listTree(packageRoot: String, directory: String): List<RemoteFile> {
             val root = File(directory)
-            return root.walkTopDown().filter { it.isFile }.map { RemoteFile(it.relativeTo(root).path.replace(File.separatorChar, '/'), it.length()) }.toList()
+            val files = root.walkTopDown().filter { it.isFile }.map { RemoteFile(it.relativeTo(root).path.replace(File.separatorChar, '/'), it.length()) }.toList()
+            listTreeLimit?.let { limit -> if (files.size > limit) error("synthetic list limit") }
+            return files
         }
         override fun sha256(path: String) = File(path).takeIf { it.isFile }?.let(CarModelEngine::sha256).orEmpty()
         override fun copy(source: String, destination: String): Boolean {

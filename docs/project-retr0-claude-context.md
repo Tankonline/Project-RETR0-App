@@ -9,8 +9,8 @@
 **Project RETR0 installer** is an Android-native utility for user-authorized management of Real Racing 3 (RR3) assets: installation, restore/recovery, car skins, car-model media, saves, music, graphics presets, diagnostics, and optional Community Hub sharing. Its design goal is to work with modern Android storage restrictions without making the app itself a conventional root app; privileged operations are delegated through Shizuku.
 
 - Namespace/application ID: `com.retr0.projectretr0` — **verified**, `app/build.gradle.kts`, `MainActivity`.
-- Current checked-in build metadata: versionCode `18`, versionName `1.1.6`, min/target/compile SDK `26/35/35` — **verified**, `app/build.gradle.kts`.
-- Release docs and metadata are aligned to v1.1.6/versionCode 18; older versions remain historical entries.
+- Current checked-in build metadata: versionCode `20`, versionName `1.1.8`, min/target/compile SDK `26/35/35` — **verified**, `app/build.gradle.kts`.
+- Release docs and metadata are aligned to v1.1.8/versionCode 20; older versions remain historical entries.
 - Supported RR3 package targets: `com.ea.games.r3_row` (Global/ROW) and `com.ea.games.r3_na` (North America) — **verified**, manifest and installer/service constants.
 - License/product distribution claims are documented in `README.md`; verify repository license files before publishing.
 
@@ -224,7 +224,7 @@ Minimum API is 26, but behavior depends on OEM storage, Android version, Shizuku
 - Release: minification/resource shrinking enabled, production Worker URL, release signing config from environment, ProGuard/R8 rules in `app/proguard-rules.pro`.
 - Release artifact is one signed APK for distribution; docs prescribe GitHub Releases/IzzyOnDroid. No in-app self-update.
 - `google-services.json` exists for Firebase wiring but is intentionally not reproduced here.
-- Release documentation and Gradle are aligned on v1.1.6/versionCode 18; older version references are historical.
+- Release documentation and Gradle are aligned on v1.1.8/versionCode 20; older version references are historical.
 
 ## 9. Security constraints and safe-change rules
 

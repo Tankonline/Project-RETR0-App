@@ -4,9 +4,13 @@ import com.retr0.projectretr0.data.carModels.CarModelErrorCode
 import com.retr0.projectretr0.data.carModels.CarModelException
 import com.retr0.projectretr0.data.carModels.CarModelLog
 import com.retr0.projectretr0.data.carModels.asCarModelException
+import com.retr0.projectretr0.data.carModels.isBinderFailure
 import com.retr0.projectretr0.data.carModels.manifest.CarModelManifest
 import com.retr0.projectretr0.data.carModels.manifest.CarModelManifestValidator
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -34,7 +38,22 @@ data class AddonInspection(
     val overwrites: List<String>,
     val occupiedBy: InstalledCarModel?,
     val collisions: List<CollisionPreview> = emptyList(),
+    /** All vehicle directories represented by this package. Empty means the legacy single-target flow. */
+    val vehicleDirectories: List<String> = emptyList(),
+    /** Shared roots that will be inspected in addition to vehicle destinations. */
+    val sharedRoots: List<String> = emptyList(),
 ) { val nothingOverwritten: Boolean get() = overwrites.isEmpty() }
+
+data class PackageAddonInspection(
+    val vehicleDirectories: List<String>,
+    val sharedRoots: List<String>,
+    val targets: List<AddonInspection>,
+) {
+    val collisions: List<CollisionPreview> get() = targets.flatMap { it.collisions }
+    val newFiles: List<String> get() = targets.flatMap { it.newFiles }.distinct()
+    val overwrites: List<String> get() = targets.flatMap { it.overwrites }.distinct()
+    val nothingOverwritten: Boolean get() = overwrites.isEmpty()
+}
 
 data class CollisionPreview(
     val sourcePath: String,
@@ -66,7 +85,15 @@ class CarModelEngine(
 ) {
     /** Locks are per package/vehicle so unrelated RR3 targets can progress independently. */
     private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private val packageInspectionLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private val packageInspectionInFlight = java.util.concurrent.ConcurrentHashMap<String, Deferred<Result<PackageAddonInspection>>>()
+    /** Owns package inspections so a cancelled caller (a restarted LaunchedEffect) cannot strand other waiters. */
+    private val inspectionScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private fun lockFor(gamePackage: String, vehicleDirectory: String) = locks.computeIfAbsent(vehicleKey(gamePackage, vehicleDirectory)) { Mutex() }
+    private fun packageInspectionKey(gamePackage: String, manifest: CarModelManifest): String =
+        "$gamePackage|${manifest.packageId}|${manifest.vehicleDirectories.sorted()}|${manifest.files.joinToString { "${it.destinationRoot}:${it.destinationPath}:${it.sizeBytes}:${it.sha256}" }}"
+    private fun packageInspectionLock(gamePackage: String, manifest: CarModelManifest): Mutex =
+        packageInspectionLocks.computeIfAbsent(packageInspectionKey(gamePackage, manifest)) { Mutex() }
 
     suspend fun listVehicles(ops: CarModelFileOps, gamePackage: String): Result<List<String>> = io(CarModelErrorCode.VEHICLES_UNREADABLE) {
         val packageRoot = paths.packageRoot(gamePackage)
@@ -100,6 +127,7 @@ class CarModelEngine(
     suspend fun ensureBackup(ops: CarModelFileOps, gamePackage: String, vehicleDirectory: String, onProgress: (Int, Int) -> Unit = { _, _ -> }): Result<CarModelBackup> = locked(gamePackage, vehicleDirectory) {
         CarModelLog.info("CM-BACKUP-START", "ensure backup ${CarModelLog.where(gamePackage, vehicleDirectory)}")
         val target = paths.vehicleDir(gamePackage, vehicleDirectory)
+        CarModelLog.info("CM-BACKUP-TARGET", "target=$target exists=${ops.isDirectory(target)} packageRoot=${paths.packageRoot(gamePackage)}")
         val backupDir = paths.backupDir(gamePackage, vehicleDirectory)
         val known = store.current.backup(gamePackage, vehicleDirectory) ?: adoptExisting(ops, gamePackage, vehicleDirectory, backupDir)
         if (known != null) {
@@ -111,6 +139,7 @@ class CarModelEngine(
             return@locked checked
         }
         ensure(store.current.activeInstall(gamePackage, vehicleDirectory) == null, CarModelErrorCode.BACKUP_GONE_WHILE_APPLIED)
+        CarModelLog.info("CM-BACKUP-CHECK", "checking target=$target")
         ensure(ops.isDirectory(target), CarModelErrorCode.TARGET_NOT_FOUND)
         val stock = ops.listTree(paths.packageRoot(gamePackage), target)
         ensure(stock.isNotEmpty(), CarModelErrorCode.BACKUP_TARGET_EMPTY)
@@ -234,7 +263,7 @@ class CarModelEngine(
         InstallMode.ADDON -> applyAddon(ops, modelId, gamePackage, vehicleDirectory, onProgress)
         InstallMode.REPLACE -> {
             val where = CarModelLog.where(gamePackage, vehicleDirectory)
-            if (store.current.activeInstall(gamePackage, vehicleDirectory)?.isAddon == true) {
+            if (store.current.occupant(gamePackage, vehicleDirectory)?.isAddon == true) {
                 val code = CarModelErrorCode.REPLACE_ON_ADDON
                 CarModelLog.fail(code, "apply refused mode=replace: add-on active $where")
                 ApplyOutcome.Failed(code.userMessage, false, false, code.code)
@@ -245,33 +274,110 @@ class CarModelEngine(
         }
     }
 
+    suspend fun inspectAddonPackage(ops: CarModelFileOps, manifest: CarModelManifest, gamePackage: String): Result<PackageAddonInspection> {
+        val key = packageInspectionKey(gamePackage, manifest)
+        packageInspectionInFlight[key]?.let { existing ->
+            CarModelLog.diagnostic("ENGINE_PACKAGE_DEDUP", "request=${System.identityHashCode(manifest)} ${CarModelLog.where(gamePackage, null)} state=reuse")
+            return existing.await()
+        }
+        val deferred = CompletableDeferred<Result<PackageAddonInspection>>()
+        val owner = packageInspectionInFlight.putIfAbsent(key, deferred)
+        if (owner != null) {
+            CarModelLog.diagnostic("ENGINE_PACKAGE_DEDUP", "request=${System.identityHashCode(manifest)} ${CarModelLog.where(gamePackage, null)} state=race_reuse")
+            return owner.await()
+        }
+        // The inspection runs in the engine's own scope, not the caller's. Previously the first caller's coroutine
+        // computed it and completed this deferred afterwards; when that caller (a restarted LaunchedEffect) was
+        // cancelled, complete() never ran and every other waiter hung forever on "Checking destination…".
+        inspectionScope.launch {
+            val result = try { computePackageInspection(ops, manifest, gamePackage) } catch (error: Throwable) { Result.failure(error) }
+            deferred.complete(result)
+        }.invokeOnCompletion { cause ->
+            // complete() is idempotent: this only matters if the job itself was cancelled before finishing.
+            if (cause != null) deferred.complete(Result.failure(cause))
+            packageInspectionInFlight.remove(key, deferred)
+        }
+        // Cancellable for the caller; the shared job keeps running for anyone else waiting on it.
+        return deferred.await()
+    }
+
+    private suspend fun computePackageInspection(ops: CarModelFileOps, manifest: CarModelManifest, gamePackage: String): Result<PackageAddonInspection> {
+        return run {
+            val result = packageInspectionLock(gamePackage, manifest).withLock {
+                CarModelLog.diagnostic("ENGINE_PACKAGE_REQUEST", "request=${System.identityHashCode(manifest)} ${CarModelLog.where(gamePackage, null)} vehicles=${manifest.vehicleDirectories.size} files=${manifest.files.size} lock=acquired")
+                io {
+                    CarModelLog.diagnostic("ENGINE_PACKAGE_START", "request=${System.identityHashCode(manifest)} ${CarModelLog.where(gamePackage, null)} vehicles=${manifest.vehicleDirectories.size} files=${manifest.files.size}")
+                    val detectedVehicles = manifest.vehicleDirectories.distinct().filter { it.isNotBlank() }
+                    val vehicles = if (detectedVehicles.isEmpty()) listOf(manifest.target.vehicleDirectory).filter { it.isNotBlank() } else detectedVehicles
+                    val sharedRoots = manifest.files.asSequence()
+                        .filter { it.destinationRoot != com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE }
+                        .map { it.destinationRoot.name }
+                        .distinct()
+                        .sorted()
+                        .toList()
+                    CarModelLog.info("CM-PACKAGE-INSPECT", "mode=addon detectedVehicleDirectories=$vehicles sharedRoots=$sharedRoots noFakeWrapper=true")
+                    val targets = vehicles.mapIndexed { index, directory ->
+                        val own = manifest.files.filter { file -> vehicleOf(file, vehicles) == directory || (index == 0 && vehicleOf(file, vehicles) == null) }
+                        inspectAddonTargetInternalSync(ops, manifest.copy(files = own), gamePackage, directory, requireManifestMembership = true, packageVehicles = vehicles)
+                    }
+                    CarModelLog.info("CM-PACKAGE-INSPECT", "resolvedTargetCount=${targets.size} vehicleDirectories=$vehicles sharedRoots=$sharedRoots")
+                    CarModelLog.diagnostic("ENGINE_PACKAGE_COMPLETE", "${CarModelLog.where(gamePackage, null)} targets=${targets.size} existing=${targets.sumOf { it.overwrites.size }} new=${targets.sumOf { it.newFiles.size }}")
+                    PackageAddonInspection(vehicles, sharedRoots, targets)
+                }.logged("PACKAGE", "inspect addon package", gamePackage, null) { "targets=${it.targets.size} vehicles=${it.vehicleDirectories.size} sharedRoots=${it.sharedRoots.size}" }
+            }.also { result ->
+                CarModelLog.diagnostic("ENGINE_PACKAGE_RELEASE", "${CarModelLog.where(gamePackage, null)} success=${result.isSuccess} lock=released")
+            }
+            result
+        }
+    }
+
     suspend fun inspectAddonTarget(ops: CarModelFileOps, manifest: CarModelManifest, gamePackage: String, vehicleDirectory: String): Result<AddonInspection> = io {
+        CarModelLog.diagnostic("ENGINE_TARGET_START", "request=${System.identityHashCode(manifest)} ${CarModelLog.where(gamePackage, vehicleDirectory)} files=${manifest.files.size}")
+        inspectAddonTargetInternalSync(ops, manifest, gamePackage, vehicleDirectory, requireManifestMembership = true)
+    }.logged("TARGET", "inspect addon target", gamePackage, vehicleDirectory) { "exists=${it.exists} new=${it.newFiles.size} overwrites=${it.overwrites.size} occupied=${it.occupiedBy != null}" }
+
+    private fun inspectAddonTargetInternalSync(ops: CarModelFileOps, manifest: CarModelManifest, gamePackage: String, vehicleDirectory: String, requireManifestMembership: Boolean, packageVehicles: List<String> = emptyList()): AddonInspection {
+        if (requireManifestMembership) require(manifest.vehicleDirectories.isEmpty() || vehicleDirectory in manifest.vehicleDirectories) { "Vehicle directory '$vehicleDirectory' is not part of this package" }
+        CarModelLog.engine("analysis_start ${CarModelLog.where(gamePackage, vehicleDirectory)} manifestFiles=${manifest.files.size} packageVehicles=${manifest.vehicleDirectories.size}")
         val target = paths.vehicleDir(gamePackage, vehicleDirectory)
-        val occupied = store.current.activeInstall(gamePackage, vehicleDirectory)
+        val occupied = store.current.occupant(gamePackage, vehicleDirectory)
         val exists = ops.isDirectory(target)
         // Add-ons create a vehicle folder. Avoid recursive scans entirely; shared-root
         // destinations are checked individually by their exact paths below.
         val destinations = manifest.files.map { file -> addonKey(file.destinationRoot, safePath(file.destinationPath)) }
         ensure(destinations.distinct().size == destinations.size, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "The add-on contains duplicate destination paths" }
+        // Probe the actual destination for every manifest entry. The old implementation put a
+        // synthetic RemoteFile(size=0, sha=null) in the map and consequently the preview could
+        // not report reliable collisions (especially for a sanitized folder name). Destination
+        // roots are part of the key, while relative paths are canonicalized case-insensitively
+        // to match Android/Windows-style RR3 storage semantics.
         val existing = manifest.files.mapNotNull { file ->
-            val destination = paths.destination(gamePackage, vehicleDirectory, file)
+            val destination = paths.destination(gamePackage, vehicleDirectory, file, packageVehicles)
             if (!ops.exists(destination)) return@mapNotNull null
             val relative = safePath(file.destinationPath)
-            addonKey(file.destinationRoot, relative) to RemoteFile(relative, 0L)
+            val hash = ops.sha256(destination).lowercase().takeIf { it.isNotBlank() }
+            val size = ops.fileSize(destination) ?: 0L
+            CarModelLog.info("CM-PACKAGE-INSPECT", "target_check destination=$destination exists=true size=$size hashPresent=${!hash.isNullOrBlank()}")
+            addonKey(file.destinationRoot, relative) to RemoteFile(relative, size, hash)
         }.toMap()
         val previews = manifest.files.map { file ->
             val key = addonKey(file.destinationRoot, safePath(file.destinationPath))
             val current = existing[key]
-            val existingHash = current?.sha256 ?: current?.let { ops.sha256(destinationForInspection(gamePackage, vehicleDirectory, file)) }.orEmpty()
+            val existingHash = current?.sha256.orEmpty()
             CollisionPreview(file.sourcePath, key.substringAfter('/'), file.destinationRoot.name, current != null, current?.sizeBytes, existingHash, file.sizeBytes, file.sha256,
-                when { current == null -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.MISSING
-                    existingHash.equals(file.sha256, true) -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.IDENTICAL
-                    else -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.DIFFERENT })
+                when {
+                    current == null -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.MISSING
+                    existingHash.isNotBlank() && existingHash.equals(file.sha256, true) -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.IDENTICAL
+                    else -> com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.DIFFERENT
+                })
         }
-        val overwrites = previews.filter { it.existedBeforeInstall }.map { if (it.root == "VEHICLE") it.destinationPath else "${it.root}/${it.destinationPath}" }
-        val fresh = previews.filterNot { it.existedBeforeInstall }.map { if (it.root == "VEHICLE") it.destinationPath else "${it.root}/${it.destinationPath}" }
-        AddonInspection(target, exists, fresh, overwrites, occupied, previews)
-    }.logged("TARGET", "inspect addon target", gamePackage, vehicleDirectory) { "exists=${it.exists} new=${it.newFiles.size} overwrites=${it.overwrites.size} occupied=${it.occupiedBy != null}" }
+        // An existing destination is always an overwrite: identical content is still replaced and backed up.
+        val overwrites = previews.filter { it.existedBeforeInstall }.map { it.destinationPath }
+        val fresh = previews.filterNot { it.existedBeforeInstall }.map { it.destinationPath }
+        val inspection = AddonInspection(target, exists, fresh, overwrites, occupied, previews)
+        CarModelLog.overwrite("analysis_complete ${CarModelLog.where(gamePackage, vehicleDirectory)} targetExists=$exists new=${fresh.size} existing=${previews.count { it.existedBeforeInstall }} overwritten=${overwrites.size} identical=${previews.count { it.classification == com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.IDENTICAL }} different=${previews.count { it.classification == com.retr0.projectretr0.data.carModels.manifest.CollisionClassification.DIFFERENT }}")
+        return inspection
+    }
 
     /**
      * Installs a model as an additional car: no whole-folder backup is required because nothing existing is
@@ -286,29 +392,62 @@ class CarModelEngine(
         val result = locked(gamePackage, vehicleDirectory) {
             val model = store.current.model(modelId) ?: fail(CarModelErrorCode.MODEL_NOT_FOUND)
             modelName = model.name
-            ensure(store.current.activeInstall(gamePackage, vehicleDirectory)?.isAddon != true, CarModelErrorCode.ADDON_TARGET_OCCUPIED)
+            // Any active install owns this vehicle: replacing its record would orphan a REPLACE backup or a
+            // previous add-on's journal. An interrupted add-on must be removed (cleaned up) first.
+            val packageVehicles = model.manifest.vehicleDirectories.ifEmpty { listOf(vehicleDirectory) }
+            packageVehicles.forEach { owned -> paths.vehicleDir(gamePackage, owned) } // name validation for every folder
+            packageVehicles.firstNotNullOfOrNull { store.current.occupant(gamePackage, it) }?.let { occupant ->
+                fail(CarModelErrorCode.ADDON_TARGET_OCCUPIED, when {
+                    !occupant.complete -> "A previous install of ${occupant.modelName} on $vehicleDirectory was interrupted. Remove it from Applied, then apply again."
+                    occupant.modelId == modelId -> "${occupant.modelName} is already installed on $vehicleDirectory."
+                    else -> "${occupant.modelName} is installed on $vehicleDirectory. Remove or revert it first."
+                })
+            }
             // Older locally imported manifests may not have carried the mode field; the selected wizard mode is authoritative.
             ensure(model.manifest.installMode.uppercase() in setOf("ADDON", "REPLACE"), CarModelErrorCode.IMPORT_INVALID_MANIFEST)
             ensure(model.manifest.files.isNotEmpty(), CarModelErrorCode.MODEL_EMPTY)
             val target = paths.vehicleDir(gamePackage, vehicleDirectory)
             val backupDir = paths.addonBackupDir(gamePackage, vehicleDirectory)
-            val existed = ops.isDirectory(target)
+            ensure(vehicleDirectory in packageVehicles, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "Vehicle directory '$vehicleDirectory' is not part of this package" }
+            val existedByVehicle = packageVehicles.associateWith { ops.isDirectory(paths.vehicleDir(gamePackage, it)) }
+            val existed = existedByVehicle.getValue(vehicleDirectory)
+            val multi = if (packageVehicles.size > 1) packageVehicles else emptyList()
             val sources = verifiedSources(model)
+            // Shared depot files (text, vehicles/data, events) are not per-vehicle. If another active add-on
+            // already overwrote one, stacking a second would make each one's "original" the other's content
+            // and removal order would corrupt the game. Refuse until the other add-on is removed.
+            val vehicleRoot = com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE
+            val sharedKeys = sources.filter { it.entry.destinationRoot != vehicleRoot }
+                .map { paths.destination(gamePackage, vehicleDirectory, it.entry, multi).lowercase() }.toSet()
+            store.current.installed.filter { it.active && it.isAddon && it.gamePackage == gamePackage && it.vehicleDirectory != vehicleDirectory }.forEach { other ->
+                val clash = other.addedEntries.filter { entry -> entry.root != vehicleRoot.name }.mapNotNull { entry ->
+                    val root = runCatching { com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.valueOf(entry.root) }.getOrNull() ?: return@mapNotNull null
+                    paths.destination(gamePackage, other.vehicleDirectory, com.retr0.projectretr0.data.carModels.manifest.CarModelFile("", entry.path, "", "", sizeBytes = 1, sha256 = "0".repeat(64), destinationRoot = root), other.packageVehicles).lowercase()
+                }.filter { it in sharedKeys }
+                ensure(clash.isEmpty(), CarModelErrorCode.ADDON_SHARED_CONFLICT) {
+                    "${other.modelName} (on ${other.vehicleDirectory}) already changed ${clash.size} shared game files this add-on needs, e.g. ${clash.take(3).joinToString { it.substringAfterLast("/.depot/") }}. Remove it first."
+                }
+            }
+            CarModelLog.info("CM-APPLY-ADDON", "target=$vehicleDirectory targetExists=$existed files=${sources.size} shared=${sharedKeys.size} $where")
             ensure(ops.ensureGameStopped(gamePackage), CarModelErrorCode.GAME_RUNNING)
                 val existing = sources.associate { source ->
-                addonKey(source.entry.destinationRoot, source.relative) to RemoteFile(source.relative, 0L)
+                addonKey(source.entry.destinationRoot, source.relative) to RemoteFile(
+                    source.relative,
+                    0L,
+                    ops.sha256(paths.destination(gamePackage, vehicleDirectory, source.entry, multi)).takeIf { it.isNotBlank() },
+                )
             }.filterKeys { key ->
                 val source = sources.first { addonKey(it.entry.destinationRoot, it.relative) == key }
-                ops.exists(paths.destination(gamePackage, vehicleDirectory, source.entry))
+                ops.exists(paths.destination(gamePackage, vehicleDirectory, source.entry, multi))
             }
             val destinations = sources.map { source -> addonKey(source.entry.destinationRoot, source.relative).lowercase() }
             ensure(destinations.distinct().size == destinations.size, CarModelErrorCode.IMPORT_INVALID_MANIFEST) { "The add-on contains duplicate destination paths" }
             val collisionEntries = sources.mapNotNull { source ->
                 val key = addonKey(source.entry.destinationRoot, source.relative).lowercase()
                 val current = existing[key] ?: return@mapNotNull null
-                    val oldHash = current.sha256 ?: ops.sha256(paths.destination(gamePackage, vehicleDirectory, source.entry))
+                    val oldHash = current.sha256 ?: ops.sha256(paths.destination(gamePackage, vehicleDirectory, source.entry, multi))
                 val backupPath = addonBackupFile(backupDir, source.entry.destinationRoot.name, source.relative)
-                ensure(ops.copy(paths.destination(gamePackage, vehicleDirectory, source.entry), backupPath), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Unable to back up $key" }
+                ensure(ops.copy(paths.destination(gamePackage, vehicleDirectory, source.entry, multi), backupPath), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Unable to back up $key" }
                 ensure(ops.sha256(backupPath).equals(oldHash, true), CarModelErrorCode.ADDON_BACKUP_FAILED) { "Backup verification failed for $key" }
                 BackupFile(source.relative, current.sizeBytes, oldHash, source.entry.destinationRoot.name)
             }
@@ -318,19 +457,23 @@ class CarModelEngine(
             val addedEntries = sources.map { AddonFileRecord(it.relative, it.entry.destinationRoot.name, it.hash) }
             val now = clock()
             val record = InstalledCarModel(model.id, model.name, gamePackage, vehicleDirectory, now, true, model.fileCount, model.totalBytes,
-                InstallMode.ADDON, fresh.filter { source -> overwritten.none { it.path == source.relative && it.root == source.entry.destinationRoot.name } }.map { it.relative }, overwritten, backupDir, addedEntries, createdDirectory = !existed)
+                InstallMode.ADDON, fresh.filter { source -> overwritten.none { it.path == source.relative && it.root == source.entry.destinationRoot.name } }.map { it.relative }, overwritten, backupDir, addedEntries, createdDirectory = !existed, complete = false,
+                packageVehicles = multi, createdVehicleDirectories = if (multi.isEmpty()) emptyList() else multi.filterNot { existedByVehicle.getValue(it) })
             ensure(ops.writeText("$backupDir/$BACKUP_MANIFEST", JSONObject().put("type", "addon-transaction-v1").put("gamePackage", gamePackage).put("vehicleDirectory", vehicleDirectory).put("transactionId", UUID.randomUUID().toString()).put("files", JSONArray((overwritten.map { it.toJson() } + addedEntries.map { it.toJson() }))).toString()), CarModelErrorCode.ADDON_BACKUP_FAILED)
             store.update { state -> state.copy(installed = state.installed.filterNot { it.key == record.key } + record) }
             touched = true
             sources.forEachIndexed { index, source ->
-                val destination = paths.destination(gamePackage, vehicleDirectory, source.entry)
+                val destination = paths.destination(gamePackage, vehicleDirectory, source.entry, multi)
                 ensure(ops.createDirectory(File(destination).parent ?: target), CarModelErrorCode.ADDON_COPY_FAILED)
                 ensure(ops.importLocal(source.file, destination), CarModelErrorCode.ADDON_COPY_FAILED) { "Unable to copy ${source.relative}" }
                 ensure(ops.sha256(destination) == source.hash, CarModelErrorCode.ADDON_HASH_MISMATCH) { "Hash mismatch after copying ${source.relative}" }
                 onProgress(index + 1, sources.size)
                 CarModelLog.step("addon copied ${index + 1}/${sources.size} ${source.relative}")
             }
-            val detail = ", nothing overwritten"
+            // Every file is copied and hash-verified: only now is the add-on "installed".
+            store.update { state -> state.copy(installed = state.installed.map { if (it.key == record.key) it.copy(complete = true) else it }) }
+            val detail = if (overwritten.isEmpty()) ", nothing overwritten" else ", ${overwritten.size} existing files replaced"
+            CarModelLog.overwrite("addon_install ${CarModelLog.where(gamePackage, vehicleDirectory)} existing=${overwritten.size} identical=${overwritten.count { it.sha256.equals(sources.firstOrNull { source -> source.relative == it.path && source.entry.destinationRoot.name == it.root }?.hash, true) }} different=${overwritten.count { it.sha256 != sources.firstOrNull { source -> source.relative == it.path && source.entry.destinationRoot.name == it.root }?.hash }}")
             store.log(CarModelActivityKind.APPLY, model.name, "Add-on: ${fresh.size} files added to $vehicleDirectory$detail", true, now)
             ApplyOutcome.Success(sources.size, now)
         }
@@ -358,7 +501,10 @@ class CarModelEngine(
         CarModelLog.info("CM-ADDON-START", "remove addon ${CarModelLog.where(gamePackage, vehicleDirectory)}")
         val install = store.current.activeInstall(gamePackage, vehicleDirectory)?.takeIf { it.isAddon } ?: fail(CarModelErrorCode.ADDON_NOT_INSTALLED)
         ensure(ops.ensureGameStopped(gamePackage), CarModelErrorCode.GAME_RUNNING)
-        val count = runCatching { uninstallAddon(ops, gamePackage, vehicleDirectory, onProgress) }.getOrElse { error ->
+        // An interrupted install has files that were never copied: skip the "modified since install" check
+        // (it would always fail) and clean up whatever exists, restoring every backed-up original.
+        if (!install.complete) CarModelLog.info("CM-ADDON-START", "removing interrupted add-on ${CarModelLog.where(gamePackage, vehicleDirectory)}")
+        val count = runCatching { uninstallAddon(ops, gamePackage, vehicleDirectory, onProgress, allowPartial = !install.complete) }.getOrElse { error ->
             store.log(CarModelActivityKind.UNINSTALL, install.modelName, coded(error, error.message ?: "Remove failed"), false, clock())
             throw error
         }
@@ -372,8 +518,9 @@ class CarModelEngine(
         val target = paths.vehicleDir(gamePackage, vehicleDirectory)
         val root = install.backupRoot
         val entries = if (install.addedEntries.isNotEmpty()) install.addedEntries else install.addedFiles.map { AddonFileRecord(it) }
-        fun destination(entry: AddonFileRecord): String = paths.destination(gamePackage, vehicleDirectory, com.retr0.projectretr0.data.carModels.manifest.CarModelFile("", entry.path, "", "", sizeBytes = 1, sha256 = "0".repeat(64), destinationRoot = runCatching { com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.valueOf(entry.root) }.getOrDefault(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE)))
+        fun destination(entry: AddonFileRecord): String = paths.destination(gamePackage, vehicleDirectory, com.retr0.projectretr0.data.carModels.manifest.CarModelFile("", entry.path, "", "", sizeBytes = 1, sha256 = "0".repeat(64), destinationRoot = runCatching { com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.valueOf(entry.root) }.getOrDefault(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE)), install.packageVehicles)
         // Refuse removal if any installed file was modified after installation.
+        // Shared roots are intentionally retained: an add-on owns files, not the shared directory itself.
         if (!allowPartial) entries.forEach { entry ->
             if (entry.sha256.isNotBlank()) ensure(ops.sha256(destination(entry)).equals(entry.sha256, true), CarModelErrorCode.ADDON_REMOVE_FAILED) { "Installed file was modified: ${entry.root}/${entry.path}" }
         }
@@ -390,20 +537,30 @@ class CarModelEngine(
         }
         install.overwritten.forEachIndexed { index, file ->
             val backupPath = addonBackupFile(root ?: "", file.root, file.path)
-            val destinationPath = paths.destination(gamePackage, vehicleDirectory, com.retr0.projectretr0.data.carModels.manifest.CarModelFile("", file.path, "", "", sizeBytes = 1, sha256 = "0".repeat(64), destinationRoot = runCatching { com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.valueOf(file.root) }.getOrDefault(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE)))
+            val destinationPath = paths.destination(gamePackage, vehicleDirectory, com.retr0.projectretr0.data.carModels.manifest.CarModelFile("", file.path, "", "", sizeBytes = 1, sha256 = "0".repeat(64), destinationRoot = runCatching { com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.valueOf(file.root) }.getOrDefault(com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE)), install.packageVehicles)
             ensure(ops.copy(backupPath, destinationPath) && ops.sha256(destinationPath).equals(file.sha256, true), CarModelErrorCode.ADDON_RESTORE_FAILED) { "Unable to restore ${file.root}/${file.path}" }
             onProgress(entries.size + index + 1, total)
             CarModelLog.step("addon restored overwritten ${file.root}/${file.path}")
         }
         // A folder the add-on created is removed once nothing else lives in it.
-        if (install.createdDirectory && ops.isDirectory(target) && ops.listTree(paths.packageRoot(gamePackage), target).isEmpty()) ops.delete(target)
+        val created = install.createdVehicleDirectories.ifEmpty { if (install.createdDirectory) listOf(vehicleDirectory) else emptyList() }
+        created.forEach { folder ->
+            val dir = paths.vehicleDir(gamePackage, folder)
+            if (ops.isDirectory(dir) && ops.listTree(paths.packageRoot(gamePackage), dir).isEmpty()) ops.delete(dir)
+        }
         if (root != null) ops.delete(root)
         markReverted(gamePackage, vehicleDirectory)
         return total
     }
 
-    private fun destinationForInspection(gamePackage: String, vehicleDirectory: String, file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile) = paths.destination(gamePackage, vehicleDirectory, file)
-    private fun addonKey(root: com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot, relative: String) = "${root.name}/$relative".lowercase()
+    /** The package vehicle a VEHICLE-root file belongs to, or null for shared roots / single-vehicle models. */
+    private fun vehicleOf(file: com.retr0.projectretr0.data.carModels.manifest.CarModelFile, vehicles: List<String>): String? {
+        if (file.destinationRoot != com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE) return null
+        val first = file.destinationPath.replace('\\', '/').removePrefix("vehicles/").substringBefore('/', "")
+        return first.takeIf { it in vehicles } ?: vehicles.singleOrNull()
+    }
+
+    private fun addonKey(root: com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot, relative: String) = "${root.name}/${relative.replace('\\', '/').removePrefix("paste to depot/").removePrefix("depot/")}".lowercase()
     private fun addonBackupFile(backupDir: String, root: String, relative: String): String {
         val fileRoot = if (root == "VEHICLE") "" else "$root/"
         return "$backupDir/files/$fileRoot${safePath(relative)}"
@@ -469,7 +626,14 @@ class CarModelEngine(
         var missing = 0
         var mismatched = 0
         backup.files.forEach { file ->
-            val hash = runCatching { ops.sha256("${backup.root}/files/${CarModelManifestValidator.validateRelativePath(file.path)}") }.getOrDefault("")
+            // A dead binder says nothing about the backup: let it propagate (→ SERVICE_UNAVAILABLE) instead of
+            // counting every file as missing and persisting a good backup as MISSING.
+            val hash = try {
+                ops.sha256("${backup.root}/files/${CarModelManifestValidator.validateRelativePath(file.path)}")
+            } catch (error: Throwable) {
+                if (error.isBinderFailure()) throw error
+                ""
+            }
             when {
                 hash.isBlank() -> { missing++; CarModelLog.step("verify: unreadable ${file.path}") }
                 !hash.equals(file.sha256, true) -> { mismatched++; CarModelLog.step("verify: hash mismatch ${file.path}") }

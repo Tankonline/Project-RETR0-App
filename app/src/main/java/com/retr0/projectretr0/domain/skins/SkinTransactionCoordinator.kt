@@ -41,8 +41,11 @@ class SkinTransactionCoordinator(
                 require(service.sha256File(backup.backupPath).equals(other = backup.sha256, ignoreCase = true)) { "Original backup is missing or corrupt" }
                 update(operationId, skin.id, "APPLY", "BACKUP_VERIFIED", 45, "Original backup verified")
                 update(operationId, skin.id, "APPLY", "SWAPPING", 70, "Replacing target")
-                val input = ParcelFileDescriptor.open(File(skin.binaryPath), ParcelFileDescriptor.MODE_READ_ONLY)
-                require(service.atomicImportSkin(input, target, skin.binarySha256, skin.binarySize)) { "Unable to atomically replace RR3 skin" }
+                // The helper gets its own dup; close the app's descriptor whatever the outcome.
+                val imported = ParcelFileDescriptor.open(File(skin.binaryPath), ParcelFileDescriptor.MODE_READ_ONLY).use { input ->
+                    service.atomicImportSkin(input, target, skin.binarySha256, skin.binarySize)
+                }
+                require(imported) { "Unable to atomically replace RR3 skin" }
                 require(service.sha256File(target).equals(skin.binarySha256, true)) { "Applied skin verification failed" }
                 local.saveApplied(AppliedSkinEntity(UUID.randomUUID().toString(), skin.id, target, backup.id, System.currentTimeMillis()))
                 update(operationId, skin.id, "APPLY", "SUCCESS", 100, "Applied and verified")
@@ -89,7 +92,14 @@ class SkinTransactionCoordinator(
             val skinId = operation.skinId ?: return@forEach
             val skin = local.skin(skinId) ?: return@forEach
             val target = skin.targetPath ?: return@forEach
-            val targetHash = runCatching { service.sha256File(target) }.getOrDefault("")
+            // A binder failure says nothing about the file: stop and leave the journal pending so the next
+            // connection retries. Marking it ROLLBACK_FAILED here would make a transient disconnect permanent.
+            val targetHash = try {
+                service.sha256File(target)
+            } catch (error: android.os.RemoteException) {
+                android.util.Log.w("RETR0_SKINS", "code=SERVICE_BINDER_DIED stage=skin_recover action=deferred operation=${operation.id} error=${error.javaClass.simpleName}")
+                return
+            }
             when {
                 targetHash.equals(skin.binarySha256, true) -> {
                     val backup = local.backupForTarget(target)

@@ -12,6 +12,7 @@ import com.retr0.projectretr0.data.carModels.CloudflareCarModelHubRepository
 import com.retr0.projectretr0.data.carModels.manifest.TargetVehicle
 import java.io.File
 import com.retr0.projectretr0.data.carModels.local.AddonInspection
+import com.retr0.projectretr0.data.carModels.local.PackageAddonInspection
 import com.retr0.projectretr0.data.carModels.local.ApplyOutcome
 import com.retr0.projectretr0.data.carModels.local.InstallMode
 import com.retr0.projectretr0.data.carModels.local.CarModelActivityKind
@@ -32,7 +33,26 @@ class CarModelsViewModel private constructor(context: Context) {
     val importer = CarModelImporter(context.applicationContext, store)
     private val api = CarModelApiClient(context)
     val hub: CarModelHubRepository = CloudflareCarModelHubRepository(api)
+    private val communityInstaller = com.retr0.projectretr0.data.carModels.local.CommunityCarModelInstaller(
+        store = store,
+        downloadsRoot = File(context.applicationContext.filesDir, "car-model-downloads"),
+        source = hub,
+    )
     val state: StateFlow<CarModelState> = store.state
+
+    /**
+     * The one Community Hub download operation: download to a unique temp dir, verify every file, move into the
+     * library, persist with remoteId and update [state]. Returns the local model id only after persistence, so
+     * callers may navigate on success. Failures come back as a coded Result; nothing is thrown or lost.
+     */
+    suspend fun downloadAndImportCommunityModel(
+        model: com.retr0.projectretr0.data.carModels.CommunityCarModel,
+        onProgress: (completedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): Result<com.retr0.projectretr0.data.carModels.local.LocalCarModel> = communityInstaller.downloadAndImport(model, onProgress)
+
+    /** Fetches the Hub cover/screenshots for a downloaded model that has none locally (e.g. downloaded before media support). */
+    suspend fun ensureCommunityMedia(localId: String): Result<com.retr0.projectretr0.data.carModels.local.LocalCarModel> =
+        communityInstaller.refreshMedia(localId) { remoteId -> hub.details(remoteId) }
 
     internal suspend fun uploadDraft(context: Context, modelId: String, onProgress: (CarModelUploadManager.UploadProgress) -> Unit = {}): Result<CarModelUploadManager.UploadResult> = runCatching {
         CarModelLog.info("upload_requested", "model=$modelId")
@@ -133,11 +153,61 @@ class CarModelsViewModel private constructor(context: Context) {
         return problems
     }
 
+    suspend fun inspectAddonPackage(service: IRetr0UserService, manifest: CarModelManifest, gamePackage: String): Result<PackageAddonInspection> =
+        engine.inspectAddonPackage(ShizukuCarModelFileOps(service), manifest, gamePackage)
+
     suspend fun inspectAddonTarget(service: IRetr0UserService, manifest: CarModelManifest, gamePackage: String, vehicleDirectory: String): Result<AddonInspection> =
         engine.inspectAddonTarget(ShizukuCarModelFileOps(service), manifest, gamePackage, vehicleDirectory)
 
     suspend fun install(service: IRetr0UserService, mode: InstallMode, modelId: String, gamePackage: String, vehicleDirectory: String, onProgress: (Int, Int) -> Unit): ApplyOutcome =
         engine.install(ShizukuCarModelFileOps(service), mode, modelId, gamePackage, vehicleDirectory, onProgress)
+
+    /**
+     * The details-screen Apply. The manifest's install mode decides the path:
+     *  - ADDON: the target may be absent from the base game (it is a new car). No vehicle-list lookup and no
+     *    whole-folder backup; the engine creates the folder, backs up every shared file it overwrites, journals
+     *    the install and rolls back on failure.
+     *  - REPLACE: the target must already exist (exact name match only) and a verified original backup is
+     *    required before anything is written.
+     */
+    suspend fun applyModel(service: IRetr0UserService, modelId: String, gamePackage: String, vehicleDirectory: String): Result<ApplyOutcome> = runCatching {
+        val ops = ShizukuCarModelFileOps(service)
+        val model = state.value.model(modelId) ?: throw com.retr0.projectretr0.data.carModels.CarModelException(CarModelErrorCode.MODEL_NOT_FOUND)
+        val requestedTarget = model.manifest.target.vehicleDirectory.takeIf { it.isNotBlank() } ?: vehicleDirectory
+        val mode = installModeOf(model.manifest)
+        CarModelLog.apply("RESOLVE_START", "model=$modelId requested=$requestedTarget package=$gamePackage mode=$mode")
+        val outcome = when (mode) {
+            InstallMode.ADDON -> {
+                // A multi-vehicle package is one install keyed by its first vehicle; it owns all of its folders.
+                val addonTarget = model.manifest.vehicleDirectories.firstOrNull() ?: requestedTarget
+                // Validates the name (UNSAFE_VEHICLE_DIRECTORY) before any privileged call.
+                com.retr0.projectretr0.data.carModels.local.CarModelPaths().vehicleDir(gamePackage, addonTarget)
+                CarModelLog.apply("ENGINE_START", "model=$modelId target=$addonTarget package=$gamePackage mode=ADDON vehicles=${model.manifest.vehicleDirectories.size}")
+                engine.install(ops, InstallMode.ADDON, modelId, gamePackage, addonTarget)
+            }
+            InstallMode.REPLACE -> {
+                val availableVehicles = listVehicles(service, gamePackage).getOrThrow()
+                CarModelLog.apply("VEHICLES", "model=$modelId package=$gamePackage count=${availableVehicles.size} requested=$requestedTarget")
+                val resolvedTarget = resolveReplaceTarget(requestedTarget, availableVehicles)
+                    ?: throw com.retr0.projectretr0.data.carModels.CarModelException(CarModelErrorCode.TARGET_NOT_FOUND, "Target vehicle '$requestedTarget' was not found in ${gamePackage.substringAfterLast('.')}. A replacement needs the original car installed.")
+                CarModelLog.apply("RESOLVE_SUCCESS", "model=$modelId requested=$requestedTarget resolved=$resolvedTarget package=$gamePackage")
+                val existingBackup = state.value.backup(gamePackage, resolvedTarget)
+                CarModelLog.apply("BACKUP_LOOKUP", "model=$modelId target=$resolvedTarget existing=${existingBackup != null} verified=${existingBackup?.verified == true}")
+                val backup = if (existingBackup?.verified == true) engine.verifyBackup(ops, gamePackage, resolvedTarget).getOrThrow()
+                else engine.ensureBackup(ops, gamePackage, resolvedTarget).getOrThrow()
+                CarModelLog.apply("BACKUP_READY", "model=$modelId target=$resolvedTarget verified=${backup.verified} files=${backup.files.size}")
+                if (!backup.verified) throw com.retr0.projectretr0.data.carModels.CarModelException(CarModelErrorCode.BACKUP_NOT_VERIFIED)
+                CarModelLog.apply("ENGINE_START", "model=$modelId target=$resolvedTarget package=$gamePackage mode=REPLACE")
+                engine.install(ops, InstallMode.REPLACE, modelId, gamePackage, resolvedTarget)
+            }
+        }
+        // Keep the engine's stable code (e.g. CM-ADDON-009, CM-FILEOP-003) instead of a bare message.
+        if (outcome is ApplyOutcome.Failed) throw com.retr0.projectretr0.data.carModels.CarModelException(
+            CarModelErrorCode.entries.firstOrNull { it.code == outcome.code } ?: CarModelErrorCode.UNEXPECTED,
+            outcome.reason + if (outcome.gameFilesTouched && outcome.originalRestored) " Changes were rolled back." else "",
+        )
+        outcome
+    }
 
     suspend fun removeAddon(service: IRetr0UserService, gamePackage: String, vehicleDirectory: String): Result<Int> =
         engine.removeAddon(ShizukuCarModelFileOps(service), gamePackage, vehicleDirectory)
@@ -160,6 +230,20 @@ class CarModelsViewModel private constructor(context: Context) {
     suspend fun removeModel(modelId: String): Result<Unit> = engine.removeModel(modelId)
 
     companion object {
+        /** Missing/unknown modes are treated as REPLACE, the conservative path that needs a verified backup. */
+        internal fun installModeOf(manifest: CarModelManifest): InstallMode =
+            if (manifest.installMode.equals("ADDON", ignoreCase = true)) InstallMode.ADDON else InstallMode.REPLACE
+
+        /**
+         * Exact (case-insensitive) or punctuation-insensitive equal names only. The old substring match could
+         * resolve "m3" inside another car's name and overwrite the wrong vehicle.
+         */
+        internal fun resolveReplaceTarget(requested: String, available: List<String>): String? {
+            fun norm(value: String) = value.lowercase().replace(Regex("[^a-z0-9]+"), "")
+            return available.firstOrNull { it.equals(requested, ignoreCase = true) }
+                ?: available.filter { norm(it) == norm(requested) }.singleOrNull()
+        }
+
         @Volatile private var instance: CarModelsViewModel? = null
         fun get(context: Context): CarModelsViewModel = instance ?: synchronized(this) {
             instance ?: CarModelsViewModel(context.applicationContext).also { instance = it }

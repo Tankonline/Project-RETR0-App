@@ -1,5 +1,10 @@
 # Project RETR0 Release Checklist
 
+## v1.1.8 Release
+- [x] Version metadata is `versionName "1.1.8"` and `versionCode 20`.
+- [x] Changelog, README, release guidance, and IzzyOnDroid metadata are aligned to v1.1.8.
+- [x] Release-specific version metadata changes are documented; build and device verification remain pending.
+
 ## v1.1.7 Release
 - [x] Version metadata is `versionName "1.1.7"` and `versionCode 19`.
 - [x] Changelog documents canonical car-model cover fallback, image request diagnostics, decoded Coil success rendering, verification gates, and inactive/unreleased features.
