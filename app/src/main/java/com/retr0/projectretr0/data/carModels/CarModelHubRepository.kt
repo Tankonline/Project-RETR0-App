@@ -1,5 +1,7 @@
 package com.retr0.projectretr0.data.carModels
 
+import java.io.File
+
 /** A car model as listed in the Community Hub. */
 data class CommunityCarModel(
     val id: String,
@@ -28,19 +30,19 @@ class CarModelHubUnavailableException : CarModelException(CarModelErrorCode.HUB_
 object UnavailableCarModelHubRepository : CarModelHubRepository {
     override suspend fun list(query: String, sort: String): List<CommunityCarModel> = throw CarModelHubUnavailableException()
     override suspend fun details(modelId: String): CommunityCarModel = throw CarModelHubUnavailableException()
-    override suspend fun download(model: CommunityCarModel, onProgress: (Int, Int) -> Unit): String = throw CarModelHubUnavailableException()
+    override suspend fun downloadPlan(model: CommunityCarModel): CarModelDownloadPlan = throw CarModelHubUnavailableException()
+    override suspend fun fetch(url: String, output: File, onBytes: (Long) -> Unit) = throw CarModelHubUnavailableException()
     override suspend fun report(model: CommunityCarModel) = throw CarModelHubUnavailableException()
     override suspend fun deleteOwned(modelId: String): CarModelDeleteResult = throw CarModelHubUnavailableException()
 }
 
-/** Download is intentionally explicit until the public manifest/file flow is wired into the importer. */
+/** Retained for error-code compatibility; production downloads go through CommunityCarModelInstaller. */
 class CarModelHubDownloadUnsupportedException : CarModelException(CarModelErrorCode.HUB_DOWNLOAD_UNSUPPORTED)
 
 /** Read side of the Community Hub for published car models. */
-interface CarModelHubRepository {
+interface CarModelHubRepository : CarModelDownloadSource {
     suspend fun list(query: String, sort: String = "newest"): List<CommunityCarModel>
     suspend fun details(modelId: String): CommunityCarModel
-    suspend fun download(model: CommunityCarModel, onProgress: (Int, Int) -> Unit): String
     suspend fun report(model: CommunityCarModel)
     suspend fun deleteOwned(modelId: String): CarModelDeleteResult
 }
@@ -48,7 +50,9 @@ interface CarModelHubRepository {
 class CloudflareCarModelHubRepository(private val api: CarModelApiClient) : CarModelHubRepository {
     override suspend fun list(query: String, sort: String): List<CommunityCarModel> = api.listPublished(query, sort)
     override suspend fun details(modelId: String): CommunityCarModel = api.getPublishedDetails(modelId)
-    override suspend fun download(model: CommunityCarModel, onProgress: (Int, Int) -> Unit): String = throw CarModelHubDownloadUnsupportedException()
+    // Download only: verification, retries, media and library import are owned by CommunityCarModelInstaller.
+    override suspend fun downloadPlan(model: CommunityCarModel): CarModelDownloadPlan = api.downloadPlan(model)
+    override suspend fun fetch(url: String, output: File, onBytes: (Long) -> Unit) = api.fetchAsset(url, output, onBytes)
     override suspend fun report(model: CommunityCarModel) = throw UnsupportedOperationException("Public car-model reporting requires authenticated moderation flow")
     override suspend fun deleteOwned(modelId: String): CarModelDeleteResult = api.deleteOwned(modelId).let { CarModelDeleteResult(it.deleted, it.requestId) }
 }

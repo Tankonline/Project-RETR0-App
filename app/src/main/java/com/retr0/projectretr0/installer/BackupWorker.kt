@@ -29,9 +29,15 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         val prefs = applicationContext.getSharedPreferences("retr0_prefs", Context.MODE_PRIVATE)
 
-        if (!Shizuku.pingBinder()) {
+        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
             Log.w(TAG, "Shizuku not running, skipping backup.")
             saveStatus(prefs, "Failed (Shizuku off)")
+            return Result.retry()
+        }
+        // Binding without permission throws; report it plainly and retry later instead of failing the run.
+        if (!runCatching { Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED }.getOrDefault(false)) {
+            Log.w(TAG, "code=SERVICE_PERMISSION stage=backup_worker granted=false")
+            saveStatus(prefs, "Failed (Shizuku permission)")
             return Result.retry()
         }
 
@@ -39,8 +45,11 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                val service = IRetr0UserService.Stub.asInterface(binder)
-                deferredService.complete(service)
+                if (binder == null || !binder.isBinderAlive) {
+                    deferredService.completeExceptionally(android.os.DeadObjectException("Helper returned no live binder"))
+                    return
+                }
+                deferredService.complete(IRetr0UserService.Stub.asInterface(binder))
             }
             override fun onServiceDisconnected(name: ComponentName?) {}
         }
@@ -52,7 +61,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .tag("retr0-backup")
             .debuggable(false)
             // Keep this independent from the foreground binding cache.
-            .version(6)
+            .version(7)
 
         try {
             Shizuku.bindUserService(args, connection)
@@ -98,9 +107,6 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 saveStatus(prefs, "Failed (Copy error)")
             }
 
-            // Cleanup: Unbind
-            Shizuku.unbindUserService(args, connection, false)
-
             return if (success) {
                 Log.i(TAG, "Scheduled backup successful.")
                 Result.success()
@@ -109,10 +115,23 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 Result.failure()
             }
 
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // WorkManager stopped us (constraints, shutdown): not a failure, and it must propagate.
+            Log.w(TAG, "Scheduled backup cancelled")
+            throw cancelled
+        } catch (e: android.os.RemoteException) {
+            // Helper died or Shizuku restarted mid-backup: transient, try again later.
+            Log.e(TAG, "code=SERVICE_BINDER_DIED stage=backup_worker error=${e.javaClass.simpleName}")
+            saveStatus(prefs, "Failed (Shizuku disconnected)")
+            return Result.retry()
         } catch (e: Exception) {
             Log.e(TAG, "Error during scheduled backup", e)
             saveStatus(prefs, "Error")
             return Result.failure()
+        } finally {
+            // Always release the helper: timeout, "game running" and error paths previously left it bound.
+            runCatching { Shizuku.unbindUserService(args, connection, false) }
+                .onFailure { Log.w(TAG, "code=SERVICE_DESTROY stage=backup_unbind error=${it.javaClass.simpleName}") }
         }
     }
 

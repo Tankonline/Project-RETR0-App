@@ -471,6 +471,12 @@ class Retr0Installer(
                 return false
             }
             if (!s.ping()) { fail("Not connected."); return false }
+            // RR3 cannot save into folders an older helper created without group write (EACCES on doc/,
+            // .depot/CC_Data, apk/). Repairing that is part of the crash / error fix.
+            updateProgress(InstallState.INSTALLING, "Repairing RR3 save permissions...")
+            runCatching { s.repairGameDataPermissions("/storage/emulated/0/Android/data/$rr3Package") }
+                .onSuccess { Log.i("RETR0_REPAIR", "code=ASSET_REPAIR_PERMISSIONS package=$rr3Package $it") }
+                .onFailure { Log.e("RETR0_REPAIR", "code=ASSET_REPAIR_PERMISSIONS_FAILED package=$rr3Package error=${it.javaClass.simpleName}", it) }
             // Graphics config (.depot/eds + .depot/feats) goes back to the factory apk/res files
             // through the Graphics Hub engine: verified backup first, atomic per-file writes, rollback.
             updateProgress(InstallState.INSTALLING, "Restoring assets...")

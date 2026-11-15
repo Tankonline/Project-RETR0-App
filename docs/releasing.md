@@ -1,10 +1,25 @@
 # Releasing Project RETR0 installer
 
-## v1.1.7 preparation status
+## v1.1.8 preparation status
 
-The current checkout is prepared for Android release `v1.1.7` with `versionCode 19`. Community Hub car-model media now falls back to the canonical Worker cover route when `coverUploaded` is true but `coverUrl` is absent, canonicalizes stale/foreign cover URLs, logs safe image request diagnostics, and renders Coil's decoded `SubcomposeAsyncImage` success content.
+The current checkout is prepared for Android release `v1.1.8` with `versionCode 20`. Community Hub car-model media now falls back to the canonical Worker cover route when `coverUploaded` is true but `coverUrl` is absent, canonicalizes stale/foreign cover URLs, logs safe image request diagnostics, and renders Coil's decoded `SubcomposeAsyncImage` success content.
 
-This preparation does not enable new Firebase/account, Cloudflare, AI/web research, authentication, admin-ingestion, production-flag, or runtime-update behavior. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; admin ingestion remains guarded server-side; music acquisition remains external; and no APK self-updater is released.
+This release includes the v1.1.8 car-model download/import pipeline, Downloaded Mods UI, multi-vehicle and add-on package handling, stronger backup/restore verification, Shizuku reconnect hardening, atomic skin operations, and native Sonic archive-safety improvements. It does not enable new Firebase/account authentication, production Cloudflare behavior, AI/web research, admin-ingestion flags, or runtime-update behavior. Firebase email-link/Google authentication remains prepared but inactive; AI/RAG help remains backend-dependent; admin ingestion remains guarded server-side; music acquisition remains external; and no APK self-updater is released.
+
+## v1.1.8 change summary
+
+The Android release contains the following functional areas:
+
+- Community Hub car-model download plans with manifest/file checksums, size limits, free-space checks, resumable verified downloads, optional media, and safe library import.
+- Downloaded Mods navigation for downloaded Community Hub skins and car models.
+- Multi-vehicle package inspection, shared-root collision detection, ADDON/REPLACE handling, backup-first application, stale-file cleanup, and rollback/revert behavior.
+- Import staging and manifest validation that keeps picked folders out of RR3 until the user explicitly applies a verified model.
+- Shizuku lifecycle hardening for binder death, delayed binding, permission state, reconnect throttling, and pending skin-operation recovery.
+- Atomic skin replacement and restoration with pre/post SHA-256 verification.
+- Native Sonic extractor hardening for unsafe paths, ZIP64/data-descriptor handling, compression checks, and secure directory creation.
+- Worker contract validation for asset-backed downloads, checksums, cover/screenshots, R2 object availability, and related AI/diagnostics response schemas.
+
+The release does not introduce Firebase account sign-in, an APK self-updater, an in-app music downloader, or an enabled production admin-ingestion flag.
 
 ## One canonical APK
 
@@ -59,15 +74,15 @@ Configure protected secrets only in CI:
 
 The existing workflow validates the version tag against `versionName`, runs unit tests, builds a signed release APK, creates a checksum, and publishes release assets. It is not run or changed as part of this preparation task.
 
-## Release gates for v1.1.7
+## Release gates for v1.1.8
 
-1. Confirm `versionName "1.1.7"` and `versionCode 19` in Gradle and metadata.
+1. Confirm `versionName "1.1.8"` and `versionCode 20` in Gradle and metadata.
 2. Run unit tests, `assembleDebug`, lint/static checks, and a signed `assembleRelease`.
 3. Inspect the diff for documentation-only/version metadata scope; reject secrets, generated files, runtime artifacts, and unrelated flag changes.
 4. Manually verify dashboard navigation, the **Install Project RETR0** label, status refresh, and Shizuku unavailable/denied/delayed/retry/reconnect paths.
 5. Verify supported RR3 ROW and NA operations and recovery behavior on target devices.
 6. Generate and independently verify the signed APK SHA-256 checksum.
-7. Only after approval may a maintainer commit, create annotated tag `v1.1.7`, push it, and run the protected workflow.
+7. Only after approval may a maintainer commit, create annotated tag `v1.1.8`, push it, and run the protected workflow.
 
 Do not commit, tag, push, or create a GitHub release during release preparation.
 

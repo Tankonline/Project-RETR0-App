@@ -112,7 +112,22 @@ class SonicInstaller(
             }
         }
 
+        if (installCount > 0) repairGamePermissions(privilegedDest)
         installCount
+    }
+
+    /**
+     * Data extracted by older helpers was created 0640/0750 by the shell user, so RR3 could read but never save.
+     * Re-applies group write to the RR3 roots this install touched; a failure is logged, not fatal.
+     */
+    private fun repairGamePermissions(privilegedDest: String) {
+        listOf("/storage/emulated/0/Android/data/com.ea.games.r3_row", "/storage/emulated/0/Android/data/com.ea.games.r3_na")
+            .filter { root -> root.startsWith(privilegedDest.trimEnd('/')) || privilegedDest.startsWith(root) }
+            .forEach { root ->
+                runCatching { service.repairGameDataPermissions(root) }
+                    .onSuccess { Log.i("SONIC_INSTALLER", "code=ASSET_INSTALL_I016 stage=permission_repair root=${root.substringAfterLast('/')} $it") }
+                    .onFailure { Log.e("SONIC_INSTALLER", "code=ASSET_INSTALL_E016 stage=permission_repair root=${root.substringAfterLast('/')} error=${it.javaClass.simpleName}", it) }
+            }
     }
 
     @Suppress("unused")

@@ -105,7 +105,7 @@ private sealed interface ModsRoute { data object Root : ModsRoute; data object I
         is ModsRoute.Details -> LocalSkinDetails(currentRoute.id, ::back, { sheet = applyRequest(currentRoute.id) }, { sheet = revertRequest(currentRoute.id) })
         is ModsRoute.TargetScan -> TargetScanRoute(currentRoute.id, localRepository, service, gamePackage, ::back)
         is ModsRoute.Progress -> SimulatedProgress(currentRoute.op, currentRoute.title, operations, ::back)
-        ModsRoute.Root -> SkinModsRoot(section, { section = it }, isServiceConnected, isGameInstalled, gamePackage, storageText, operations, previewState, storedSkins.size, storedApplied.size, storedBackups.size, storedOperations.count { it.state == "FAILED" || it.state == "FAILED_SAFE" }, storedBackups, { push(ModsRoute.Import) }, onBrowseCommunity, { push(ModsRoute.Details(it)) }, { sheet = it }, ::start, onStorage, onConnect, modifier, header)
+        ModsRoute.Root -> SkinModsRoot(section, { section = it }, isServiceConnected, isGameInstalled, gamePackage, storageText, operations, previewState, storedSkins, storedApplied.size, storedBackups.size, storedOperations.count { it.state == "FAILED" || it.state == "FAILED_SAFE" }, storedBackups, { push(ModsRoute.Import) }, onBrowseCommunity, { push(ModsRoute.Details(it)) }, { sheet = it }, ::start, onStorage, onConnect, modifier, header)
     }
     sheet?.let { request -> SkinOperationSheet(request, { sheet = null }) {
         sheet = null
@@ -160,7 +160,7 @@ private fun TargetScanRoute(id: String, repository: LocalSkinRepository, service
     )
 }
 
-@Composable private fun SkinModsRoot(section: SkinModsSection, onSection: (SkinModsSection) -> Unit, connected: Boolean, gameInstalled: Boolean, gamePackage: GamePackage, storage: String, operations: List<ActivityOp>, preview: SkinModsPreviewState, localCount: Int, appliedCount: Int, backupCount: Int, issueCount: Int, backups: List<SkinBackupEntity>, onImport: () -> Unit, onHub: () -> Unit, onDetails: (String) -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit, onStorage: () -> Unit, onConnect: (() -> Unit)?, modifier: Modifier, header: (@Composable () -> Unit)? = null) {
+@Composable private fun SkinModsRoot(section: SkinModsSection, onSection: (SkinModsSection) -> Unit, connected: Boolean, gameInstalled: Boolean, gamePackage: GamePackage, storage: String, operations: List<ActivityOp>, preview: SkinModsPreviewState, localSkins: List<LocalSkinEntity>, appliedCount: Int, backupCount: Int, issueCount: Int, backups: List<SkinBackupEntity>, onImport: () -> Unit, onHub: () -> Unit, onDetails: (String) -> Unit, onSheet: (SkinOperationRequest) -> Unit, onStart: (OpType, String) -> Unit, onStorage: () -> Unit, onConnect: (() -> Unit)?, modifier: Modifier, header: (@Composable () -> Unit)? = null) {
     BoxWithConstraints(modifier.fillMaxSize().background(RetroBg)) {
         val landscape = maxWidth > maxHeight
         val contentModifier = if (landscape) Modifier.fillMaxWidth().padding(horizontal = 24.dp) else Modifier.fillMaxSize()
@@ -174,7 +174,8 @@ private fun TargetScanRoute(id: String, repository: LocalSkinRepository, service
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     if (!expanded) CompactSectionNavigation(section, onSection)
                     Box(Modifier.weight(1f).fillMaxWidth().then(if (expanded) Modifier.wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 1040.dp) else Modifier)) { when(section) {
-                        SkinModsSection.OVERVIEW -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { OverviewSection(connected, gameInstalled, gamePackage, storage, localCount, appliedCount, backupCount, issueCount, onImport, onHub, onSheet, onStart, { onSection(SkinModsSection.BACKUPS) }, onStorage, onConnect, wide = expanded) }
+                        SkinModsSection.OVERVIEW -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { OverviewSection(connected, gameInstalled, gamePackage, storage, localSkins.size, appliedCount, backupCount, issueCount, onImport, onHub, onSheet, onStart, { onSection(SkinModsSection.BACKUPS) }, onStorage, onConnect, wide = expanded) }
+                        SkinModsSection.DOWNLOADED -> DownloadedModsSection(skins = localSkins.filter { it.communityId != null }, carModels = emptyList(), onSkin = onDetails, onCarModel = {})
                         SkinModsSection.LIBRARY -> SkinLibraryScreen({}, onDetails, onImport, onHub, embedded = true, onApply = { onSheet(applyRequest(it)) }, onRevert = { onSheet(revertRequest(it)) })
                         SkinModsSection.APPLIED -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { AppliedSection(onSheet) }
                         SkinModsSection.BACKUPS -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp)) { BackupsSection(backups) }
@@ -350,7 +351,7 @@ private fun BackupCard(backup: SkinBackupEntity) {
 
 @Composable internal fun StatusLine(text: String, good: Boolean, action: String? = null, onClick: (() -> Unit)? = null) { Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier), verticalAlignment = Alignment.CenterVertically) { Icon(if(good) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline, null, tint = if(good) RetroSuccess else RetroDanger); Spacer(Modifier.width(8.dp)); Text(text, color = RetroTextSoft, modifier = Modifier.weight(1f)); if (action != null && onClick != null) Text(action, color = RetroAccent) } }
 @Composable internal fun WarningBanner(title: String, body: String) { Row(Modifier.fillMaxWidth().background(RetroGold.copy(alpha=.12f), RoundedCornerShape(12.dp)).border(1.dp, RetroGold.copy(alpha=.4f), RoundedCornerShape(12.dp)).padding(12.dp)) { Icon(Icons.Filled.WarningAmber, null, tint = RetroGold); Spacer(Modifier.width(8.dp)); Column { Text(title, color = RetroGold); Text(body, color = RetroTextSoft) } } }
-private fun sectionIcon(s: SkinModsSection) = when(s) { SkinModsSection.OVERVIEW -> Icons.Filled.Dashboard; SkinModsSection.LIBRARY -> Icons.Filled.Garage; SkinModsSection.APPLIED -> Icons.Filled.CheckCircle; SkinModsSection.BACKUPS -> Icons.Filled.Backup; SkinModsSection.ACTIVITY -> Icons.Filled.History }
+private fun sectionIcon(s: SkinModsSection) = when(s) { SkinModsSection.OVERVIEW -> Icons.Filled.Dashboard; SkinModsSection.DOWNLOADED -> Icons.Filled.Download; SkinModsSection.LIBRARY -> Icons.Filled.Garage; SkinModsSection.APPLIED -> Icons.Filled.CheckCircle; SkinModsSection.BACKUPS -> Icons.Filled.Backup; SkinModsSection.ACTIVITY -> Icons.Filled.History }
 private fun applyRequest(id: String): SkinOperationRequest = SkinOperationRequest(OpType.APPLY, "Apply this skin?", "", "The selected RR3 target", skinId = id)
 private fun revertRequest(id: String): SkinOperationRequest = SkinOperationRequest(OpType.REVERT, "Restore original livery?", "", "The selected RR3 target", skinId = id)
 private fun restoreAllRequest() = SkinOperationRequest(OpType.RESTORE_ALL, "Restore all originals?", "", "")

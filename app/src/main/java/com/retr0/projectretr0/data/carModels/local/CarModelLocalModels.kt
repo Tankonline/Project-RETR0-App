@@ -176,8 +176,19 @@ data class InstalledCarModel(
     val addedEntries: List<AddonFileRecord> = emptyList(),
     /** ADDON only: the vehicle folder did not exist before; Remove deletes it once it is empty again. */
     val createdDirectory: Boolean = false,
+    /**
+     * False while an add-on is being copied. The record is written before the first copy so a crash can be
+     * cleaned up; a record still incomplete after process death is an interrupted install, not an installed one.
+     */
+    val complete: Boolean = true,
+    /** Multi-vehicle add-on: every vehicle folder this one install owns (the record is keyed by the first). */
+    val packageVehicles: List<String> = emptyList(),
+    /** Multi-vehicle add-on: vehicle folders that did not exist before and are deleted once empty on Remove. */
+    val createdVehicleDirectories: List<String> = emptyList(),
 ) {
     val key: String get() = vehicleKey(gamePackage, vehicleDirectory)
+    /** Vehicle folders this install occupies. */
+    val ownedVehicles: List<String> get() = packageVehicles.ifEmpty { listOf(vehicleDirectory) }
     val isAddon: Boolean get() = mode == InstallMode.ADDON
 
     fun toJson(): JSONObject = JSONObject()
@@ -189,6 +200,9 @@ data class InstalledCarModel(
         .put("backupRoot", backupRoot ?: JSONObject.NULL)
         .put("addedEntries", JSONArray(addedEntries.map { it.toJson() }))
         .put("createdDirectory", createdDirectory)
+        .put("complete", complete)
+        .put("packageVehicles", JSONArray(packageVehicles))
+        .put("createdVehicleDirectories", JSONArray(createdVehicleDirectories))
 
     companion object {
         fun fromJson(j: JSONObject) = InstalledCarModel(
@@ -200,6 +214,9 @@ data class InstalledCarModel(
             backupRoot = j.optString("backupRoot").takeIf { it.isNotBlank() && it != "null" },
             addedEntries = j.optJSONArray("addedEntries").objects { runCatching { AddonFileRecord.fromJson(it) }.getOrNull() },
             createdDirectory = j.optBoolean("createdDirectory"),
+            complete = j.optBoolean("complete", true),
+            packageVehicles = j.optJSONArray("packageVehicles").strings(),
+            createdVehicleDirectories = j.optJSONArray("createdVehicleDirectories").strings(),
         )
     }
 }
@@ -252,6 +269,9 @@ data class CarModelState(
     fun model(id: String) = models.firstOrNull { it.id == id }
     fun backup(gamePackage: String, vehicleDirectory: String) = backups.firstOrNull { it.key == vehicleKey(gamePackage, vehicleDirectory) }
     fun activeInstall(gamePackage: String, vehicleDirectory: String) = installed.firstOrNull { it.active && it.key == vehicleKey(gamePackage, vehicleDirectory) }
+    /** The active install occupying a vehicle folder, including any folder owned by a multi-vehicle add-on. */
+    fun occupant(gamePackage: String, vehicleDirectory: String) = activeInstall(gamePackage, vehicleDirectory)
+        ?: installed.firstOrNull { it.active && it.gamePackage == gamePackage && vehicleDirectory in it.packageVehicles }
 
     fun toJson(): JSONObject = JSONObject()
         .put("models", JSONArray(models.map { it.toJson() }))

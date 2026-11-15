@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.retr0.projectretr0.IRetr0UserService
 import com.retr0.projectretr0.data.carModels.CarModelErrorCode
+import com.retr0.projectretr0.data.carModels.CarModelLog
 import com.retr0.projectretr0.data.carModels.CommunityCarModel
 import com.retr0.projectretr0.data.carModels.local.BackupStatus
 import com.retr0.projectretr0.data.carModels.local.CarModelActivity
@@ -27,6 +28,7 @@ import com.retr0.projectretr0.data.carModels.local.CarModelBackup
 import com.retr0.projectretr0.data.carModels.local.CarModelPaths
 import com.retr0.projectretr0.data.carModels.local.CarModelState
 import com.retr0.projectretr0.data.carModels.local.InstalledCarModel
+import com.retr0.projectretr0.data.carModels.local.downloadedModels
 import com.retr0.projectretr0.ui.components.*
 import com.retr0.projectretr0.ui.skins.DestructiveConfirmationDialog
 import com.retr0.projectretr0.ui.skins.EmptyState
@@ -39,7 +41,7 @@ import com.retr0.projectretr0.ui.theme.*
 import kotlinx.coroutines.launch
 import java.io.File
 
-enum class CarModelsSection(val label: String) { OVERVIEW("Overview"), LIBRARY("My Models"), APPLIED("Applied"), BACKUPS("Backups"), ACTIVITY("Activity") }
+enum class CarModelsSection(val label: String) { OVERVIEW("Overview"), DOWNLOADED("Downloaded Mods"), LIBRARY("My Models"), APPLIED("Applied"), BACKUPS("Backups"), ACTIVITY("Activity") }
 
 /** Mods home: one top segmented control switching between the untouched Skin Mods flow and Car Models. */
 @Composable
@@ -151,6 +153,11 @@ fun CarModelsScreen(
         if (addon != null) removeAddonTarget = addon else revertTarget = pkg to dir
     }
 
+    // Hub downloads made before media support (or whose images failed) have no local cover: fetch it once
+    // per model per process. Failures are logged by the installer and the placeholder stays.
+    val missingMedia = state.downloadedModels().filter { it.coverPath == null }.map { it.id }
+    LaunchedEffect(missingMedia) { missingMedia.forEach { viewModel.ensureCommunityMedia(it) } }
+
     val currentRoute = routes.last()
     BackHandler(routes.size > 1 && currentRoute !is CarRoute.Import) { back() }
     LaunchedEffect(currentRoute) { onFullScreenChange(currentRoute != CarRoute.Root) }
@@ -171,7 +178,30 @@ fun CarModelsScreen(
         onScan = { requireService()?.let { svc -> run("Verifying backups…") { val problems = viewModel.verifyAllBackups(svc); notice = CarNotice(if (problems == 0) "All original backups verified." else "$problems backups need attention.", problems == 0) } } },
         onRestoreAll = { if (state.installed.any { it.active }) confirmRestoreAll = true else notice = CarNotice("No car models are applied.", true) },
         onOpenModel = { push(CarRoute.LocalDetails(it)) },
-        onApplyModel = { push(CarRoute.Import(it)) },
+        onApplyModel = { modelId ->
+            val model = state.model(modelId)
+            val target = model?.manifest?.target?.vehicleDirectory?.takeIf { it.isNotBlank() }
+            com.retr0.projectretr0.data.carModels.CarModelLog.apply("CLICK", "model=$modelId requestedTarget=${target ?: "none"} package=${gamePackage.id} connected=${liveService != null}")
+            if (model == null || target.isNullOrBlank()) {
+                notice = CarNotice("This model has no valid target vehicle.", false, CarModelErrorCode.IMPORT_INVALID_MANIFEST.code)
+            } else if (liveService == null) {
+                notice = CarNotice("Connect Shizuku to apply car models.", false, CarModelErrorCode.SERVICE_UNAVAILABLE.code)
+            } else {
+                val busyLabel = if (CarModelsViewModel.installModeOf(model.manifest) == com.retr0.projectretr0.data.carModels.local.InstallMode.ADDON) "Installing add-on ${model.name}…" else "Preparing backup and applying ${model.name}…"
+                run(busyLabel) {
+                    com.retr0.projectretr0.data.carModels.CarModelLog.apply("START", "model=$modelId name=${model.name} requestedTarget=$target package=${gamePackage.id}")
+                    viewModel.applyModel(liveService, modelId, gamePackage.id, target)
+                        .onSuccess {
+                            com.retr0.projectretr0.data.carModels.CarModelLog.apply("SUCCESS", "model=$modelId target=$target package=${gamePackage.id}")
+                            notice = CarNotice("${model.name} applied successfully.", true)
+                        }
+                        .onFailure {
+                            com.retr0.projectretr0.data.carModels.CarModelLog.apply("FAILURE", "model=$modelId target=$target package=${gamePackage.id} error=${it.javaClass.simpleName} message=${it.message}")
+                            notice = it.toNotice()
+                        }
+                }
+            }
+        },
         onRevert = ::undoInstall,
         onDeleteBackup = { deleteTarget = it },
         onVerifyBackups = { requireService()?.let { svc -> run("Verifying backups…") { viewModel.verifyAllBackups(svc) } } },
@@ -188,18 +218,27 @@ fun CarModelsScreen(
             onAction = { model, action -> if (action == CarModelAction.DOWNLOAD) push(CarRoute.HubDetails(model)) else toRoot(CarModelsSection.LIBRARY) },
             onMyModels = { toRoot(CarModelsSection.LIBRARY) },
         )
-        is CarRoute.HubDetails -> HubCarModelDetails(currentRoute.model, viewModel.hub, gamePackage, ::back) { toRoot(CarModelsSection.LIBRARY) }
+        is CarRoute.HubDetails -> HubCarModelDetails(currentRoute.model, viewModel.hub, gamePackage, ::back, viewModel::downloadAndImportCommunityModel) { _ ->
+            toRoot(CarModelsSection.DOWNLOADED)
+        }
         is CarRoute.LocalDetails -> {
             val model = state.model(currentRoute.id)
             if (model == null) EmptyState(Icons.Filled.ErrorOutline, "Model not found", "This car model is no longer in your library.", "Back", ::back)
             else {
-                val active = state.installed.any { it.active && it.modelId == model.id }
+                val install = state.installed.firstOrNull { it.active && it.modelId == model.id }
+                val active = install != null
+                val interrupted = install != null && !install.complete
                 CarModelDetailsScreen(
                     model.toDetailsUi(gamePackage), gamePackage, ::back,
-                    primaryLabel = if (active) "Installed" else "Apply car model", primaryIcon = if (active) Icons.Filled.CheckCircle else Icons.Filled.Bolt,
-                    primaryEnabled = !active, onPrimary = { push(CarRoute.Import(model.id)) }, modifier = modifier,
+                    primaryLabel = when { interrupted -> "Install interrupted"; active -> "Installed"; else -> "Apply car model" },
+                    primaryIcon = when { interrupted -> Icons.Filled.ErrorOutline; active -> Icons.Filled.CheckCircle; else -> Icons.Filled.Bolt },
+                    primaryEnabled = !active && liveService != null, onPrimary = { actions.onApplyModel(model.id) }, modifier = modifier,
                     message = uploadProgress?.takeIf { uploadBusy == model.id }
-                        ?: if (active) "Applied to ${state.installed.first { it.active && it.modelId == model.id }.vehicleDirectory}. Remote upload and publish do not change installed game files. Revert it from Applied." else notice?.text,
+                        ?: when {
+                            interrupted -> "The install on ${install!!.vehicleDirectory} was interrupted before every file was copied. Remove it from Applied (originals are restored), then apply again."
+                            active -> "Applied to ${install!!.vehicleDirectory}. Remote upload and publish do not change installed game files. ${if (install.isAddon) "Remove" else "Revert"} it from Applied."
+                            else -> notice?.text ?: applyPreview(model)
+                        },
                     messageCode = notice?.code,
                     onRemove = if (active) null else ({ removeTarget = model.id }),
                     onRemoteDelete = if ((model.remotePublicId != null || model.remoteDraftId != null) && uploadBusy != model.id) ({ remoteDeleteTarget = model.id }) else null,
@@ -222,12 +261,15 @@ fun CarModelsScreen(
                 )
             }
         }
-        is CarRoute.Import -> CarModelImportWizard(
-            viewModel, service, isServiceConnected, gamePackage, currentRoute.modelId,
-            onExit = { toRoot(if (state.installed.any { it.active }) CarModelsSection.APPLIED else CarModelsSection.LIBRARY) },
-            onViewBackups = { toRoot(CarModelsSection.BACKUPS) },
-            onRevertRequested = { pkg, dir -> toRoot(CarModelsSection.APPLIED); undoInstall(pkg, dir) },
-        )
+        is CarRoute.Import -> {
+            com.retr0.projectretr0.data.carModels.CarModelLog.diagnostic("WIZARD_ROUTE", "render import model=${currentRoute.modelId ?: "new"} routeCount=${routes.size} routeIdentity=${System.identityHashCode(currentRoute)}")
+            CarModelImportWizard(
+                viewModel, service, isServiceConnected, gamePackage, currentRoute.modelId,
+                onExit = { toRoot(if (state.installed.any { it.active }) CarModelsSection.APPLIED else CarModelsSection.LIBRARY) },
+                onViewBackups = { toRoot(CarModelsSection.BACKUPS) },
+                onRevertRequested = { pkg, dir -> toRoot(CarModelsSection.APPLIED); undoInstall(pkg, dir) },
+            )
+        }
     }
 
     revertTarget?.let { (pkg, dir) ->
@@ -410,6 +452,7 @@ fun CarModelsRoot(
         Box(Modifier.weight(1f).fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 720.dp).padding(horizontal = 18.dp)) {
             when (section) {
                 CarModelsSection.OVERVIEW -> OverviewSection(state, connected, gameInstalled, gamePackage, actions)
+                CarModelsSection.DOWNLOADED -> DownloadedModsSection(skins = emptyList(), carModels = state.downloadedModels(), onSkin = {}, onCarModel = actions.onOpenModel)
                 CarModelsSection.LIBRARY -> LibrarySection(state, gamePackage, actions)
                 CarModelsSection.APPLIED -> AppliedSection(state, connected, actions)
                 CarModelsSection.BACKUPS -> BackupsSection(state, connected, actions)
@@ -574,4 +617,15 @@ private fun ActivitySection(activity: List<CarModelActivity>) = LazyColumn(Modif
             ErrorCodeText(code)
         }
     }
+}
+
+/**
+ * What Apply will do, from the manifest alone (no privileged I/O). Add-ons are new cars: their vehicle folder
+ * may not exist in RR3 yet, and shared depot files they update are backed up first.
+ */
+internal fun applyPreview(model: com.retr0.projectretr0.data.carModels.local.LocalCarModel): String? {
+    if (CarModelsViewModel.installModeOf(model.manifest) != com.retr0.projectretr0.data.carModels.local.InstallMode.ADDON) return null
+    val shared = model.manifest.files.count { it.destinationRoot != com.retr0.projectretr0.data.carModels.manifest.CarModelDestinationRoot.VEHICLE }
+    val sharedText = if (shared == 0) "" else " It also updates $shared shared game files; the originals are backed up and restored when you remove it."
+    return "Add-on car: ${model.vehicleDirectory} is added to RR3 if it isn't installed yet.$sharedText"
 }

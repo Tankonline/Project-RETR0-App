@@ -2,6 +2,42 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.8]
+
+### Added
+- Added a dedicated **Downloaded Mods** section to the Mods experience, showing Community Hub car models and skins that are already stored locally and ready to apply.
+- Added resumable Community Hub car-model downloads. Interrupted downloads keep verified files in a partial workspace and reuse them on retry instead of downloading them again.
+- Added a complete Community Hub download/import transaction: download plan, free-space check, `.part` files, size and SHA-256 verification, manifest validation, optional cover/screenshot downloads, atomic library replacement, and rollback on failure.
+- Added automatic media backfill for older downloaded car models that do not yet have a cover or screenshots.
+- Added support for Community Hub download plans containing manifest checksums, file checksums/sizes, cover metadata, and ordered screenshots, with compatibility fallbacks for older Worker responses.
+- Added multi-vehicle and shared-root car-model package support, including package-level inspection, collision previews, safe destination handling, and add-on versus full-replacement installation behavior.
+- Added explicit car-model download/import models and stable error codes for unsafe paths, invalid manifests, corrupt downloads, insufficient storage, missing files, and service failures.
+- Added Shizuku connection-policy tests and clearer reconnect behavior so stale binders, delayed binding, permission state, and binder death do not incorrectly report the service as ready.
+- Added atomic skin import/restore support through the Shizuku service, including SHA-256 verification before and after replacement.
+- Added stricter privileged path validation and safer recursive file operations for RR3 data, Documents, Downloads, and supported package roots.
+- Improved the native Sonic extractor for safer ZIP entry handling, including path validation, ZIP64 support, data descriptors, compression checks, and secure directory creation.
+
+### Changed
+- Car-model imports now stage selected folders in app-private storage, hash and validate files before saving them to the library, preserve install mode and manifest metadata, and never touch RR3 game files during import.
+- Car-model application now verifies the original backup before modifying the game, starts from stock when replacing an already applied model, verifies copied hashes, removes stale replacement files, and restores originals after failed operations when possible.
+- Community Hub catalog and download contracts now reject missing or unavailable asset objects rather than exposing unusable models, while preserving truthful offline, unavailable, empty, and error UI states.
+- Skin operations now recover pending transactions after service reconnection and verify target hashes for apply and revert operations.
+- Updated release metadata to `versionName 1.1.8` and `versionCode 20`.
+
+### Verification
+- Added unit coverage for download-plan parsing, resumable and verified car-model downloads, media handling, library replacement and rollback, add-on packages, multi-vehicle packages, manifest/layout detection, and Shizuku reconnect policy.
+- Added Worker contract coverage for manifest/file checksums, cover and screenshot routes, R2 object validation, multi-vehicle downloads, AI response normalization, provenance, diagnostics, and authorization claims.
+- Debug assembly was verified successfully for the release branch. Full unit-test, lint, signed-release, and device smoke-test gates remain release-publishing requirements.
+
+### Compatibility and limitations
+- Minimum Android version remains Android 8.0/API 26; target and compile SDK remain 35.
+- Shizuku is required for privileged RR3 file operations and skin/car-model application. OEM behavior, Shizuku startup method, and RR3 package variant can affect availability.
+- Community Hub downloads require network access and depend on the configured Worker, R2 objects, manifests, and media contracts.
+- Firebase email-link/Google authentication remains prepared but inactive; AI/web research remains backend-dependent; no APK self-updater or in-app music downloader is included.
+
+## [1.1.7]
+
+
 ## [1.1.7]
 
 ### Fixed

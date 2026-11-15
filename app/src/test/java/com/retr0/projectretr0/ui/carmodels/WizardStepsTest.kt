@@ -30,6 +30,19 @@ class WizardStepsTest {
         assertFalse(WizardSteps.canApply(InstallMode.ADDON, backupVerified = true, addon = occupied))
     }
 
+    @Test fun targetAdvanceRequiresCompletedSuccessfulInspection() {
+        assertFalse(WizardSteps.canAdvanceTarget(InstallMode.ADDON, inspectionComplete = false, inspectionSucceeded = false))
+        assertFalse(WizardSteps.canAdvanceTarget(InstallMode.ADDON, inspectionComplete = true, inspectionSucceeded = false))
+        assertTrue(WizardSteps.canAdvanceTarget(InstallMode.ADDON, inspectionComplete = true, inspectionSucceeded = true))
+        assertFalse(WizardSteps.canAdvanceTarget(null, inspectionComplete = true, inspectionSucceeded = true))
+    }
+
+    @Test fun inspectionFingerprintIsStableForEquivalentInputs() {
+        val first = WizardSteps.inspectionFingerprint("model", "source", "manifest-hash", "r3_row", "ADDON", "vehicle", "service")
+        val second = WizardSteps.inspectionFingerprint("model", "source", "manifest-hash", "r3_row", "ADDON", "vehicle", "service")
+        assertEquals(first, second)
+    }
+
     @Test fun addonFolderSuggestionsAreSafeDirectoryNames() {
         assertEquals("BMW_M3_GTR_v2", WizardSteps.suggestAddonFolder(" BMW M3 GTR (v2) "))
         assertEquals("", WizardSteps.suggestAddonFolder(null))

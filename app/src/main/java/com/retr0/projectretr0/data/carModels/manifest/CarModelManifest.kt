@@ -6,6 +6,8 @@ import org.json.JSONObject
 /** Portable description of a complete, generic RR3 vehicle-directory package. */
 data class CarModelManifest(
     val schemaVersion: Int = 1,
+    /** Every vehicle directory discovered in a multi-vehicle package. Empty means legacy single vehicle. */
+    val vehicleDirectories: List<String> = emptyList(),
     /** Stable local transaction identity; never sent to Community Hub. */
     val transactionId: String? = null,
     /** Local-only pre-install collision/backup journal. Omitted from community manifests. */
@@ -28,6 +30,7 @@ data class CarModelManifest(
     fun toJson(): JSONObject = JSONObject().apply {
         put("manifestVersion", schemaVersion)
         put("schemaVersion", schemaVersion)
+        put("vehicleDirectories", JSONArray(vehicleDirectories))
         transactionId?.let { put("transactionId", it) }
         put("packageType", packageType)
         put("metadata", metadata.toJson())
@@ -50,6 +53,7 @@ data class CarModelManifest(
             val files = json.optJSONArray("files") ?: throw IllegalArgumentException("files is required")
             return CarModelManifest(
                 schemaVersion = json.optInt("schemaVersion", 1),
+                vehicleDirectories = json.optJSONArray("vehicleDirectories").strings(),
                 transactionId = json.optString("transactionId").takeIf { it.isNotBlank() },
                 localInstallJournal = json.optJSONObject("localInstallJournal")?.let { LocalInstallJournal.fromJson(it) },
                 packageType = json.optString("packageType", "rr3-car-model"),
@@ -177,7 +181,9 @@ object CarModelManifestValidator {
         require(manifest.packageType == "rr3-car-model") { "Unsupported package type" }
         val mode = manifest.installMode.uppercase()
         require(mode in setOf("REPLACE", "ADDON")) { "Unsupported install mode" }
-        require(manifest.metadata.name.isNotBlank() && manifest.packageId.isNotBlank() && manifest.target.vehicleDirectory.isNotBlank()) { "Incomplete package metadata" }
+        require(manifest.metadata.name.isNotBlank() && manifest.packageId.isNotBlank() && (manifest.target.vehicleDirectory.isNotBlank() || manifest.vehicleDirectories.isNotEmpty())) { "Incomplete package metadata" }
+        require(manifest.vehicleDirectories.distinct().size == manifest.vehicleDirectories.size) { "Duplicate vehicle directories" }
+        manifest.vehicleDirectories.forEach { require(Regex("[A-Za-z0-9_-]{1,120}").matches(it)) { "Invalid vehicle directory: $it" } }
         if (manifest.supportedGamePackages.isNotEmpty()) {
             require(manifest.supportedGamePackages.all { it.isNotBlank() }) { "Supported game packages must not be blank" }
         }

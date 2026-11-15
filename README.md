@@ -19,13 +19,24 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 ### Current release
 
-- **Version:** `1.1.7` (`versionCode 19`)
+- **Version:** `1.1.8` (`versionCode 20`)
 - **Application ID / namespace:** `com.retr0.projectretr0`
 - **Minimum Android:** Android 8.0 / API 26
 - **Target and compile SDK:** API 35
 - **Supported RR3 packages:** `com.ea.games.r3_row` (Global/ROW) and `com.ea.games.r3_na` (North America)
 
 The app requires Shizuku for privileged RR3 file and package operations; local browsing and other non-privileged UI may still open without an active Shizuku session. On the dashboard, the primary action is labeled **Install Project RETR0**. The dashboard status/refresh path now reports unavailable services clearly and retries failed Shizuku UserService connections without claiming readiness before a live binder is available.
+
+### What is included in v1.1.8
+
+- **Downloaded Mods:** Community Hub downloads are now visible in one place for quick access to downloaded car models and skins.
+- **Safer car-model downloads:** Downloads use a verified plan, free-space checks, resumable partial files, size/SHA-256 validation, manifest validation, optional media downloads, and rollback-safe library replacement.
+- **Car-model packages:** Multi-vehicle packages, shared data roots, add-ons, full replacements, collision previews, backup-first installation, and restore/recovery behavior are supported.
+- **Community Hub media:** Covers and screenshots are downloaded, validated, stored with the model, and backfilled for older library entries when possible.
+- **Shizuku reliability:** Reconnect decisions now account for binder liveness, permission state, delayed binds, retries, and stale binder death callbacks.
+- **Safer installation:** Skin and car-model operations verify backups and hashes before and after touching RR3 files; the native Sonic extractor rejects unsafe archive paths and handles supported ZIP layouts more defensively.
+
+These features still require a compatible RR3 package, available storage, network access for Community Hub content, and Shizuku authorization for privileged game-file operations.
 
 ---
 

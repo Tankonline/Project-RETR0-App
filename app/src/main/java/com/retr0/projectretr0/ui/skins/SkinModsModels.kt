@@ -11,7 +11,7 @@ data class OriginalBackup(val id: String, val vehicle: String, val targetName: S
 enum class OpType { APPLY, REVERT, RESTORE_ALL, SCAN, VERIFY }
 enum class OpResult { ACTIVE, SUCCESS, FAILED, PARTIAL, CANCELLED }
 data class ActivityOp(val id: String, val type: OpType, val title: String, val stage: String, val progress: Int, val bytes: String, val timestamp: String, val result: OpResult, val error: String? = null)
-enum class SkinModsSection(val label: String) { OVERVIEW("Overview"), LIBRARY("My Skins"), APPLIED("Applied"), BACKUPS("Backups"), ACTIVITY("Activity") }
+enum class SkinModsSection(val label: String) { OVERVIEW("Overview"), DOWNLOADED("Downloaded Mods"), LIBRARY("My Skins"), APPLIED("Applied"), BACKUPS("Backups"), ACTIVITY("Activity") }
 enum class SkinModsPreviewState { LOADING, EMPTY, CONTENT, ERROR, OFFLINE, DISCONNECTED, MISSING_GAME, ACTIVE, SUCCESS, PARTIAL_FAILURE }
 
 object FakeSkinMods {

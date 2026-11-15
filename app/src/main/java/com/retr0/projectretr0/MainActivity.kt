@@ -110,6 +110,8 @@ class MainActivity : ComponentActivity() {
         private const val CODE_PACKAGE_MISMATCH = "PKG_MIGRATION_E001"
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 1000
         private const val SHIZUKU_DIAGNOSTIC_TAG = "RETR0_SHIZUKU_DIAG"
+        /** Minimum gap between status-monitor reconnect attempts. */
+        private const val AUTO_RECONNECT_INTERVAL_MS = 15_000L
         private const val SHIZUKU_BIND_TIMEOUT_MS = 5_000L
 
         /** Shizuku key for the app's own helper. The scheduled backup uses its own tag, so neither can kill the other. */
@@ -202,6 +204,8 @@ class MainActivity : ComponentActivity() {
     private var modsKind by mutableStateOf(ModsKind.SKINS)
     // One-shot: which section Mods opens on next time (Storage → "Review backups"). Reset once consumed.
     private var modsOpenOnBackups by mutableStateOf(false)
+    /** Set when a Community Hub car-model download has been persisted; opens Mods → Car Models → Downloaded Mods. */
+    private var modsOpenOnDownloaded by mutableStateOf(false)
     
     private var installService: Retr0InstallService.LocalBinder? by mutableStateOf(null)
     private var isInstallServiceBound by mutableStateOf(value = false)
@@ -277,6 +281,10 @@ class MainActivity : ComponentActivity() {
     private var storageStatusJob: Job? = null
     private var userServiceBindJob: Job? = null
     private var userServiceBinder: IBinder? = null
+    /** Death recipient linked to [userServiceBinder]; unlinked whenever that binder is dropped so it cannot leak this Activity. */
+    private var userServiceDeathRecipient: IBinder.DeathRecipient? = null
+    /** Last time the status monitor started an automatic reconnect (rate limit). */
+    private var lastAutoReconnectAt = 0L
     private var bindInProgress = false
     private var activityStarted = false
     /** How many times an outdated Shizuku helper was killed and re-bound in this activity. */
@@ -308,6 +316,9 @@ class MainActivity : ComponentActivity() {
             val activityDestroyed = isDestroyed
             if (isFinishing || activityDestroyed) {
                 Log.w(TAG, "code=SHIZUKU_USVC_STALE_CALLBACK stage=callback_ignored finishing=$isFinishing destroyed=$activityDestroyed")
+                // Release the registration: Shizuku keeps this connection (and so this Activity) in a static map otherwise.
+                val connection: ServiceConnection = this
+                runCatching { Shizuku.unbindUserService(userServiceArgs, connection, false) }
                 return
             }
             if (binder == null || !binder.isBinderAlive) {
@@ -346,12 +357,27 @@ class MainActivity : ComponentActivity() {
             } else {
                 Log.i(GraphicsPathValidator.LOG_TAG, "code=GFX_I100 stage=helper_version_check helperApi=$helperApi required=${GraphicsPathValidator.SERVICE_API} restarts=$staleHelperRestarts result=ok")
             }
+            unlinkUserServiceDeath()
             userServiceBinder = binder
             runCatching {
-                binder.linkToDeath({
-                    Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BINDER_DEATH stage=death_recipient")
-                    runOnUiThread { handleUserServiceLost("RETR0 user service binder died") }
-                }, 0)
+                val recipient = IBinder.DeathRecipient {
+                    Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SERVICE_BINDER_DIED stage=death_recipient")
+                    runOnUiThread {
+                        // Only the binder in use matters. A helper replaced on purpose (refresh, permission
+                        // re-grant, stale-version restart) dies after its successor connected; reacting to it
+                        // would mark the healthy new helper as lost.
+                        if (!com.retr0.projectretr0.installer.ShizukuConnectionPolicy.isCurrentBinder(userServiceBinder, binder)) {
+                            Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SERVICE_BINDER_DIED stage=ignored reason=stale_binder")
+                            return@runOnUiThread
+                        }
+                        handleUserServiceLost("RETR0 privileged service stopped. Reconnecting...")
+                        // Helper crash or kill while Shizuku itself is still up: reconnect instead of staying offline.
+                        Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SERVICE_RECONNECT stage=after_binder_death")
+                        scheduleUserServiceBindRetry()
+                    }
+                }
+                binder.linkToDeath(recipient, 0)
+                userServiceDeathRecipient = recipient
                 Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BINDER_LIVENESS stage=death_recipient_registered alive=${binder.isBinderAlive}")
             }.onFailure { Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_USVC_BINDER_DEATH_RECIPIENT_FAILURE error=${it.javaClass.simpleName}", it) }
             service = helper
@@ -372,6 +398,8 @@ class MainActivity : ComponentActivity() {
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.w(TAG, "RETR0 user service disconnected name=$name")
             handleUserServiceLost("RETR0 privileged service disconnected")
+            Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SERVICE_RECONNECT stage=after_disconnect")
+            scheduleUserServiceBindRetry()
         }
 
         override fun onBindingDied(name: ComponentName?) {
@@ -391,7 +419,8 @@ class MainActivity : ComponentActivity() {
             .tag(MAIN_HELPER_TAG)
             // Increment when the UserService implementation or its Application setup changes.
             // Shizuku uses this to invalidate a previously cached service process.
-            .version(7)
+            // 8: copyFile/writeFile became temp+fsync+rename (atomic) in the helper.
+            .version(9)
     }
 
     /** Untagged args used by builds before the helper had a tag; only used to remove that old helper. */
@@ -597,6 +626,7 @@ class MainActivity : ComponentActivity() {
         runCatching { Shizuku.removeBinderReceivedListener(binderReceivedListener) }
         runCatching { Shizuku.removeBinderDeadListener(binderDeadListener) }
         runCatching { Shizuku.removeRequestPermissionResultListener(permissionResultListener) }
+        unlinkUserServiceDeath()
         if (isServiceBound || bindInProgress) {
             runCatching { Shizuku.unbindUserService(userServiceArgs, serviceConnection, false) }
         }
@@ -815,13 +845,14 @@ class MainActivity : ComponentActivity() {
                     AppMode.COMMUNITY -> CommunityGalleryScreen(onFullScreenChange = { skinsFullScreen = it })
                     AppMode.SKIN_MODS -> {
                         val openBackups = modsOpenOnBackups
-                        // The sections are read once when the screen is first composed, so the flag can be reset right away.
-                        LaunchedEffect(Unit) { modsOpenOnBackups = false }
+                        val openDownloaded = modsOpenOnDownloaded
+                        // The sections are read once when the screen is first composed, so the flags can be reset right away.
+                        LaunchedEffect(Unit) { modsOpenOnBackups = false; modsOpenOnDownloaded = false }
                         ModsHomeScreen(
                             kind = modsKind, onKind = { modsKind = it }, isServiceConnected = isServiceBound, gamePackage = GamePackage.ROW, storageText = availableSpace, service = service,
                             onBrowseCommunity = { currentMode = AppMode.COMMUNITY }, onStorage = { openMode(AppMode.STORAGE) }, onConnect = ::requestShizukuPermission, onFullScreenChange = { skinsFullScreen = it },
                             initialSkinSection = if (openBackups) SkinModsSection.BACKUPS else SkinModsSection.OVERVIEW,
-                            initialCarSection = if (openBackups) CarModelsSection.BACKUPS else CarModelsSection.OVERVIEW,
+                            initialCarSection = when { openBackups -> CarModelsSection.BACKUPS; openDownloaded -> CarModelsSection.DOWNLOADED; else -> CarModelsSection.OVERVIEW },
                         )
                     }
                     AppMode.STORAGE -> StorageScreen(
@@ -886,7 +917,7 @@ class MainActivity : ComponentActivity() {
                     .border(1.dp, RetroBorder, RoundedCornerShape(20.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Box(Modifier.size(7.dp).background(RetroSuccess, CircleShape))
                 Spacer(Modifier.width(7.dp))
-                Text("v1.0.1 · Stable", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
+                Text("v${BuildConfig.VERSION_NAME} · Stable", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp), color = RetroTextMuted)
             }
             Spacer(modifier = Modifier.height(26.dp).navigationBarsPadding())
         }
@@ -1758,6 +1789,8 @@ class MainActivity : ComponentActivity() {
                 CarModelsHubTab(
                     gamePackage = GamePackage.ROW,
                     onOpenMyModels = { modsKind = ModsKind.CARS; currentMode = AppMode.SKIN_MODS },
+                    // Called only after the model is persisted in the car-model library.
+                    onOpenDownloaded = { modsKind = ModsKind.CARS; modsOpenOnDownloaded = true; currentMode = AppMode.SKIN_MODS },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     onFullScreenChange = { focusedSkinRoute = it },
                     refreshToken = carModelsRefreshToken,
@@ -2622,6 +2655,18 @@ class MainActivity : ComponentActivity() {
                     lastPermission = permissionGranted
                 }
                 updateShizukuStatus(binderAvailable, permissionGranted)
+                // Recovery path when no callback will come (helper died while backgrounded, retries exhausted):
+                // reconnect, rate-limited so a helper that cannot start is not hammered.
+                val now = SystemClock.elapsedRealtime()
+                val connection = com.retr0.projectretr0.installer.ShizukuConnectionPolicy.State(
+                    shizukuBinderAlive = binderAvailable, permissionGranted = permissionGranted, shizukuPreV11 = isShizukuPreV11(),
+                    serviceBound = isServiceBound, bindInProgress = bindInProgress, retryScheduled = userServiceBindJob?.isActive == true,
+                )
+                if (com.retr0.projectretr0.installer.ShizukuConnectionPolicy.shouldAutoReconnect(connection, now, lastAutoReconnectAt, AUTO_RECONNECT_INTERVAL_MS)) {
+                    lastAutoReconnectAt = now
+                    Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SERVICE_RECONNECT stage=monitor")
+                    bindRetr0Service()
+                }
                 delay(2.seconds)
             }
         }
@@ -2647,6 +2692,13 @@ class MainActivity : ComponentActivity() {
             isSystemStatusLoading = false
             return 
         }
+        if (isShizukuPreV11()) {
+            // Shizuku < 11 has no permission API or user services; every call below would throw.
+            shizukuStatus = "Shizuku is too old. Update Shizuku to version 11 or newer."
+            isPermissionGranted = false
+            isSystemStatusLoading = false
+            return 
+        }
         val permGranted = permissionOverride ?: try {
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (_: Exception) {
@@ -2663,6 +2715,11 @@ class MainActivity : ComponentActivity() {
         Log.i(SHIZUKU_DIAGNOSTIC_TAG, "code=SHIZUKU_PERMISSION_REQUEST stage=preflight requestId=$SHIZUKU_PERMISSION_REQUEST_CODE binderAvailable=$binderAvailable")
         if (!binderAvailable) {
             Toast.makeText(this, "Shizuku binder is unavailable. Open Shizuku and restart its service.", Toast.LENGTH_SHORT).show()
+            return 
+        }
+        if (isShizukuPreV11()) {
+            Log.w(SHIZUKU_DIAGNOSTIC_TAG, "code=SERVICE_PERMISSION stage=preflight result=unsupported_shizuku_version")
+            Toast.makeText(this, "This Shizuku version is too old. Update Shizuku to version 11 or newer.", Toast.LENGTH_LONG).show()
             return 
         }
         val permissionGranted = runCatching {
@@ -2683,11 +2740,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun canAttemptServiceBind(): Boolean {
-        return runCatching { Shizuku.pingBinder() }.getOrDefault(false) &&
+        return runCatching { Shizuku.pingBinder() }.getOrDefault(false) && !isShizukuPreV11() &&
             runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
     }
 
+    /** Shizuku before v11 has neither the permission API nor user services. Only meaningful while the binder is up. */
+    private fun isShizukuPreV11(): Boolean = runCatching { Shizuku.pingBinder() && Shizuku.isPreV11() }.getOrDefault(false)
+
+    private fun unlinkUserServiceDeath() {
+        val binder = userServiceBinder
+        val recipient = userServiceDeathRecipient
+        if (binder != null && recipient != null) runCatching { binder.unlinkToDeath(recipient, 0) }
+        userServiceDeathRecipient = null
+    }
+
     private fun handleUserServiceLost(reason: String) {
+        unlinkUserServiceDeath()
         userServiceBinder = null
         service = null
         isServiceBound = false

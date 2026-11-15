@@ -37,29 +37,35 @@ object CarModelFolderScanner {
                 val rootKind = when {
                     !layout.structured -> CarModelDestinationRoot.VEHICLE
                     destination.startsWith("vehicles/data/") -> CarModelDestinationRoot.VEHICLES_DATA
-                    destination.startsWith("vehicles/${layout.vehicle}/") -> CarModelDestinationRoot.VEHICLE
+                    destination.startsWith("vehicles/") && destination.split('/').size > 2 -> CarModelDestinationRoot.VEHICLE
                     destination.startsWith("data/") -> CarModelDestinationRoot.DEPOT_DATA
                     else -> CarModelDestinationRoot.DEPOT_ROOT
                 }
-                val targetRelative = when (rootKind) {
-                    CarModelDestinationRoot.VEHICLE -> destination.removePrefix("vehicles/${layout.vehicle}/")
-                    CarModelDestinationRoot.VEHICLES_DATA -> destination.removePrefix("vehicles/data/")
-                    CarModelDestinationRoot.DEPOT_DATA -> destination.removePrefix("data/")
-                    CarModelDestinationRoot.DEPOT_ROOT -> destination
-                }.removePrefix("paste to depot/")
-                val normalizedDestination = when (rootKind) {
-                    CarModelDestinationRoot.VEHICLE -> targetRelative
-                    CarModelDestinationRoot.VEHICLES_DATA -> "vehicles/data/$targetRelative"
-                    CarModelDestinationRoot.DEPOT_DATA -> "data/$targetRelative"
-                    CarModelDestinationRoot.DEPOT_ROOT -> targetRelative
-                }
+                // Keep legacy single-vehicle manifests relative to the selected vehicle, while
+                // multi-vehicle manifests retain the complete vehicles/<vehicle>/ path.
+                val normalizedDestination = if (
+                    rootKind == CarModelDestinationRoot.VEHICLE && detected.vehicleDirectory != null &&
+                    destination.startsWith("vehicles/${detected.vehicleDirectory}/")
+                ) destination.removePrefix("vehicles/${detected.vehicleDirectory}/") else destination.removePrefix("paste to depot/").removePrefix("depot/")
                 CarModelManifestValidator.validateRelativePath(normalizedDestination)
                 CarModelFile(relative, normalizedDestination, classification.role, classification.format, classification.variant, classification.role != "unknown", file.length(), sha256(file), contentType(file), rootKind)
             }.onFailure { errors += "$relative: ${it.message}" }.getOrNull().also { onFileHashed(++hashed, files.size) }
         }.filterNotNull()
         if (entries.isEmpty()) errors += "No regular files found"
         if (errors.isNotEmpty() && errors.all { it.contains("recognised RR3") || it.contains("Incomplete package metadata") || it.contains("Manifest contains no files") }) errors.clear()
-        val manifest = CarModelManifest(metadata = metadata, supportedGamePackages = emptyList(), target = target.copy(vehicleDirectory = layout.vehicle, relativeRoot = "files/.depot"), vehicleRoot = layout.vehicle, files = entries, warnings = warnings.toList())
+        val vehicleDirectories = entries.mapNotNull { entry ->
+            if (entry.destinationRoot == CarModelDestinationRoot.VEHICLE && entry.destinationPath.startsWith("vehicles/")) entry.destinationPath.split('/').getOrNull(1) else null
+        }.distinct()
+        val multiVehicle = vehicleDirectories.size > 1
+        val manifest = CarModelManifest(
+            metadata = metadata,
+            vehicleDirectories = vehicleDirectories,
+            supportedGamePackages = emptyList(),
+            target = target.copy(vehicleDirectory = if (multiVehicle) "" else layout.vehicle, relativeRoot = "files/.depot"),
+            vehicleRoot = if (multiVehicle) "vehicles" else layout.vehicle,
+            files = entries,
+            warnings = warnings.toList(),
+        )
         runCatching { CarModelManifestValidator.validate(manifest.copy(supportedGamePackages = listOf("com.ea.games.r3_row"))) }.onFailure { error ->
             if (entries.isNotEmpty() && !error.message.orEmpty().contains("Manifest contains no files")) errors += error.message ?: "Invalid manifest"
         }
@@ -82,7 +88,6 @@ object CarModelFolderScanner {
             }
         }
         val vehicle = detected.vehicleDirectory
-            ?: effectivePaths.firstOrNull { it.startsWith("vehicles/") && it.split('/').size >= 3 }?.split('/')?.getOrNull(1)
             ?: targetFallback(fallback, warnings)
         val hasStructured = detected.kind == CarModelLayoutDetector.Kind.DEPOT_CONTENT || effectivePaths.any {
             it == "data/events.dat.nct" || it.startsWith("vehicles/") ||
@@ -92,9 +97,10 @@ object CarModelFolderScanner {
         return if (hasStructured) Layout(vehicle, true) { originalPath ->
             val path = if (prefix.isNotEmpty() && originalPath.startsWith("$prefix/")) originalPath.removePrefix("$prefix/") else originalPath
             when {
-                path.startsWith("vehicles/$vehicle/") || path.startsWith("vehicles/data/") || path.startsWith("data/") -> path
+                path.startsWith("vehicles/data/") || path.startsWith("data/") -> path
+                path.startsWith("vehicles/$vehicle/") -> path
                 path == "vehicles/$vehicle" -> null
-                path.startsWith("vehicles/") -> { warnings += "Rejected vehicle path for a different vehicle: $path"; null }
+                path.startsWith("vehicles/") -> if (detected.vehicleDirectory == null) path else { warnings += "Rejected vehicle path for a different vehicle: $path"; null }
                 path.substringAfterLast('/').equals("gametext.txt", true) || path.substringAfterLast('/').startsWith("text_", true) || path.substringAfterLast('/').equals("asset_list_base.txtCache.txt", true) -> path
                 path.contains('/') -> { warnings += "Rejected unknown depot path: $path"; null }
                 else -> { warnings += "Rejected unknown top-level file for add-on: $path"; null }

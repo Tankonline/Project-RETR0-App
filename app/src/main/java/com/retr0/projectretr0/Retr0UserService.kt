@@ -54,6 +54,7 @@ class Retr0UserService : IRetr0UserService.Stub() {
 
     private companion object {
         private const val TAG = "RETR0_INSTALLER_SVC"
+        private const val MAX_PERMISSION_ENTRIES = 500_000
         private const val MUSIC_LIBRARY_TAG = "RETR0_MUSIC_LIBRARY"
         
         private val ALLOWED_ROOTS = listOf(
@@ -145,17 +146,24 @@ class Retr0UserService : IRetr0UserService.Stub() {
             val dstFile = File(destination)
             dstFile.parentFile?.mkdirs()
 
-            // Native copy for better reliability and performance
+            // Copy to a hidden sibling and rename over the destination, so a helper killed mid-copy
+            // (Shizuku restart, low memory) can never leave a truncated game file behind.
+            val tempFile = File(dstFile.parentFile, ".${dstFile.name}.retr0-copy-${System.nanoTime()}")
             try {
-                val process = Runtime.getRuntime().exec(arrayOf("cp", source, destination))
-                if (process.waitFor() == 0) return true
-            } catch (_: Exception) {}
-
-            // Fallback to JVM copy
-            FileInputStream(srcFile).use { input ->
-                FileOutputStream(dstFile).use { output ->
-                    input.copyTo(output)
+                val nativeOk = try {
+                    Runtime.getRuntime().exec(arrayOf("cp", source, tempFile.absolutePath)).waitFor() == 0 && tempFile.length() == srcFile.length()
+                } catch (_: Exception) { false }
+                if (!nativeOk) {
+                    FileInputStream(srcFile).use { input ->
+                        FileOutputStream(tempFile).use { output -> input.copyTo(output); output.fd.sync() }
+                    }
                 }
+                if (!tempFile.renameTo(dstFile)) {
+                    Log.e(TAG, "code=SERVICE_OPERATION_FAILURE op=copyFile stage=rename destination=$destination")
+                    return false
+                }
+            } finally {
+                if (tempFile.exists()) tempFile.delete()
             }
             true
         } catch (e: Exception) {
@@ -429,6 +437,35 @@ class Retr0UserService : IRetr0UserService.Stub() {
             listOf("files/.depot/eds", "files/.depot/feats", "files/apk/res/eds", "files/apk/res/feats").joinToString(" ") { dir(it) }
     }
 
+    override fun repairGameDataPermissions(packageRoot: String): String {
+        val allowedRoots = listOf("/storage/emulated/0/Android/data/com.ea.games.r3_row", "/storage/emulated/0/Android/data/com.ea.games.r3_na")
+        if (packageRoot !in allowedRoots) return "repair=refused"
+        val root = File(packageRoot)
+        if (!root.isDirectory) return "repair=missing"
+        val myUid = android.os.Process.myUid()
+        var checked = 0; var fixed = 0; var failed = 0; var foreign = 0
+        // Only entries this helper (shell) owns, never through symlinks, only adding group bits: files g+rw,
+        // folders g+rwx. RR3 reaches its tree through group ext_data_rw, so this is what lets it save again.
+        fun visit(file: File) {
+            if (checked >= MAX_PERMISSION_ENTRIES) return
+            val st = try { android.system.Os.lstat(file.path) } catch (_: Exception) { failed++; return }
+            checked++
+            if (android.system.OsConstants.S_ISLNK(st.st_mode)) return
+            val isDir = android.system.OsConstants.S_ISDIR(st.st_mode)
+            if (st.st_uid == myUid) {
+                val wanted = st.st_mode or (if (isDir) 0b000_111_000 else 0b000_110_000)
+                if (wanted != st.st_mode) {
+                    try { android.system.Os.chmod(file.path, wanted and 0b111_111_111_111); fixed++ } catch (_: Exception) { failed++ }
+                }
+            } else if (file != root) foreign++
+            if (isDir) file.listFiles()?.forEach(::visit)
+        }
+        visit(root)
+        val summary = "checked=$checked fixed=$fixed failed=$failed notOwned=$foreign capped=${checked >= MAX_PERMISSION_ENTRIES}"
+        Log.i(TAG, "code=SERVICE_PERMISSION_REPAIR stage=complete root=${root.name} $summary")
+        return summary
+    }
+
     private fun isValidSkinTarget(path: String): Boolean {
         if (!isPathAllowed(path)) return false
         val normalized = path.replace('\\', '/')
@@ -630,7 +667,16 @@ class Retr0UserService : IRetr0UserService.Stub() {
         return try {
             val file = File(path)
             val parentReady = file.parentFile?.mkdirsOrExists() != false
-            if (parentReady) file.writeBytes(data)
+            if (parentReady) {
+                // Temp + fsync + rename: readers see the old content or the new content, never a partial write.
+                val temp = File(file.parentFile, ".${file.name}.retr0-write-${System.nanoTime()}")
+                try {
+                    FileOutputStream(temp).use { output -> output.write(data); output.fd.sync() }
+                    if (!temp.renameTo(file)) throw java.io.IOException("rename failed")
+                } finally {
+                    if (temp.exists()) temp.delete()
+                }
+            }
             Log.i(MUSIC_LIBRARY_TAG, "code=ML_USVC_WRITE stage=write result=$parentReady targetExt=${safeExtension(path)} byteCount=${data.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             parentReady
         } catch (error: Exception) {
