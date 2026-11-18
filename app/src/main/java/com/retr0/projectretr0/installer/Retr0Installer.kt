@@ -38,6 +38,7 @@ import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.UUID
 
 /**
  * Orchestrates the Project RETR0 installation and maintenance process.
@@ -76,6 +77,7 @@ class Retr0Installer(
         
         // COMMUNITY API URL
         private const val COMMUNITY_API_URL = BuildConfig.COMMUNITY_API_BASE_URL
+        private const val AI_ERROR_BODY_LIMIT_BYTES = 8 * 1024
         
         // Workers.dev proxy for globally cached release downloads.
         private const val BOOSTER_URL = COMMUNITY_API_URL
@@ -735,8 +737,10 @@ class Retr0Installer(
         connectTimeoutMs: Int,
         readTimeoutMs: Int,
         historyCount: Int? = null,
+        allowRegistrationRetry: Boolean = true,
     ): AiResponse? {
         val startedAt = System.currentTimeMillis()
+        lastAiFailureMessage = null
         val method = "POST"
         val path = "/troubleshoot"
         val historyMetadata = historyCount?.let { " historyCount=$it" }.orEmpty()
@@ -801,9 +805,30 @@ class Retr0Installer(
                     requestId = requestId,
                     responseContentType = contentType,
                 )
-                connection.errorStream?.close()
-                Log.e(AI_TAG, "RETR0_AI_REQUEST_FAILED status=$responseCode elapsedMs=${System.currentTimeMillis() - startedAt} requestId=${safeLogValue(requestId)}")
-                logAiFailure(AiErrorCode.HTTP_ERROR, mode, startedAt, httpStatus = responseCode, diagnostic = diagnostic)
+                // The body is only parsed for its error code and never logged.
+                val errorBody = runCatching { connection.errorStream?.use { readBoundedText(it, AI_ERROR_BODY_LIMIT_BYTES) } }
+                    .getOrNull().orEmpty()
+                var serverCode = runCatching { JSONObject(errorBody).optString("code").takeIf { it.isNotBlank() } }.getOrNull()
+                Log.e(AI_TAG, "RETR0_AI_REQUEST_FAILED status=$responseCode code=${safeLogValue(serverCode)} elapsedMs=${System.currentTimeMillis() - startedAt} requestId=${safeLogValue(requestId)}")
+                if (CommunityHubErrors.shouldRegisterAndRetryAi(responseCode, serverCode, allowRegistrationRetry)) {
+                    val registration = runCatching { SaveApiClient(context).registerInstallationIfNeeded() }
+                    val registrationError = registration.exceptionOrNull()
+                    if (registrationError == null) {
+                        Log.i(AI_TAG, "RETR0_AI_REGISTERED_RETRYING mode=$mode")
+                        connection.disconnect()
+                        connection = null
+                        // Single retry: the nested call cannot register again.
+                        return executeAiRequest(mode, message, connectTimeoutMs, readTimeoutMs, historyCount, allowRegistrationRetry = false)
+                    }
+                    val registrationCode = (registrationError as? SkinApiException)?.errorCode
+                    Log.e(
+                        AI_TAG,
+                        "RETR0_AI_REGISTRATION_RETRY_FAILED mode=$mode errorType=${registrationError.javaClass.simpleName} " +
+                            "status=${(registrationError as? SkinApiException)?.statusCode ?: "ABSENT"} code=${safeLogValue(registrationCode)}",
+                    )
+                    if (registrationCode != null) serverCode = registrationCode
+                }
+                logAiFailure(AiErrorCode.HTTP_ERROR, mode, startedAt, httpStatus = responseCode, diagnostic = diagnostic, serverCode = serverCode)
                 return null
             }
 
@@ -915,6 +940,25 @@ class Retr0Installer(
         return if (boundary >= 40) value.substring(0, boundary + 1).trim() else value.substring(0, hardMax).trimEnd() + "…"
     }
 
+    /**
+     * User-facing reason for the most recent failed [troubleshootError] / [chatWithAi] call on this
+     * instance, or null when the last call succeeded. Never contains prompts or auth values.
+     */
+    @Volatile
+    var lastAiFailureMessage: String? = null
+        private set
+
+    private fun readBoundedText(input: java.io.InputStream, limit: Int): String {
+        val buffer = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(1024)
+        while (buffer.size() < limit) {
+            val count = input.read(chunk, 0, minOf(chunk.size, limit - buffer.size()))
+            if (count < 0) break
+            buffer.write(chunk, 0, count)
+        }
+        return buffer.toString(Charsets.UTF_8.name())
+    }
+
     private fun safeLogValue(value: String?): String = value
         ?.takeIf { it.isNotBlank() && it.length <= 160 && it.all { char -> char.code in 32..126 } }
         ?: "ABSENT"
@@ -935,7 +979,9 @@ class Retr0Installer(
         error: Throwable? = null,
         httpStatus: Int? = null,
         diagnostic: AiRequestDiagnostic = AiRequestDiagnostic(),
+        serverCode: String? = null,
     ) {
+        lastAiFailureMessage = CommunityHubErrors.aiFailureMessage(code.name, httpStatus, serverCode)
         val status = httpStatus?.let { " httpStatus=$it" }.orEmpty()
         val errorType = error?.javaClass?.simpleName?.let { " errorType=$it" }.orEmpty()
         Log.e(
@@ -1019,40 +1065,45 @@ class Retr0Installer(
         val s = service ?: run { fail("Not connected."); return@withContext false }
         try {
             updateProgress(InstallState.DOWNLOADING, "Downloading ${save.customName}...")
-            val destFile = File(SAVE_HUB_PATH, "${save.customName}.dat")
-            s.createDirectory(SAVE_HUB_PATH)
-
-            val encodedId = java.net.URLEncoder.encode(save.id, "UTF-8")
-            val url = URL("$COMMUNITY_API_URL/v1/saves/$encodedId")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10000
-            connection.readTimeout = 70000
-            connection.setRequestProperty("Accept", "application/octet-stream")
-            if (BuildConfig.COMMUNITY_API_KEY.isNotBlank()) {
-                connection.setRequestProperty("X-RETR0-KEY", BuildConfig.COMMUNITY_API_KEY)
+            // The cache must be on shared storage so the Shizuku helper can read it.
+            val cacheRoot = context.externalCacheDir ?: run {
+                fail("Download error: shared storage is unavailable. FIX: Make sure internal storage is mounted, then try again.")
+                return@withContext false
             }
-            if (connection.responseCode == 200) {
-                val tempFile = File(context.externalCacheDir, "community_download.tmp")
-                connection.inputStream.use { input ->
-                    tempFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                
+            s.createDirectory(SAVE_HUB_PATH)
+            // customName is uploader-controlled: reduce it to one safe path segment and never
+            // overwrite an existing backup with the same name.
+            val baseName = CommunitySaveFileNames.baseName(save.customName, save.id)
+            val fileName = CommunitySaveFileNames.uniqueFileName(baseName) { candidate -> s.exists("$SAVE_HUB_PATH/$candidate") }
+            // Pass the plain hub path to the Shizuku helper (it canonicalises in its own mount
+            // namespace); the canonical comparison here is only a containment guard.
+            val destFile = File(SAVE_HUB_PATH, fileName)
+            if (destFile.canonicalFile.parentFile != File(SAVE_HUB_PATH).canonicalFile) {
+                Log.e(TAG, "Blocked Community save download outside the hub: id=${save.id}")
+                fail("Download blocked: the save has an invalid name. FIX: Report this save to the Hub moderators.")
+                return@withContext false
+            }
+
+            val tempFile = File(cacheRoot, "community_download_${UUID.randomUUID()}.tmp")
+            try {
+                val result = SaveApiClient(context).download(save.id, tempFile)
+                Log.i(TAG, "Community save downloaded: id=${save.id} bytes=${result.size} requestId=${result.requestId ?: "ABSENT"}")
                 if (s.copyFile(tempFile.absolutePath, destFile.absolutePath)) {
-                    tempFile.delete()
-                    updateProgress(InstallState.SUCCESS, "DOWNLOAD COMPLETE", "Saved to your Hub.")
+                    updateProgress(InstallState.SUCCESS, "DOWNLOAD COMPLETE", "Saved to your Hub as ${destFile.name}.")
                     true
                 } else {
-                    tempFile.delete()
                     fail("Failed to save file. FIX: Ensure you have enough storage space.")
                     false
                 }
-            } else {
-                val fixHint = if (connection.responseCode == 404) "FIX: This file may have been deleted from the Hub." else "FIX: Server error or internet issue."
-                fail("Download failed: HTTP ${connection.responseCode}. $fixHint")
+            } catch (error: SkinApiException) {
+                Log.e(TAG, "Community save download failed: id=${save.id} status=${error.statusCode} code=${error.errorCode} requestId=${error.requestId}")
+                val requestSuffix = error.requestId?.let { " Request ID: $it." }.orEmpty()
+                val status = error.statusCode?.takeIf { it >= 400 }?.let { "HTTP $it. " }.orEmpty()
+                val hint = CommunityHubErrors.saveDownloadHint(error.statusCode, error.errorCode)
+                fail("Download failed: $status${error.message ?: "Request rejected"}. $hint$requestSuffix")
                 false
+            } finally {
+                tempFile.delete()
             }
         } catch (e: Exception) {
             val fixHint = if (e.message?.contains("No route to host") == true) "FIX: Check your internet connection." else "FIX: Server might be down."
