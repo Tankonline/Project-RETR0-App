@@ -25,6 +25,13 @@ RepoType: git
 Repo: https://github.com/Tankonline/Project-RETR0-App.git
 
 Builds:
+  - versionName: '1.1.9'
+    versionCode: 21
+    commit: v1.1.9
+    subdir: app
+    gradle:
+      - yes
+
   - versionName: '1.1.8'
     versionCode: 20
     commit: v1.1.8
@@ -83,5 +90,5 @@ Builds:
 
 AutoUpdateMode: None
 UpdateCheckMode: None
-CurrentVersion: '1.1.8'
-CurrentVersionCode: 20
+CurrentVersion: '1.1.9'
+CurrentVersionCode: 21

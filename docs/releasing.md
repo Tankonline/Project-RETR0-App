@@ -1,5 +1,19 @@
 # Releasing Project RETR0 installer
 
+## v1.1.9 preparation status
+
+The current checkout is prepared for Android release `v1.1.9` with `versionCode 21`. This hotfix updates Community Hub save downloads to signed installation authentication, adds bounded installation registration retry for AI troubleshooting, sanitises downloaded save names, prevents duplicate-name overwrites, and uses bounded atomic downloads.
+
+## v1.1.9 release gates
+
+1. Confirm `versionName "1.1.9"` and `versionCode 21` in Gradle and metadata.
+2. Run unit tests, `assembleDebug`, and lint/static checks.
+3. Audit the diff for only hotfix, version, documentation, and metadata changes.
+4. Complete the device Community Hub and AI smoke tests.
+5. Push the release branch and open the PR only after approval.
+6. Merge only after approval.
+7. Create and push `v1.1.9` only after separate approval.
+
 ## v1.1.8 preparation status
 
 The current checkout is prepared for Android release `v1.1.8` with `versionCode 20`. Community Hub car-model media now falls back to the canonical Worker cover route when `coverUploaded` is true but `coverUrl` is absent, canonicalizes stale/foreign cover URLs, logs safe image request diagnostics, and renders Coil's decoded `SubcomposeAsyncImage` success content.

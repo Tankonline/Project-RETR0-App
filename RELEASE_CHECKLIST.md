@@ -1,5 +1,19 @@
 # Project RETR0 Release Checklist
 
+## v1.1.9 Release
+- [x] Version metadata changed to `versionName "1.1.9"` and `versionCode 21`.
+- [x] Changelog and README updated for the Community Hub authentication hotfix.
+- [ ] Debug unit tests pass.
+- [ ] Debug APK assembles.
+- [ ] Lint completes with no Error/Fatal findings.
+- [ ] Diff audit confirms only intended hotfix, version, documentation, and metadata changes.
+- [ ] Device smoke test completed.
+- [ ] Signed release APK builds in CI.
+- [ ] APK checksum generated and independently verified.
+- [ ] Pull request and required CI checks pass.
+- [ ] Release tag `v1.1.9` points to the merged release commit.
+- [ ] Signed APK and checksum are published.
+
 ## v1.1.8 Release
 - [x] Version metadata is `versionName "1.1.8"` and `versionCode 20`.
 - [x] Changelog, README, release guidance, and IzzyOnDroid metadata are aligned to v1.1.8.

@@ -19,7 +19,7 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 ### Current release
 
-- **Version:** `1.1.8` (`versionCode 20`)
+- **Version:** `1.1.9` (`versionCode 21`)
 - **Application ID / namespace:** `com.retr0.projectretr0`
 - **Minimum Android:** Android 8.0 / API 26
 - **Target and compile SDK:** API 35
@@ -27,7 +27,13 @@ It combines streaming asset installation, backup and recovery workflows, Shizuku
 
 The app requires Shizuku for privileged RR3 file and package operations; local browsing and other non-privileged UI may still open without an active Shizuku session. On the dashboard, the primary action is labeled **Install Project RETR0**. The dashboard status/refresh path now reports unavailable services clearly and retries failed Shizuku UserService connections without claiming readiness before a live binder is available.
 
-### What is included in v1.1.8
+### What is included in v1.1.9
+
+- **Community Hub authentication hotfix:** Save downloads now use signed installation authentication and recover from unknown installation registration failures.
+- **Safer save downloads:** Names are sanitised, duplicate names are preserved, files are size-checked, bounded, and finalized atomically.
+- **AI recovery:** AI troubleshooting registers unknown installations and retries once with specific error diagnostics.
+
+### What was included in v1.1.8
 
 - **Downloaded Mods:** Community Hub downloads are now visible in one place for quick access to downloaded car models and skins.
 - **Safer car-model downloads:** Downloads use a verified plan, free-space checks, resumable partial files, size/SHA-256 validation, manifest validation, optional media downloads, and rollback-safe library replacement.

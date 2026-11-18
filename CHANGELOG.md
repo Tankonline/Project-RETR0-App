@@ -2,6 +2,27 @@
 
 All notable changes to Project RETR0 installer are documented here.
 
+## [1.1.9]
+
+### Fixed
+- Community Hub **Get** now uses signed installation authentication via `SaveApiClient` instead of the old unsigned save-download path.
+- AI troubleshooting and chat now register an unknown installation and retry once.
+- AI registration retry is bounded to a single attempt.
+
+### Security
+- Community save names are sanitised and contained to the Backups folder.
+
+### Changed
+- Duplicate save names use `Name (2).dat` instead of overwriting an existing backup.
+- Save downloads use bounded temporary streaming, size validation, empty/incomplete download rejection, and atomic finalization.
+- Save downloads use a 15-minute overall timeout.
+- Download and AI errors now provide specific recovery guidance.
+- Updated release metadata to `versionName 1.1.9` and `versionCode 21`.
+
+### Known limitations
+- Community music downloads do not yet register-and-retry on `unknown_installation`.
+- The Worker still reports re-registration of a revoked installation as active; a server-side fix is pending.
+
 ## [1.1.8]
 
 ### Added

@@ -1103,10 +1103,11 @@ class MainActivity : ComponentActivity() {
             
             lifecycleScope.launch {
                 isAiChatThinking = true
-                val response = Retr0Installer(this@MainActivity, service).chatWithAi(chatMessages.toList())
+                val aiInstaller = Retr0Installer(this@MainActivity, service)
+                val response = aiInstaller.chatWithAi(chatMessages.toList())
                 chatMessages.add(
                     ChatMessage(
-                        content = response?.answer ?: "Connection error.",
+                        content = response?.answer ?: aiInstaller.lastAiFailureMessage ?: "Connection error.",
                         isUser = false,
                         aiResponse = response,
                     )
@@ -1554,8 +1555,9 @@ class MainActivity : ComponentActivity() {
                         lifecycleScope.launch {
                             isAiThinking = true
                             val currentService = service ?: return@launch
-                            val response = Retr0Installer(this@MainActivity, currentService).troubleshootError(progress.errorMessage)
-                            aiFixResponse = response?.answer ?: "Could not connect to AI."
+                            val aiInstaller = Retr0Installer(this@MainActivity, currentService)
+                            val response = aiInstaller.troubleshootError(progress.errorMessage)
+                            aiFixResponse = response?.answer ?: aiInstaller.lastAiFailureMessage ?: "Could not connect to AI."
                             isAiThinking = false
                         }
                     }

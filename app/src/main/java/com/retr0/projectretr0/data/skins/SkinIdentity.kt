@@ -34,7 +34,16 @@ internal object SkinRequestCanonicalizer {
     fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 }
 
-internal class SkinInstallationIdentity(context: Context) {
+/**
+ * Signs Community Hub requests with the installation key. Implemented by the Keystore-backed
+ * [SkinInstallationIdentity]; JVM unit tests supply a software P-256 key instead.
+ */
+internal interface InstallationSigner {
+    fun sign(method: String, encodedPathAndQuery: String, bodySha256: String): SignedHeaders
+    fun snapshot(): IdentitySnapshot
+}
+
+internal class SkinInstallationIdentity(context: Context) : InstallationSigner {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     val installationId: String by lazy {
@@ -50,7 +59,7 @@ internal class SkinInstallationIdentity(context: Context) {
         )
     }
 
-    fun sign(method: String, encodedPathAndQuery: String, bodySha256: String): SignedHeaders {
+    override fun sign(method: String, encodedPathAndQuery: String, bodySha256: String): SignedHeaders {
         val timestamp = System.currentTimeMillis().toString()
         val nonce = base64Url(ByteArray(24).also(SecureRandom()::nextBytes))
         val canonical = SkinRequestCanonicalizer.canonical(method, encodedPathAndQuery, installationId, timestamp, nonce, bodySha256)
@@ -60,7 +69,7 @@ internal class SkinInstallationIdentity(context: Context) {
         return SignedHeaders(installationId, timestamp, nonce, base64Url(signer.sign()))
     }
 
-    fun snapshot(): IdentitySnapshot = IdentitySnapshot(
+    override fun snapshot(): IdentitySnapshot = IdentitySnapshot(
         installationId = installationId,
         publicKey = publicJwk(),
     )
